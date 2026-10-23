@@ -75,13 +75,35 @@ pub fn profile_has_block(files: &[PathBuf]) -> bool {
     files.iter().any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains(START)))
 }
 
-/// Adds (`on`) or removes Hearth's block in each profile file; files are written only when they change.
+/// The shell profiles to edit: existing ones only (a new `.bash_profile` would hide a bash user's
+/// `.profile`). zsh reads `.zprofile`; bash reads `.bash_profile`, else `.profile`. With none of
+/// them, `.zprofile` is created (zsh is the macOS default shell).
+pub fn profile_targets(home: &Path, exists: impl Fn(&Path) -> bool) -> Vec<PathBuf> {
+    let (zsh, bash, profile) = (home.join(".zprofile"), home.join(".bash_profile"), home.join(".profile"));
+    let mut targets = Vec::new();
+    if exists(&zsh) {
+        targets.push(zsh.clone());
+    }
+    if exists(&bash) {
+        targets.push(bash);
+    } else if exists(&profile) {
+        targets.push(profile);
+    }
+    if targets.is_empty() {
+        targets.push(zsh);
+    }
+    targets
+}
+
+/// Adds (`on`) or removes Hearth's block in each profile file; files are written only when they
+/// change, and a symlinked profile (dotfile managers) is written through, keeping the link.
 pub fn apply_profiles(files: &[PathBuf], line: &str, on: bool) -> Result<(), CoreError> {
     for file in files {
         let current = std::fs::read_to_string(file).unwrap_or_default();
         let next = if on { with_block(&current, line) } else { without_block(&current) };
         if next != current {
-            atomic::write(file, next.as_bytes())?;
+            let target = std::fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+            atomic::write(&target, next.as_bytes())?;
         }
     }
     Ok(())
@@ -129,9 +151,14 @@ pub fn set_terminal(paths: &crate::HearthPaths, on: bool) -> Result<TerminalStat
 }
 
 #[cfg(unix)]
-fn profiles() -> Vec<PathBuf> {
-    let home = dirs::home_dir().unwrap_or_default();
-    vec![home.join(".zprofile"), home.join(".bash_profile")]
+fn home() -> PathBuf {
+    dirs::home_dir().unwrap_or_default()
+}
+
+/// Every profile Hearth may have edited, for status and removal (missing files are skipped).
+#[cfg(unix)]
+fn all_profiles() -> Vec<PathBuf> {
+    [".zprofile", ".bash_profile", ".profile"].iter().map(|n| home().join(n)).collect()
 }
 
 #[cfg(unix)]
@@ -150,12 +177,17 @@ fn profile_line(paths: &crate::HearthPaths) -> String {
 
 #[cfg(unix)]
 pub fn terminal_status(paths: &crate::HearthPaths) -> Result<TerminalStatus, CoreError> {
-    Ok(TerminalStatus { enabled: profile_has_block(&profiles()), others: others(&paths.bin.display().to_string()) })
+    Ok(TerminalStatus { enabled: profile_has_block(&all_profiles()), others: others(&paths.bin.display().to_string()) })
 }
 
 #[cfg(unix)]
 pub fn set_terminal(paths: &crate::HearthPaths, on: bool) -> Result<TerminalStatus, CoreError> {
-    apply_profiles(&profiles(), &profile_line(paths), on)?;
+    if on {
+        apply_profiles(&profile_targets(&home(), |p| p.exists()), &profile_line(paths), true)?;
+    } else {
+        let existing: Vec<PathBuf> = all_profiles().into_iter().filter(|p| p.exists()).collect();
+        apply_profiles(&existing, &profile_line(paths), false)?;
+    }
     terminal_status(paths)
 }
 
@@ -336,5 +368,43 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&zprofile).unwrap(), "export EDITOR=vim\n");
         assert_eq!(std::fs::read_to_string(&bash).unwrap(), "");
         assert!(!profile_has_block(&[zprofile]));
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    fn existing(names: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+        move |p: &Path| names.iter().any(|n| p.ends_with(n))
+    }
+
+    #[test]
+    fn only_existing_profiles_are_edited_and_bash_falls_back_to_profile() {
+        let home = Path::new("/Users/j");
+        assert_eq!(
+            profile_targets(home, existing(&[".zprofile", ".profile"])),
+            [home.join(".zprofile"), home.join(".profile")]
+        );
+        assert_eq!(profile_targets(home, existing(&[".bash_profile", ".profile"])), [home.join(".bash_profile")]);
+    }
+
+    #[test]
+    fn without_any_profile_only_zprofile_is_created() {
+        let home = Path::new("/Users/j");
+        assert_eq!(profile_targets(home, existing(&[])), [home.join(".zprofile")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_profile_is_written_through() {
+        let d = tempfile::tempdir().unwrap();
+        let real = d.path().join("dotfiles-zprofile");
+        std::fs::write(&real, "export EDITOR=vim\n").unwrap();
+        let link = d.path().join(".zprofile");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        apply_profiles(&[link.clone()], "export PATH=x", true).unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert!(std::fs::read_to_string(&real).unwrap().contains(START));
     }
 }
