@@ -109,10 +109,9 @@
   }
 
   nav button.active {
-    background: var(--surface);
+    background: var(--nav-active);
     color: var(--text);
     font-weight: 600;
-    box-shadow: inset 3px 0 0 var(--accent);
   }
 
   .version {

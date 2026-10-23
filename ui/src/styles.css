@@ -14,6 +14,7 @@
   --ok-soft: #dcf0e3;
   --danger: #b8321c;
   --sidebar: #efe8e1;
+  --nav-active: #e2d8ce;
 }
 
 :root[data-theme='dark'] {
@@ -31,6 +32,7 @@
   --ok-soft: #1f3528;
   --danger: #f08a73;
   --sidebar: #1d1815;
+  --nav-active: #2f2824;
 }
 
 * {
