@@ -19,9 +19,11 @@
     </radialGradient>
   </defs>
   <rect width="1024" height="1024" rx="224" fill="url(#tile)"/>
+  <g transform="translate(512 512) scale(1.25) translate(-512 -548)">
   <ellipse cx="512" cy="700" rx="230" ry="190" fill="url(#glow)"/>
   <path d="M296 800 V500 A216 216 0 0 1 728 500 V800" fill="none" stroke="#f4ebe1" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M208 812 H816" stroke="#f4ebe1" stroke-width="64" stroke-linecap="round"/>
   <path d="M512 424 C566 520 650 580 628 676 C612 742 566 772 512 772 C458 772 412 742 396 676 C374 580 458 520 512 424 Z" fill="url(#flame)"/>
   <path d="M512 572 C540 622 582 652 570 704 C562 740 540 756 512 756 C484 756 462 740 454 704 C442 652 484 622 512 572 Z" fill="url(#core)"/>
+  </g>
 </svg>

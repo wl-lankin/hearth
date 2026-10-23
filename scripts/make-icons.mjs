@@ -20,8 +20,8 @@ try {
   // Hearth ships for Windows and macOS only.
   for (const dir of ['android', 'ios']) rmSync(join(root, 'src-tauri/icons', dir), { recursive: true, force: true });
 
-  // Tray: the color logo on Windows, a one-color template image macOS tints for the menu bar.
-  writeFileSync(join(root, 'src-tauri/icons/tray.png'), render('assets/logo.svg', 64));
+  // Tray: the arch and flame without the tile on Windows, a one-color template image macOS tints.
+  writeFileSync(join(root, 'src-tauri/icons/tray.png'), render('assets/tray.svg', 64));
   writeFileSync(join(root, 'src-tauri/icons/tray-template.png'), render('assets/tray-template.svg', 44));
 
   // Brand image for the README.

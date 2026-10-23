@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="160 196 704 704" width="64" height="64">
+  <!-- The Windows tray icon: the logo's arch and flame without the tile, filling the square, in ember
+       colors that read on light and dark taskbars. -->
+  <defs>
+    <linearGradient id="flame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6a33b"/>
+      <stop offset="0.55" stop-color="#e8642c"/>
+      <stop offset="1" stop-color="#c2361f"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffe2a0"/>
+      <stop offset="1" stop-color="#f6a33b"/>
+    </linearGradient>
+  </defs>
+  <path d="M296 800 V500 A216 216 0 0 1 728 500 V800" fill="none" stroke="#e8642c" stroke-width="80" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M208 812 H816" stroke="#e8642c" stroke-width="80" stroke-linecap="round"/>
+  <path d="M512 424 C566 520 650 580 628 676 C612 742 566 772 512 772 C458 772 412 742 396 676 C374 580 458 520 512 424 Z" fill="url(#flame)"/>
+  <path d="M512 572 C540 622 582 652 570 704 C562 740 540 756 512 756 C484 756 462 740 454 704 C442 652 484 622 512 572 Z" fill="url(#core)"/>
+</svg>
