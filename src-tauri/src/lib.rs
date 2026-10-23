@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use hearth_core::ipc::{self, CoreState, ServerHandle};
-use hearth_core::{settings, CoreError, HearthPaths};
+use hearth_core::{paths, settings, CoreError, HearthPaths};
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_dialog::DialogExt;
@@ -26,9 +26,12 @@ pub fn run() {
     };
     let state = CoreState { paths, started: Instant::now() };
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    if startup::use_single_instance(std::env::var_os(paths::HOME_VAR).as_deref()) {
         // Registered first: a second Hearth process only brings the first one's window up.
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::show(app)))
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::show(app)));
+    }
+    builder
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![startup::HIDDEN_FLAG])))
         .plugin(tauri_plugin_dialog::init())
         .manage(state.clone())
