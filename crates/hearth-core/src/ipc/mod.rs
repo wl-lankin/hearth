@@ -19,6 +19,7 @@ pub use server::{serve, Handler, HandlerFuture, ServerHandle};
 
 use crate::jobs::Jobs;
 use crate::php::manifest::{CATALOG_PUBLIC_KEY, CATALOG_URL};
+use crate::supervisor::Supervisor;
 use crate::HearthPaths;
 
 /// Where the PHP catalog comes from and which key must have signed it.
@@ -45,6 +46,10 @@ pub struct CoreState {
     pub php_lock: Arc<std::sync::Mutex<()>>,
     /// One download at a time of the shared tools (Composer, the CA bundle).
     pub tools_lock: Arc<tokio::sync::Mutex<()>>,
+    /// One writer at a time for sites.json, and one web server sync at a time.
+    pub sites_lock: Arc<std::sync::Mutex<()>>,
+    /// Caddy and the PHP pools.
+    pub supervisor: Arc<Supervisor>,
 }
 
 impl CoreState {
@@ -56,6 +61,10 @@ impl CoreState {
             catalog: Catalog::default(),
             php_lock: Arc::default(),
             tools_lock: Arc::default(),
+            sites_lock: Arc::default(),
+            // Creating the supervisor only fails when Windows refuses a Job Object, which leaves
+            // Hearth unable to run anything safely.
+            supervisor: Arc::new(Supervisor::new().expect("Hearth could not set up its process supervisor")),
         }
     }
 }

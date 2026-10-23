@@ -6,3 +6,6 @@ mod caddy_install_tests;
 pub mod pools;
 #[cfg(test)]
 mod pools_tests;
+pub mod service;
+#[cfg(test)]
+mod service_tests;
