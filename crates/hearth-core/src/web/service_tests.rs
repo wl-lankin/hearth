@@ -48,7 +48,11 @@ fn laravel(dir: &Path) {
     std::fs::write(dir.join("public").join("index.php"), "<?php").unwrap();
 }
 
+/// The PHP pool ports are fixed per version (8.4 -> 19840..), so these tests run one at a time.
+static PORTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct Home {
+    _ports: std::sync::MutexGuard<'static, ()>,
     _dir: tempfile::TempDir,
     core: CoreState,
     projects: PathBuf,
@@ -56,6 +60,7 @@ struct Home {
 }
 
 fn home() -> Home {
+    let ports = PORTS.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let paths = HearthPaths::at(dir.path().join("hearth"));
     paths.ensure().unwrap();
@@ -64,7 +69,7 @@ fn home() -> Home {
     registry::set_http_port(&paths, port).unwrap();
     let projects = dir.path().join("Projects");
     laravel(&projects.join("shop"));
-    Home { core: CoreState::new(paths), projects, port, _dir: dir }
+    Home { core: CoreState::new(paths), projects, port, _dir: dir, _ports: ports }
 }
 
 fn caddyfile(h: &Home) -> String {
