@@ -21,11 +21,7 @@ fn hearth(paths: &HearthPaths) -> Command {
 #[test]
 fn status_when_not_running_exits_1_with_message() {
     let (_d, paths) = home();
-    hearth(&paths)
-        .arg("status")
-        .assert()
-        .code(1)
-        .stderr("Hearth core is not running. Start the Hearth app.\n");
+    hearth(&paths).arg("status").assert().code(1).stderr("Hearth core is not running. Start the Hearth app.\n");
 }
 
 #[test]
@@ -40,9 +36,7 @@ async fn status_when_running() {
     let state = CoreState { paths: paths.clone(), started: Instant::now() };
     let server = serve(&paths, router(state)).await.unwrap();
     let cmd_paths = paths.clone();
-    let output = tokio::task::spawn_blocking(move || hearth(&cmd_paths).arg("status").output().unwrap())
-        .await
-        .unwrap();
+    let output = tokio::task::spawn_blocking(move || hearth(&cmd_paths).arg("status").output().unwrap()).await.unwrap();
     server.shutdown().await;
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8(output.stdout).unwrap();

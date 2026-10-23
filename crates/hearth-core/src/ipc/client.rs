@@ -4,9 +4,9 @@ use serde_json::Value;
 use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::time::timeout;
 
-use super::{endpoint, peer};
 use super::lines::read_line;
 use super::protocol::{Request, Response};
+use super::{endpoint, peer};
 use crate::{CoreError, HearthPaths};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
@@ -23,7 +23,8 @@ pub async fn call(paths: &HearthPaths, method: &str, params: Value) -> Result<Va
     }
     let (read, mut write) = tokio::io::split(stream);
 
-    let mut line = serde_json::to_vec(&Request::new(1, method, params)).map_err(|e| CoreError::Protocol(e.to_string()))?;
+    let mut line =
+        serde_json::to_vec(&Request::new(1, method, params)).map_err(|e| CoreError::Protocol(e.to_string()))?;
     line.push(b'\n');
 
     let exchange = async {

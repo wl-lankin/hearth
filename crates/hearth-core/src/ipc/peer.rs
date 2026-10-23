@@ -10,7 +10,7 @@ pub(crate) fn is_trusted(stream: &Stream) -> io::Result<bool> {
     let creds = stream.peer_creds()?;
     #[cfg(windows)]
     {
-        Ok(creds.pid().map(|pid| same_user_as_me(pid as u32)).unwrap_or(false))
+        Ok(creds.pid().map(same_user_as_me).unwrap_or(false))
     }
     #[cfg(unix)]
     {

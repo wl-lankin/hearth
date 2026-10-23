@@ -1,0 +1,24 @@
+[package]
+name = "hearth-app"
+description = "Hearth - a local PHP development environment."
+repository = "https://github.com/wl-lankin/hearth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "hearth_app_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+hearth-core = { path = "../crates/hearth-core" }
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

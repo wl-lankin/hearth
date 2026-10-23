@@ -1,0 +1,57 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Hearth",
+  "version": "0.1.0",
+  "identifier": "de.wolfganglinz.hearth",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1440",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Hearth",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 520,
+        "center": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost"
+      },
+      "dangerousDisableAssetCspModification": ["style-src"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "app", "dmg"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "publisher": "Wolfgang Linz",
+    "copyright": "Copyright 2026 Wolfgang Linz",
+    "homepage": "https://wolfgang-linz.de",
+    "category": "DeveloperTool",
+    "shortDescription": "A local PHP development environment.",
+    "longDescription": "Hearth runs PHP sites on .test domains with HTTPS, databases and other services, a mail catcher, dumps and logs, from one tray app.",
+    "license": "MIT",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0"
+    }
+  }
+}
