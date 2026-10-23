@@ -1,0 +1,168 @@
+{
+  "schema": 1,
+  "generated": "2026-10-23T14:39:46Z",
+  "php": [
+    {
+      "minor": "8.1",
+      "version": "8.1.34",
+      "channel": "stable",
+      "os": "windows",
+      "arch": "x64",
+      "url": "https://downloads.php.net/~windows/releases/php-8.1.34-nts-Win32-vs16-x64.zip",
+      "sha256": "9cfe246cb144076c16f5913a3ef88a474c3dd7e60f0f0c8bb95faf68674016cc",
+      "size": 30817649,
+      "format": "zip",
+      "root": "",
+      "extensions": {
+        "redis": {
+          "version": "6.3.0",
+          "kind": "dll",
+          "file": "php_redis.dll",
+          "sha256": "952ec845408e343f273eab109e62a9c7732178d93985120736da4a171d41b9b0",
+          "url": "https://downloads.php.net/~windows/pecl/releases/redis/6.3.0/php_redis-6.3.0-8.1-nts-vs16-x64.zip"
+        },
+        "xdebug": {
+          "version": "3.5.3",
+          "kind": "zend_dll",
+          "file": "php_xdebug.dll",
+          "sha256": "c34f067dc09d42146ad0d0662380714d476eda7afc51da2547de67223ab8c2cc",
+          "url": "https://downloads.php.net/~windows/pecl/releases/xdebug/3.5.3/php_xdebug-3.5.3-8.1-nts-vs16-x64.zip"
+        }
+      }
+    },
+    {
+      "minor": "8.2",
+      "version": "8.2.35",
+      "channel": "stable",
+      "os": "windows",
+      "arch": "x64",
+      "url": "https://downloads.php.net/~windows/releases/php-8.2.35-nts-Win32-vs16-x64.zip",
+      "sha256": "798ffa4b9ce22a820d57048e9695df7245bf917ed067917f256942a10918a8cc",
+      "size": 33701233,
+      "format": "zip",
+      "root": "",
+      "extensions": {
+        "redis": {
+          "version": "6.3.0",
+          "kind": "dll",
+          "file": "php_redis.dll",
+          "sha256": "b2b730b99b97352212b338c01f7dde577857e31c5f8e1d011ec2871e63f8f87c",
+          "url": "https://downloads.php.net/~windows/pecl/releases/redis/6.3.0/php_redis-6.3.0-8.2-nts-vs16-x64.zip"
+        },
+        "xdebug": {
+          "version": "3.5.3",
+          "kind": "zend_dll",
+          "file": "php_xdebug.dll",
+          "sha256": "78b18873c20e6ac38bbda1b17e272db4ba0c47b1eb99a0179440bd0ea82d8f18",
+          "url": "https://downloads.php.net/~windows/pecl/releases/xdebug/3.5.3/php_xdebug-3.5.3-8.2-nts-vs16-x64.zip"
+        }
+      }
+    },
+    {
+      "minor": "8.3",
+      "version": "8.3.36",
+      "channel": "stable",
+      "os": "windows",
+      "arch": "x64",
+      "url": "https://downloads.php.net/~windows/releases/php-8.3.36-nts-Win32-vs16-x64.zip",
+      "sha256": "3c9242622c7402b47c38d2ec2ed779cef3a290fd6f2bde6c35f9c482699e7900",
+      "size": 34099692,
+      "format": "zip",
+      "root": "",
+      "extensions": {
+        "redis": {
+          "version": "6.3.0",
+          "kind": "dll",
+          "file": "php_redis.dll",
+          "sha256": "519fc1bdf54323d3ab08443c66f77e783d314c13b532e27cc8b390def7f81b60",
+          "url": "https://downloads.php.net/~windows/pecl/releases/redis/6.3.0/php_redis-6.3.0-8.3-nts-vs16-x64.zip"
+        },
+        "xdebug": {
+          "version": "3.5.3",
+          "kind": "zend_dll",
+          "file": "php_xdebug.dll",
+          "sha256": "9883a4361e2f7208ea15b6dbc66f346f2bb5b9a168384f37c5433833c7420ccd",
+          "url": "https://downloads.php.net/~windows/pecl/releases/xdebug/3.5.3/php_xdebug-3.5.3-8.3-nts-vs16-x64.zip"
+        }
+      }
+    },
+    {
+      "minor": "8.4",
+      "version": "8.4.27",
+      "channel": "stable",
+      "os": "windows",
+      "arch": "x64",
+      "url": "https://downloads.php.net/~windows/releases/php-8.4.27-nts-Win32-vs17-x64.zip",
+      "sha256": "93bd8a815a52156606fb906d0573437908c61f96e2cc52c03a51e36a41bf5236",
+      "size": 35295068,
+      "format": "zip",
+      "root": "",
+      "extensions": {
+        "redis": {
+          "version": "6.3.0",
+          "kind": "dll",
+          "file": "php_redis.dll",
+          "sha256": "6db881ed172703962002d7e02dacc8ddb3f789904c648fee3e6ceec1319679cd",
+          "url": "https://downloads.php.net/~windows/pecl/releases/redis/6.3.0/php_redis-6.3.0-8.4-nts-vs17-x64.zip"
+        },
+        "xdebug": {
+          "version": "3.5.3",
+          "kind": "zend_dll",
+          "file": "php_xdebug.dll",
+          "sha256": "0d8bfc5524343f89caf66f400e63e8bd83fc84dec885b053ec8aabe8945418f4",
+          "url": "https://downloads.php.net/~windows/pecl/releases/xdebug/3.5.3/php_xdebug-3.5.3-8.4-nts-vs17-x64.zip"
+        }
+      }
+    },
+    {
+      "minor": "8.5",
+      "version": "8.5.12",
+      "channel": "stable",
+      "os": "windows",
+      "arch": "x64",
+      "url": "https://downloads.php.net/~windows/releases/php-8.5.12-nts-Win32-vs17-x64.zip",
+      "sha256": "2ab242af38d76bdf417cde5ec048b1bcd76a5a40f39a3d15d5f046f38571c477",
+      "size": 36301701,
+      "format": "zip",
+      "root": "",
+      "extensions": {
+        "redis": {
+          "version": "6.3.0",
+          "kind": "dll",
+          "file": "php_redis.dll",
+          "sha256": "481d6d1af45060ab41af6abe250faa270276fc47a493badc2e178024cdf6e255",
+          "url": "https://downloads.php.net/~windows/pecl/releases/redis/6.3.0/php_redis-6.3.0-8.5-nts-vs17-x64.zip"
+        },
+        "xdebug": {
+          "version": "3.5.3",
+          "kind": "zend_dll",
+          "file": "php_xdebug.dll",
+          "sha256": "1085ff005c513757f428d3ab792a2d5ce007e382ffef9ef422de347d3bed830d",
+          "url": "https://downloads.php.net/~windows/pecl/releases/xdebug/3.5.3/php_xdebug-3.5.3-8.5-nts-vs17-x64.zip"
+        }
+      }
+    },
+    {
+      "minor": "8.6",
+      "version": "8.6.0RC4",
+      "channel": "rc",
+      "os": "windows",
+      "arch": "x64",
+      "url": "https://downloads.php.net/~windows/qa/php-8.6.0RC4-nts-Win32-vs18-x64.zip",
+      "sha256": "68026900957f18f61d49726224ff0efc39bb0710c7e8adab94b7032f34974d9f",
+      "size": 39594230,
+      "format": "zip",
+      "root": "",
+      "extensions": {}
+    }
+  ],
+  "composer": {
+    "version": "2.10.3",
+    "url": "https://getcomposer.org/download/2.10.3/composer.phar",
+    "sha256": "7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6"
+  },
+  "cacert": {
+    "url": "https://github.com/wl-lankin/hearth-php/releases/download/manifest/cacert-796f1389bfea.pem",
+    "sha256": "796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe"
+  }
+}

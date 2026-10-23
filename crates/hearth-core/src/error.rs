@@ -15,6 +15,9 @@ pub enum CoreError {
     ForeignEndpoint,
     #[error("protocol error: {0}")]
     Protocol(String),
+    /// A PHP install, catalog or configuration problem, worded for the user.
+    #[error("{0}")]
+    Php(String),
     #[error("{message} (code {code})")]
     Rpc { code: i64, message: String },
 }
