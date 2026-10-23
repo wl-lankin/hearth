@@ -163,3 +163,4 @@ export const terminalSet = async (on: boolean): Promise<TerminalStatus> => {
   }
   return core('terminal.set', { on });
 };
+export const jobsList = (): Promise<JobStatus[]> => (demo ? Promise.resolve([]) : core('jobs.list'));

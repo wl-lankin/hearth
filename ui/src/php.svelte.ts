@@ -8,6 +8,8 @@ export type PhpApi = {
   phpUninstall(minor: string): Promise<string | null>;
   phpUse(minor: string): Promise<void>;
   phpExtension(minor: string, name: string, on: boolean): Promise<void>;
+  /** Optional: running installs to pick up when the view opens again. */
+  jobsList?(): Promise<JobStatus[]>;
 };
 
 /** One PHP minor as the PHP view shows it. */
@@ -85,7 +87,15 @@ export function createPhpStore(api: PhpApi) {
     get busy() {
       return Object.keys(jobs).length > 0;
     },
-    load: refresh,
+    async load() {
+      await refresh();
+      // Installs keep running while the view is closed; show them again.
+      const running = (await api.jobsList?.().catch(() => [])) ?? [];
+      for (const job of running) {
+        const minor = job.key.startsWith('php.install:') ? job.key.slice('php.install:'.length) : null;
+        if (minor && job.state === 'running') jobs[minor] = { id: job.id, progress: job.progress, message: job.message };
+      }
+    },
     async install(minor: string) {
       errors[minor] = null;
       try {

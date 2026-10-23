@@ -38,6 +38,17 @@ pub fn install(core: &CoreState, minor: &str) -> JobId {
     id
 }
 
+/// Downloaded files of one install, deleted however the install ends.
+struct TempFiles(Vec<PathBuf>);
+
+impl Drop for TempFiles {
+    fn drop(&mut self) {
+        for file in &self.0 {
+            let _ = std::fs::remove_file(file);
+        }
+    }
+}
+
 async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), CoreError> {
     let paths = &core.paths;
     core.jobs.progress(id, 0.0, "Reading the PHP catalog");
@@ -50,7 +61,9 @@ async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), Cor
 
     let downloads = php_data(paths).join("downloads");
     std::fs::create_dir_all(&downloads).map_err(|e| CoreError::io(&downloads, e))?;
+    let mut temp = TempFiles(Vec::new());
     let archive = downloads.join(format!("php-{}.{}", build.version, extension_of(&build)));
+    temp.0.push(archive.clone());
     let label = format!("PHP {}", build.version);
     let jobs = core.jobs.clone();
     let message = format!("Downloading PHP {}", build.version);
@@ -60,7 +73,6 @@ async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), Cor
         }
     })
     .await?;
-    let mut temp = vec![archive.clone()];
 
     // Windows extensions come as separate zips; they go into the new folder before it is swapped in.
     let mut extension_dlls = Vec::new();
@@ -70,18 +82,31 @@ async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), Cor
         {
             core.jobs.progress(id, 0.78, &format!("Downloading the {name} extension"));
             let zip = downloads.join(format!("{name}-{}.zip", build.version));
+            temp.0.push(zip.clone());
             download(url, &zip, sha256, &format!("the {name} extension"), |_, _| {}).await?;
-            temp.push(zip.clone());
             extension_dlls.push((name.clone(), zip, file.clone()));
         }
     }
 
-    core.jobs.progress(id, 0.85, "Unpacking");
+    // Everything that needs the network happens before the swap: a failure here leaves the old
+    // install (or none) exactly as it was.
+    core.jobs.progress(id, 0.82, "Setting up Composer");
+    {
+        let _tools = core.tools_lock.lock().await;
+        ensure_artifact(&manifest.cacert, &cacert_path(paths), "the CA bundle").await?;
+        ensure_artifact(&manifest.composer, &paths.bin.join("composer.phar"), "Composer").await?;
+    }
+
+    core.jobs.progress(id, 0.88, "Unpacking");
     let target = install_dir(paths, minor);
     let build_json = serde_json::to_vec_pretty(&build).map_err(|e| CoreError::Php(e.to_string()))?;
     let version = build.version.clone();
     let (format, root) = (build.format, build.root.clone());
-    let unpacked = tokio::task::spawn_blocking(move || {
+    let names: Vec<String> = build.extensions.keys().cloned().collect();
+    let (php_lock, paths, minor) = (core.php_lock.clone(), paths.clone(), minor.to_string());
+    tokio::task::spawn_blocking(move || {
+        // One writer at a time for installs, php.json, php.ini and the shims.
+        let _guard = php_lock.lock().unwrap_or_else(|e| e.into_inner());
         std::fs::create_dir_all(target.parent().unwrap()).map_err(|e| CoreError::io(&target, e))?;
         unpack_with(&archive, format, &root, &target, |new| {
             for (name, zip, file) in &extension_dlls {
@@ -90,29 +115,14 @@ async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), Cor
             std::fs::write(new.join(BUILD_FILE), &build_json).map_err(|e| CoreError::io(new, e))?;
             // Last: only a folder with this file counts as installed.
             std::fs::write(new.join(VERSION_FILE), &version).map_err(|e| CoreError::io(new, e))
-        })
+        })?;
+        // Only local steps after the swap.
+        store::register(&paths, &minor, &names)?;
+        apply_config(&paths, &minor)?;
+        refresh_shims(&paths)
     })
     .await
-    .map_err(|e| CoreError::Php(e.to_string()))?;
-    let cleanup = || {
-        for file in &temp {
-            let _ = std::fs::remove_file(file);
-        }
-    };
-    if let Err(e) = unpacked {
-        cleanup();
-        return Err(e);
-    }
-    cleanup();
-
-    core.jobs.progress(id, 0.92, "Setting up Composer");
-    ensure_artifact(&manifest.cacert, &cacert_path(paths), "the CA bundle").await?;
-    ensure_artifact(&manifest.composer, &paths.bin.join("composer.phar"), "Composer").await?;
-
-    let names: Vec<String> = build.extensions.keys().cloned().collect();
-    store::register(paths, minor, &names)?;
-    apply_config(paths, minor)?;
-    refresh_shims(paths)
+    .map_err(|e| CoreError::Php(e.to_string()))?
 }
 
 fn extension_of(build: &PhpBuild) -> &'static str {
@@ -197,9 +207,20 @@ pub fn refresh_shims(paths: &HearthPaths) -> Result<(), CoreError> {
     write_shims(paths, state.default.as_deref(), &minors)
 }
 
-/// Removes PHP `minor`. Fails without changing anything while one of its programs runs. Returns the
-/// default version afterwards. The user's user.ini is kept for a later reinstall.
+/// Holds the one-writer lock for installs, php.json, php.ini and the shims.
+fn locked(core: &CoreState) -> std::sync::MutexGuard<'_, ()> {
+    core.php_lock.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Removes PHP `minor`. Fails without changing anything while one of its programs runs or while it
+/// is being installed. Returns the default version afterwards. The user's user.ini is kept for a
+/// later reinstall.
 pub fn uninstall(core: &CoreState, minor: &str) -> Result<Option<String>, CoreError> {
+    let installing = format!("php.install:{minor}");
+    if core.jobs.list().iter().any(|j| j.key == installing && j.state == crate::jobs::JobState::Running) {
+        return Err(CoreError::Php(format!("PHP {minor} is being installed; try again when it is done")));
+    }
+    let _guard = locked(core);
     let paths = &core.paths;
     let target = install_dir(paths, minor);
     if !target.join(VERSION_FILE).is_file() {
@@ -218,14 +239,16 @@ pub fn uninstall(core: &CoreState, minor: &str) -> Result<Option<String>, CoreEr
 }
 
 /// Makes `minor` the version behind `php`, `composer` and `laravel`.
-pub fn use_version(paths: &HearthPaths, minor: &str) -> Result<(), CoreError> {
-    store::set_default(paths, minor)?;
-    refresh_shims(paths)
+pub fn use_version(core: &CoreState, minor: &str) -> Result<(), CoreError> {
+    let _guard = locked(core);
+    store::set_default(&core.paths, minor)?;
+    refresh_shims(&core.paths)
 }
 
-pub fn set_extension(paths: &HearthPaths, minor: &str, name: &str, on: bool) -> Result<(), CoreError> {
-    store::set_extension(paths, minor, name, on)?;
-    apply_config(paths, minor)
+pub fn set_extension(core: &CoreState, minor: &str, name: &str, on: bool) -> Result<(), CoreError> {
+    let _guard = locked(core);
+    store::set_extension(&core.paths, minor, name, on)?;
+    apply_config(&core.paths, minor)
 }
 
 /// The generated part of php.ini and the user's own part.
@@ -236,7 +259,9 @@ pub fn ini_parts(paths: &HearthPaths, minor: &str) -> Result<(String, String), C
 }
 
 /// Saves the user's part of php.ini and rewrites php.ini.
-pub fn set_ini_user(paths: &HearthPaths, minor: &str, user: &str) -> Result<(), CoreError> {
+pub fn set_ini_user(core: &CoreState, minor: &str, user: &str) -> Result<(), CoreError> {
+    let _guard = locked(core);
+    let paths = &core.paths;
     installed_build(paths, minor)?;
     let dir = ini_dir(paths, minor);
     std::fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;

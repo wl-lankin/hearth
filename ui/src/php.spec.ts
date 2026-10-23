@@ -110,6 +110,17 @@ describe('PHP store', () => {
     expect([r84.extensions.xdebug, r84.error]).toEqual([false, 'PHP 8.4 has no xdebug extension']);
   });
 
+  test('reopening the view picks up an install that is still running', async () => {
+    const api = fakeApi({
+      jobsList: async () => [{ ...job('running', 0.6), key: 'php.install:8.5' }, { ...job('done', 1), id: 7, key: 'php.install:8.3' }],
+    });
+    const store = createPhpStore(api);
+    await store.load();
+    expect(store.rows.find((r) => r.minor === '8.5')!.job).toEqual({ progress: 0.6, message: 'Downloading PHP 8.5.12' });
+    expect(store.rows.find((r) => r.minor === '8.3')!.job).toBeNull();
+    expect(store.busy).toBe(true);
+  });
+
   test('without a catalog the installed versions still show', async () => {
     const store = createPhpStore(fakeApi({ phpAvailable: async () => { throw 'Could not download the catalog'; } }));
     await store.load();

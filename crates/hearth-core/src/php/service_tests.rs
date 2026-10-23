@@ -60,8 +60,14 @@ pub(crate) struct Fixture {
     pub(crate) core: CoreState,
 }
 
-/// A served catalog with PHP 8.4.27 for this OS. `damage_php` serves bytes that do not match the hash.
+/// A served catalog with PHP 8.4.27 and 8.3.36 for this OS. `damage_php` serves bytes that do not
+/// match the hash.
 pub(crate) fn fixture(damage_php: bool) -> Fixture {
+    fixture_with(damage_php, true)
+}
+
+/// Like `fixture`; without `serve_composer` the Composer download answers 404.
+pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
     let (php, format, root, extensions_src) = match Os::current() {
         Os::Windows => (
             zip_with(&[("php.exe", b"exe"), ("ext/php_curl.dll", b"dll")]),
@@ -86,13 +92,15 @@ pub(crate) fn fixture(damage_php: bool) -> Fixture {
     let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
     let base = format!("http://{}", server.server_addr().to_ip().unwrap());
     let served_php = if damage_php { b"not the archive".to_vec() } else { php.clone() };
-    let files: Vec<(String, Vec<u8>)> = vec![
+    let mut files: Vec<(String, Vec<u8>)> = vec![
         ("/php".into(), served_php),
         ("/redis.zip".into(), redis.clone()),
         ("/xdebug.zip".into(), xdebug.clone()),
-        ("/composer.phar".into(), composer.clone()),
         ("/cacert.pem".into(), cacert.clone()),
     ];
+    if serve_composer {
+        files.push(("/composer.phar".into(), composer.clone()));
+    }
     let (s, slot) = (server.clone(), catalog_slot.clone());
     std::thread::spawn(move || {
         for request in s.incoming_requests() {
@@ -126,6 +134,11 @@ pub(crate) fn fixture(damage_php: bool) -> Fixture {
         "generated": "2026-10-23T12:00:00Z",
         "php": [{
             "minor": "8.4", "version": "8.4.27", "channel": "stable",
+            "os": Os::current(), "arch": Arch::current(),
+            "url": format!("{base}/php"), "sha256": hex(&php), "size": php.len(),
+            "format": format, "root": root, "extensions": extensions,
+        }, {
+            "minor": "8.3", "version": "8.3.36", "channel": "stable",
             "os": Os::current(), "arch": Arch::current(),
             "url": format!("{base}/php"), "sha256": hex(&php), "size": php.len(),
             "format": format, "root": root, "extensions": extensions,
@@ -219,8 +232,8 @@ async fn xdebug_on_rewrites_php_ini_and_user_settings_survive() {
     let f = fixture(false);
     wait(&f.core, install(&f.core, "8.4")).await;
     let p = paths(&f);
-    set_ini_user(p, "8.4", "memory_limit = 1G\n").unwrap();
-    set_extension(p, "8.4", "xdebug", true).unwrap();
+    set_ini_user(&f.core, "8.4", "memory_limit = 1G\n").unwrap();
+    set_extension(&f.core, "8.4", "xdebug", true).unwrap();
     let ini = std::fs::read_to_string(p.config.join("php").join("8.4").join("php.ini")).unwrap();
     assert!(ini.contains("xdebug.mode = debug,develop"), "{ini}");
     assert!(ini.ends_with("memory_limit = 1G\n"), "{ini}");
@@ -234,7 +247,7 @@ async fn uninstall_removes_the_version_but_keeps_user_ini() {
     let f = fixture(false);
     wait(&f.core, install(&f.core, "8.4")).await;
     let p = paths(&f);
-    set_ini_user(p, "8.4", "memory_limit = 1G\n").unwrap();
+    set_ini_user(&f.core, "8.4", "memory_limit = 1G\n").unwrap();
     assert_eq!(uninstall(&f.core, "8.4").unwrap(), None);
     assert!(!install_dir(p, "8.4").exists());
     assert!(p.config.join("php").join("8.4").join("user.ini").is_file());
@@ -248,4 +261,39 @@ async fn the_laravel_installer_needs_a_php_first() {
     let f = fixture(false);
     let job = wait(&f.core, install_laravel_installer(&f.core)).await;
     assert_eq!(job.error.as_deref(), Some("Install a PHP version first"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failing_last_step_leaves_no_half_registered_version() {
+    let f = fixture_with(false, false);
+    let job = wait(&f.core, install(&f.core, "8.4")).await;
+    assert_eq!(job.state, JobState::Failed);
+    assert!(job.error.as_deref().unwrap_or_default().starts_with("Could not download"), "{:?}", job.error);
+    let p = paths(&f);
+    assert!(store::installed(p).is_empty(), "the version must not count as installed");
+    assert!(!install_dir(p, "8.4").exists());
+    let leftovers: Vec<_> = std::fs::read_dir(p.data.join("php").join("downloads")).unwrap().collect();
+    assert!(leftovers.is_empty(), "downloads are cleaned up after a failure too");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_version_while_it_installs_is_refused() {
+    let f = fixture(false);
+    let id = install(&f.core, "8.4");
+    let err = uninstall(&f.core, "8.4").unwrap_err();
+    assert_eq!(err.to_string(), "PHP 8.4 is being installed; try again when it is done");
+    assert_eq!(wait(&f.core, id).await.state, JobState::Done);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_versions_installed_at_once_are_both_fully_registered() {
+    let f = fixture(false);
+    let (a, b) = (install(&f.core, "8.4"), install(&f.core, "8.3"));
+    assert_eq!(wait(&f.core, a).await.error, None);
+    assert_eq!(wait(&f.core, b).await.error, None);
+    let p = paths(&f);
+    let state = store::load(p);
+    assert!(state.extensions.contains_key("8.4") && state.extensions.contains_key("8.3"), "{state:?}");
+    assert!(p.bin.join(shim("php84")).is_file() && p.bin.join(shim("php83")).is_file());
+    assert!(p.config.join("php").join("8.3").join("php.ini").is_file());
 }

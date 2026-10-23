@@ -41,11 +41,22 @@ pub struct CoreState {
     pub started: Instant,
     pub jobs: Arc<Jobs>,
     pub catalog: Catalog,
+    /// One writer at a time for PHP installs, php.json, php.ini and the shims.
+    pub php_lock: Arc<std::sync::Mutex<()>>,
+    /// One download at a time of the shared tools (Composer, the CA bundle).
+    pub tools_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl CoreState {
     pub fn new(paths: HearthPaths) -> CoreState {
-        CoreState { paths, started: Instant::now(), jobs: Arc::default(), catalog: Catalog::default() }
+        CoreState {
+            paths,
+            started: Instant::now(),
+            jobs: Arc::default(),
+            catalog: Catalog::default(),
+            php_lock: Arc::default(),
+            tools_lock: Arc::default(),
+        }
     }
 }
 

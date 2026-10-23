@@ -69,12 +69,12 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             Err(e) => Err(e),
         },
         "php.use" => match text(params, "minor") {
-            Ok(minor) => service::use_version(paths, minor).map(|()| Value::Null).map_err(failed),
+            Ok(minor) => service::use_version(core, minor).map(|()| Value::Null).map_err(failed),
             Err(e) => Err(e),
         },
         "php.extension" => match (text(params, "minor"), text(params, "name"), flag(params, "on")) {
             (Ok(minor), Ok(name), Ok(on)) => {
-                service::set_extension(paths, minor, name, on).map(|()| Value::Null).map_err(failed)
+                service::set_extension(core, minor, name, on).map(|()| Value::Null).map_err(failed)
             }
             (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
         },
@@ -85,7 +85,7 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             Err(e) => Err(e),
         },
         "php.ini.set" => match (text(params, "minor"), text(params, "user")) {
-            (Ok(minor), Ok(user)) => service::set_ini_user(paths, minor, user).map(|()| Value::Null).map_err(failed),
+            (Ok(minor), Ok(user)) => service::set_ini_user(core, minor, user).map(|()| Value::Null).map_err(failed),
             (Err(e), _) | (_, Err(e)) => Err(e),
         },
         "tools.laravel" => Ok(json!({ "jobId": service::install_laravel_installer(core) })),
