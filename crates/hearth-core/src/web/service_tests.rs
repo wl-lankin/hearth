@@ -92,7 +92,10 @@ fn parking_a_folder_starts_its_php_pool_and_the_web_server() {
     assert!(status.running, "{status:?}");
     assert_eq!(status.error, None);
     assert!(answers(h.port));
-    assert!(answers(19840));
+    match Os::current() {
+        Os::Windows => assert!(answers(19840)),
+        Os::Macos => assert!(h.core.paths.run.join("php-8.4.sock").exists()),
+    }
     assert!(caddyfile(&h).contains(&format!("http://shop.test:{} {{", h.port)));
     h.core.supervisor.stop_all();
 }
@@ -142,6 +145,7 @@ fn a_site_on_a_removed_version_is_served_by_the_default_with_a_note() {
     registry::isolate(&h.core.paths, "shop", Some("8.3")).unwrap();
     let status = sync_with(&h.core, &example("fake_server")).unwrap();
     assert_eq!(status.notes.get("shop").map(String::as_str), Some("Uses the default PHP 8.4 (8.3 was removed)"));
-    assert!(caddyfile(&h).contains("127.0.0.1:19840"));
+    let pool = &crate::web::pools::pool_upstreams(&h.core.paths, Os::current(), "8.4")[0];
+    assert!(caddyfile(&h).contains(pool.as_str()));
     h.core.supervisor.stop_all();
 }

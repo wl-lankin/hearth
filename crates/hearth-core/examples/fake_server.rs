@@ -16,8 +16,32 @@ fn number_after(text: &str, key: &str) -> Option<u16> {
     })
 }
 
+/// php-fpm with `listen = "<socket path>"` (macOS): serve on that Unix socket instead of a port.
+#[cfg(unix)]
+fn listen_on_socket(conf: &str) -> bool {
+    let Some(path) = conf
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("listen"))
+        .map(|rest| rest.trim().trim_start_matches('=').trim().trim_matches('"').to_string())
+        .filter(|p| p.starts_with('/'))
+    else {
+        return false;
+    };
+    let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind socket");
+    for stream in listener.incoming() {
+        drop(stream);
+    }
+    true
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(unix)]
+    if let Some(conf) = arg_after(&args, "-y") {
+        if listen_on_socket(&std::fs::read_to_string(conf).unwrap_or_default()) {
+            return;
+        }
+    }
     let config = arg_after(&args, "--config").map(|f| std::fs::read_to_string(f).unwrap_or_default());
     let port = match args.first().map(String::as_str) {
         Some("validate") => {

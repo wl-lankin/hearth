@@ -28,6 +28,7 @@ fn spec(dir: &tempfile::TempDir, key: &str, port: u16, crash_after_ms: Option<u6
         cwd: None,
         log: dir.path().join(format!("{key}.log")),
         ready_port: Some(port),
+        ready_socket: None,
     }
 }
 

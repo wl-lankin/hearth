@@ -13,7 +13,7 @@ use crate::sites::caddyfile::{render, CaddyContext, Route, SiteRoute};
 use crate::sites::registry::{self, SiteKind};
 use crate::supervisor::{ProcessSpec, ProcessStatus};
 use crate::web::caddy_install::ensure_caddy;
-use crate::web::pools::{effective_php, pool_ports, pool_specs, write_pool_config};
+use crate::web::pools::{effective_php, pool_specs, pool_upstreams, write_pool_config};
 use crate::CoreError;
 
 const CADDY: &str = "caddy";
@@ -89,7 +89,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
             .and_then(|()| specs.into_iter().try_for_each(|spec| core.supervisor.ensure(spec)));
         match started {
             Ok(()) => {
-                upstreams.insert(minor.clone(), pool_ports(Os::current(), minor));
+                upstreams.insert(minor.clone(), pool_upstreams(paths, Os::current(), minor));
             }
             Err(e) => errors.push(format!("PHP {minor}: {e}")),
         }
@@ -138,6 +138,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
                 cwd: None,
                 log: paths.logs.join("caddy-process.log"),
                 ready_port: Some(config.http_port),
+                ready_socket: None,
             };
             if let Err(e) = core.supervisor.ensure(spec) {
                 errors.push(e.to_string());

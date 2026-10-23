@@ -33,6 +33,8 @@ pub struct ProcessSpec {
     pub log: PathBuf,
     /// The process counts as started once this port accepts connections.
     pub ready_port: Option<u16>,
+    /// Or: the process counts as started once this socket file exists.
+    pub ready_socket: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -140,9 +142,13 @@ impl Supervisor {
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
+        if let Some(socket) = &spec.ready_socket {
+            // A socket file left by a crash would look ready at once.
+            let _ = std::fs::remove_file(socket);
+        }
         let child = self.spawn(&spec)?;
         let key = spec.key.clone();
-        let (ready_port, log) = (spec.ready_port, spec.log.clone());
+        let (ready_port, ready_socket, log) = (spec.ready_port, spec.ready_socket.clone(), spec.log.clone());
         self.table.lock().unwrap().insert(
             key.clone(),
             Entry {
@@ -155,10 +161,12 @@ impl Supervisor {
                 backoff_step: 0,
             },
         );
-        let Some(port) = ready_port else { return Ok(()) };
+        if ready_port.is_none() && ready_socket.is_none() {
+            return Ok(());
+        }
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
-            if answers(port) {
+            if ready_port.is_some_and(answers) || ready_socket.as_ref().is_some_and(|s| s.exists()) {
                 return Ok(());
             }
             let exited = {

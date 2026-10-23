@@ -32,6 +32,7 @@ fn windows_pools_are_php_cgi_processes_with_hearths_ini() {
     assert!(first.env.iter().any(|(k, v)| k == "PHP_FCGI_MAX_REQUESTS" && v == "500"));
     assert_eq!(first.ready_port, Some(19840));
     assert_eq!(specs[3].key, "php-8.4-3");
+    assert_eq!(pool_upstreams(&p, Os::Windows, "8.4")[0], "127.0.0.1:19840");
 }
 
 #[test]
@@ -42,9 +43,15 @@ fn the_macos_pool_is_one_php_fpm_with_a_generated_config() {
     assert_eq!(specs[0].key, "php-8.4");
     assert!(specs[0].program.ends_with("sbin/php-fpm"));
     assert_eq!(specs[0].args[0], "-F");
+    // A socket in the private run folder: only this user can reach PHP (a TCP port would let any
+    // local user run PHP files as this user).
+    let socket = p.run.join("php-8.4.sock");
+    assert_eq!(specs[0].ready_port, None);
+    assert_eq!(specs[0].ready_socket, Some(socket.clone()));
+    assert_eq!(pool_upstreams(&p, Os::Macos, "8.4"), [format!("unix/{}", socket.display())]);
     let conf = render_fpm_conf(&p, "8.4");
     assert!(conf.contains("\ndaemonize = no\n"), "{conf}");
-    assert!(conf.contains("\nlisten = 127.0.0.1:19840\n"), "{conf}");
+    assert!(conf.contains(&format!("\nlisten = \"{}\"\nlisten.mode = 0600\n", socket.display())), "{conf}");
     assert!(conf.contains("\npm.max_children = 8\n"), "{conf}");
     assert!(conf.contains("\ncatch_workers_output = yes\n"), "{conf}");
 }

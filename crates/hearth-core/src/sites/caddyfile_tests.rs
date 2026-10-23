@@ -5,8 +5,8 @@ use super::caddyfile::*;
 
 fn ctx(routes: Vec<SiteRoute>) -> CaddyContext {
     let mut upstreams = BTreeMap::new();
-    upstreams.insert("8.4".to_string(), vec![19840, 19841]);
-    upstreams.insert("8.3".to_string(), vec![19830]);
+    upstreams.insert("8.4".to_string(), vec!["127.0.0.1:19840".to_string(), "127.0.0.1:19841".to_string()]);
+    upstreams.insert("8.3".to_string(), vec!["unix//Users/j/.config/hearth/run/php-8.3.sock".to_string()]);
     CaddyContext { http_port: 8080, routes, php_upstreams: upstreams, log: PathBuf::from(r"C:\h\logs\caddy.log") }
 }
 
@@ -35,7 +35,7 @@ fn a_site_isolated_to_another_version_uses_that_pool() {
         name: "old".into(),
         target: Route::Php { docroot: PathBuf::from("/srv/old"), minor: "8.3".into() },
     }]));
-    assert!(file.contains("\tphp_fastcgi 127.0.0.1:19830 {"), "{file}");
+    assert!(file.contains("\tphp_fastcgi unix//Users/j/.config/hearth/run/php-8.3.sock {"), "{file}");
 }
 
 #[test]

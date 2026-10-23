@@ -30,8 +30,8 @@ pub struct SiteRoute {
 pub struct CaddyContext {
     pub http_port: u16,
     pub routes: Vec<SiteRoute>,
-    /// PHP minor -> FastCGI ports of its running pool.
-    pub php_upstreams: BTreeMap<String, Vec<u16>>,
+    /// PHP minor -> FastCGI addresses of its running pool ("127.0.0.1:19840", "unix//.../php-8.4.sock").
+    pub php_upstreams: BTreeMap<String, Vec<String>>,
     pub log: PathBuf,
 }
 
@@ -56,11 +56,10 @@ pub fn render(ctx: &CaddyContext) -> String {
         let address = format!("http://{}.test:{}", route.name, ctx.http_port);
         match &route.target {
             Route::Php { docroot, minor } => {
-                let Some(ports) = ctx.php_upstreams.get(minor).filter(|p| !p.is_empty()) else {
+                let Some(upstreams) = ctx.php_upstreams.get(minor).filter(|p| !p.is_empty()) else {
                     let _ = writeln!(out, "# {}: PHP {minor} is not running", route.name);
                     continue;
                 };
-                let upstreams: Vec<String> = ports.iter().map(|p| format!("127.0.0.1:{p}")).collect();
                 let _ = write!(
                     out,
                     "{address} {{\n\troot * {}\n\tphp_fastcgi {} {{\n\t\tlb_policy least_conn\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
