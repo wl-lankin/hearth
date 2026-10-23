@@ -31,7 +31,7 @@ pub struct InstalledPhp {
 }
 
 pub fn install_dir(paths: &HearthPaths, minor: &str) -> PathBuf {
-    paths.bin.join("php").join(minor)
+    paths.data.join("php").join("versions").join(minor)
 }
 
 fn file(paths: &HearthPaths) -> PathBuf {
@@ -57,7 +57,7 @@ fn save(paths: &HearthPaths, state: &PhpState) -> Result<(), CoreError> {
 
 /// Installed versions, newest first.
 pub fn installed(paths: &HearthPaths) -> Vec<InstalledPhp> {
-    let Ok(entries) = std::fs::read_dir(paths.bin.join("php")) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(paths.data.join("php").join("versions")) else { return Vec::new() };
     let mut list: Vec<InstalledPhp> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| {
@@ -204,7 +204,7 @@ mod tests {
     fn a_folder_without_a_version_file_is_not_an_install() {
         let (_d, p) = home();
         std::fs::create_dir_all(install_dir(&p, "8.4")).unwrap();
-        std::fs::create_dir_all(p.bin.join("php").join("8.4.new")).unwrap();
+        std::fs::create_dir_all(p.data.join("php").join("versions").join("8.4.new")).unwrap();
         assert!(installed(&p).is_empty());
     }
 }
