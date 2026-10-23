@@ -271,7 +271,10 @@ pub fn use_version(core: &CoreState, minor: &str) -> Result<(), CoreError> {
 pub fn set_extension(core: &CoreState, minor: &str, name: &str, on: bool) -> Result<(), CoreError> {
     let _guard = locked(core);
     store::set_extension(&core.paths, minor, name, on)?;
-    apply_config(&core.paths, minor)
+    apply_config(&core.paths, minor)?;
+    // Running pools read php.ini only at start: the sync restarts them with the new one.
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 /// The generated part of php.ini and the user's own part.
@@ -289,7 +292,9 @@ pub fn set_ini_user(core: &CoreState, minor: &str, user: &str) -> Result<(), Cor
     let dir = ini_dir(paths, minor);
     std::fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
     crate::atomic::write(&dir.join("user.ini"), user.as_bytes())?;
-    apply_config(paths, minor)
+    apply_config(paths, minor)?;
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 /// Installs the Laravel installer (`laravel new`) with Composer into `<data>/composer`, as a job.

@@ -36,9 +36,17 @@ fn log_path(paths: &HearthPaths, minor: &str) -> PathBuf {
 }
 
 pub fn pool_specs(paths: &HearthPaths, os: Os, minor: &str) -> Vec<ProcessSpec> {
+    // PHP reads php.ini only at start: the file's fingerprint is part of the spec, so after a change
+    // (php.ini editor, Xdebug switch) the next sync sees a new spec and the supervisor restarts the pool.
+    let ini_fingerprint: String = {
+        use sha2::{Digest, Sha256};
+        let bytes = std::fs::read(ini_path(paths, minor)).unwrap_or_default();
+        Sha256::digest(&bytes).iter().take(8).map(|b| format!("{b:02x}")).collect()
+    };
     let env = vec![
         ("PHPRC".to_string(), ini_dir(paths, minor).into_os_string()),
         ("PHP_FCGI_MAX_REQUESTS".to_string(), OsString::from("500")),
+        ("HEARTH_PHP_INI".to_string(), OsString::from(ini_fingerprint)),
     ];
     let ini: OsString = ini_path(paths, minor).into_os_string();
     let ports = pool_ports(os, minor);

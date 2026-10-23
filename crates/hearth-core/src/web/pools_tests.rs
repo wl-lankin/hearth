@@ -68,3 +68,17 @@ fn a_site_on_a_removed_version_falls_back_to_the_default() {
     assert_eq!(effective_php(Some("8.3"), &[], None), (None, Some("PHP 8.3 is not installed".into())));
     assert_eq!(effective_php(None, &[], None), (None, Some("No PHP version is installed".into())));
 }
+
+#[test]
+fn a_changed_php_ini_changes_the_pool_so_it_restarts() {
+    let d = tempfile::tempdir().unwrap();
+    let p = HearthPaths::at(d.path());
+    p.ensure().unwrap();
+    let ini = p.config.join("php").join("8.4").join("php.ini");
+    std::fs::create_dir_all(ini.parent().unwrap()).unwrap();
+    std::fs::write(&ini, "memory_limit = 512M\n").unwrap();
+    let before = pool_specs(&p, Os::current(), "8.4");
+    assert_eq!(pool_specs(&p, Os::current(), "8.4"), before, "same ini: same spec, no restart");
+    std::fs::write(&ini, "memory_limit = 1G\n").unwrap();
+    assert_ne!(pool_specs(&p, Os::current(), "8.4"), before, "new ini: new spec, the supervisor restarts it");
+}
