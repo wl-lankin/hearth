@@ -18,6 +18,9 @@ base64 = "0.22"
 minisign-verify = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 futures-util = "0.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+flate2 = "1"
+tar = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
