@@ -4,9 +4,26 @@ use serde_json::Value;
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
+use crate::updates::{self, UpdateState, Updates};
+
 #[tauri::command]
 pub fn core_status(state: State<'_, CoreState>) -> Value {
     ipc::status_of(&state)
+}
+
+#[tauri::command]
+pub fn update_state(updates: State<'_, Updates>) -> UpdateState {
+    updates.state()
+}
+
+#[tauri::command]
+pub async fn update_check(app: AppHandle) {
+    updates::check(&app).await;
+}
+
+#[tauri::command]
+pub fn update_install_now(app: AppHandle) {
+    updates::install(&app, true);
 }
 
 #[tauri::command]

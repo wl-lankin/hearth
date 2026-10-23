@@ -15,6 +15,16 @@ export interface CoreStatus {
   home: string;
 }
 
+export type UpdateState =
+  | { phase: 'idle' }
+  | { phase: 'disabled' }
+  | { phase: 'checking' }
+  | { phase: 'current' }
+  | { phase: 'downloading'; version: string; progress: number }
+  | { phase: 'ready'; version: string }
+  | { phase: 'installing'; version: string }
+  | { phase: 'error'; message: string };
+
 /** Outside Tauri (`npm run dev` in a browser) the UI runs on canned data, for layout work and screenshots. */
 const demo = typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window);
 const demoStarted = Date.now();
@@ -39,4 +49,26 @@ export async function setSettings(settings: Settings): Promise<Settings> {
     return { ...demoSettings };
   }
   return invoke<Settings>('settings_set', { settings });
+}
+
+export async function updateState(): Promise<UpdateState> {
+  if (demo) return { phase: 'current' };
+  return invoke<UpdateState>('update_state');
+}
+
+/** Calls `onChange` with every new updater state; returns the unsubscribe function. */
+export async function onUpdateState(onChange: (state: UpdateState) => void): Promise<() => void> {
+  if (demo) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen<UpdateState>('update-state', (event) => onChange(event.payload));
+}
+
+export async function checkForUpdates(): Promise<void> {
+  if (demo) return;
+  await invoke('update_check');
+}
+
+export async function installUpdateNow(): Promise<void> {
+  if (demo) return;
+  await invoke('update_install_now');
 }

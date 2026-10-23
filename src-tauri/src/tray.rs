@@ -1,28 +1,43 @@
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager, Wry};
 
+use crate::updates::Updates;
 use crate::window;
 
+const TRAY: &str = "main";
 const OPEN: &str = "open";
+const UPDATE: &str = "update";
 const QUIT: &str = "quit";
 
+/// The tray menu; "Restart to update" appears once an update has been downloaded.
+fn menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    let menu = Menu::with_items(app, &[&MenuItem::with_id(app, OPEN, "Open Hearth", true, None::<&str>)?])?;
+    if let Some(version) = app.state::<Updates>().ready_version() {
+        menu.append(&MenuItem::with_id(
+            app,
+            UPDATE,
+            format!("Restart to update Hearth ({version})"),
+            true,
+            None::<&str>,
+        )?)?;
+    }
+    menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(app, QUIT, "Quit Hearth", true, None::<&str>)?)?;
+    Ok(menu)
+}
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    let menu = Menu::with_items(
-        app,
-        &[
-            &MenuItem::with_id(app, OPEN, "Open Hearth", true, None::<&str>)?,
-            &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, QUIT, "Quit Hearth", true, None::<&str>)?,
-        ],
-    )?;
-    let mut builder = TrayIconBuilder::with_id("main")
+    let mut builder = TrayIconBuilder::with_id(TRAY)
         .tooltip("Hearth")
-        .menu(&menu)
+        .menu(&menu(app)?)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             OPEN => window::show(app),
+            UPDATE => {
+                crate::updates::install(app, true);
+            }
             QUIT => crate::quit(app),
             _ => {}
         })
@@ -39,4 +54,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     }
     builder.build(app)?;
     Ok(())
+}
+
+/// Rebuilds the menu after the update state changed (a no-op before the tray exists).
+pub fn refresh(app: &AppHandle) {
+    let Some(tray) = app.tray_by_id(TRAY) else { return };
+    if let Ok(menu) = menu(app) {
+        let _ = tray.set_menu(Some(menu));
+    }
 }

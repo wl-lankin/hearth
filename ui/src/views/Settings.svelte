@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ThemeSetting } from '../api';
   import type { SettingsStore } from '../settings.svelte';
+  import Updates from './Updates.svelte';
 
   let { settings }: { settings: SettingsStore } = $props();
 
@@ -54,6 +55,8 @@
     <p class="error" role="alert">{settings.error}</p>
   {/if}
 </section>
+
+<Updates />
 
 <style>
   h1 {
