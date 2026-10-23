@@ -22,6 +22,8 @@ pub type Handler = Arc<dyn Fn(String, Value) -> HandlerFuture + Send + Sync>;
 pub struct ServerHandle {
     stop: watch::Sender<bool>,
     task: JoinHandle<()>,
+    /// Released (closed) only after the listener is gone, in `shutdown` or on drop.
+    _lock: std::fs::File,
 }
 
 impl ServerHandle {
@@ -34,10 +36,21 @@ impl ServerHandle {
 
 /// Starts the core server for this Hearth home. `AlreadyRunning` when a live core answers there.
 pub async fn serve(paths: &HearthPaths, handler: Handler) -> Result<ServerHandle, CoreError> {
+    // One core per home: the lock is held for the server's lifetime, so two cores starting at the same
+    // moment, or a live core that is too busy to answer, are never taken over.
+    let lock_path = paths.run.join("hearth.lock");
+    let lock = std::fs::File::create(&lock_path).map_err(|e| CoreError::io(&lock_path, e))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err(CoreError::AlreadyRunning),
+        Err(std::fs::TryLockError::Error(e)) => return Err(CoreError::io(&lock_path, e)),
+    }
     match client::call(paths, "core.ping", Value::Null).await {
-        Ok(_) => return Err(CoreError::AlreadyRunning),
+        // Nobody listens: the endpoint is free, or a crashed core left its socket file behind.
+        Err(CoreError::NotRunning) => {}
         Err(CoreError::ForeignEndpoint) => return Err(CoreError::ForeignEndpoint),
-        Err(_) => {}
+        // Something answers, or holds the endpoint without answering: never take it over.
+        _ => return Err(CoreError::AlreadyRunning),
     }
     let name = endpoint::name(paths).map_err(|e| CoreError::io(&paths.run, e))?;
     // A socket file nobody answers on is left over from a crash: take its place.
@@ -66,7 +79,7 @@ pub async fn serve(paths: &HearthPaths, handler: Handler) -> Result<ServerHandle
         // Dropping the listener releases the name (reclaim_name deletes the socket file on Unix).
         drop(listener);
     });
-    Ok(ServerHandle { stop, task })
+    Ok(ServerHandle { stop, task, _lock: lock })
 }
 
 #[cfg(windows)]
