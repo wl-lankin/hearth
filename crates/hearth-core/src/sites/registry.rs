@@ -105,7 +105,7 @@ fn check_name(name: &str) -> Result<(), CoreError> {
 }
 
 /// A folder name as a site name: lowercase, anything else becomes a dash ("blog site" -> "blog-site").
-fn name_from_folder(folder: &str) -> Option<String> {
+pub fn name_from_folder(folder: &str) -> Option<String> {
     let mapped: String = folder
         .to_lowercase()
         .chars()
