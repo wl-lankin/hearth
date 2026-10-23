@@ -82,6 +82,25 @@ async fn second_server_same_home_is_already_running() {
 }
 
 #[tokio::test]
+async fn held_lock_makes_serve_already_running() {
+    // A core that holds the lock but does not answer (busy, or starting at the same moment) is never taken over.
+    let (_d, paths) = home();
+    let lock = std::fs::File::create(paths.run.join("hearth.lock")).unwrap();
+    lock.try_lock().unwrap();
+    let state = CoreState { paths: paths.clone(), started: Instant::now() };
+    assert!(matches!(serve(&paths, router(state)).await, Err(CoreError::AlreadyRunning)));
+}
+
+#[tokio::test]
+async fn shutdown_releases_the_lock_for_the_next_core() {
+    let (_d, paths) = home();
+    start(&paths).await.shutdown().await;
+    let again = start(&paths).await;
+    assert_eq!(call(&paths, "core.ping", Value::Null).await.unwrap(), json!("pong"));
+    again.shutdown().await;
+}
+
+#[tokio::test]
 async fn two_homes_do_not_collide() {
     let (_a, first) = home_named("one");
     let (_b, second) = home_named("two");
