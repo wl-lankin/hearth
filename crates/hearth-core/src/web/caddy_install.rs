@@ -22,8 +22,25 @@ fn binary_in(dir: &Path, tool: &Tool) -> PathBuf {
     dir.join(&tool.binary)
 }
 
-/// Installs Caddy unless this version is already there; returns the program's path.
+/// The newest installed Caddy, if any (`<data>/caddy/<version>/caddy[.exe]`).
+fn installed_caddy(core: &CoreState) -> Option<PathBuf> {
+    let name = if Os::current() == Os::Windows { "caddy.exe" } else { "caddy" };
+    let mut found: Vec<(String, PathBuf)> = std::fs::read_dir(core.paths.data.join("caddy"))
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path().join(name)))
+        .filter(|(_, program)| program.is_file())
+        .collect();
+    found.sort_by(|a, b| crate::php::manifest::compare_versions(&a.0, &b.0));
+    found.pop().map(|(_, program)| program)
+}
+
+/// Caddy's path: an installed one without touching the network (every web server sync asks), else
+/// installed from the catalog. Updating Caddy is left to the catalog checks of later releases.
 pub async fn ensure_caddy(core: &CoreState) -> Result<PathBuf, CoreError> {
+    if let Some(program) = installed_caddy(core) {
+        return Ok(program);
+    }
     let manifest = fetch(&core.paths, &core.catalog.url, &core.catalog.public_key).await?;
     let tool = pick_caddy(&manifest)?.clone();
     let dir = core.paths.data.join("caddy").join(&tool.version);

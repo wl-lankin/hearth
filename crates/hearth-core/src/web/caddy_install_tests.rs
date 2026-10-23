@@ -11,6 +11,8 @@ async fn caddy_is_installed_once_and_reused() {
     let second = ensure_caddy(&f.core).await.unwrap();
     assert_eq!(first, second);
     assert_eq!(f.hits.lock().unwrap().get("/caddy").copied(), Some(1), "downloaded only once");
+    // Every web server sync asks for Caddy: once it is installed, no catalog request per sync.
+    assert_eq!(f.hits.lock().unwrap().get("/manifest.json").copied(), Some(1), "catalog read only once");
 }
 
 #[test]
