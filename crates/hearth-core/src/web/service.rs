@@ -173,12 +173,16 @@ fn validated(caddy: &Path, path: &Path, rendered: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let candidate = dir.join("Caddyfile.new");
     std::fs::write(&candidate, rendered).map_err(|e| e.to_string())?;
-    let output = std::process::Command::new(caddy)
-        .args(["validate", "--config"])
-        .arg(&candidate)
-        .args(["--adapter", "caddyfile"])
-        .output()
-        .map_err(|e| format!("Could not run Caddy: {e}"))?;
+    let mut command = std::process::Command::new(caddy);
+    command.args(["validate", "--config"]).arg(&candidate).args(["--adapter", "caddyfile"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // Caddy is a console program; without this, every config change flashes a console window.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command.output().map_err(|e| format!("Could not run Caddy: {e}"))?;
     if !output.status.success() {
         let _ = std::fs::remove_file(&candidate);
         let text = String::from_utf8_lossy(&output.stderr);
