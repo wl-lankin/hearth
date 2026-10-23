@@ -147,3 +147,19 @@ export const phpIniSet = async (minor: string, user: string): Promise<void> => {
 };
 export const phpInstallLaravel = (): Promise<{ jobId: number }> =>
   demo ? Promise.resolve({ jobId: 2 }) : core('tools.laravel');
+
+export interface TerminalStatus {
+  enabled: boolean;
+  /** Other PATH folders with a php command (e.g. Herd's). */
+  others: string[];
+}
+
+let demoTerminal: TerminalStatus = { enabled: false, others: ['C:\Users\you\.config\herd\bin'] };
+export const terminalGet = (): Promise<TerminalStatus> => (demo ? Promise.resolve({ ...demoTerminal }) : core('terminal.get'));
+export const terminalSet = async (on: boolean): Promise<TerminalStatus> => {
+  if (demo) {
+    demoTerminal = { ...demoTerminal, enabled: on };
+    return { ...demoTerminal };
+  }
+  return core('terminal.set', { on });
+};

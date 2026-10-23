@@ -93,6 +93,170 @@ pub fn has_php(dir: &str) -> bool {
     ["php", "php.bat", "php.exe", "php.cmd"].iter().any(|name| dir.join(name).is_file())
 }
 
+/// Whether terminals use Hearth's PHP, and which other folders on PATH also have a `php`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalStatus {
+    pub enabled: bool,
+    pub others: Vec<String>,
+}
+
+fn others(ours: &str) -> Vec<String> {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut list = others_with_php(&current, ours, sep, cfg!(windows), has_php);
+    list.dedup();
+    list
+}
+
+#[cfg(windows)]
+pub fn terminal_status(paths: &crate::HearthPaths) -> Result<TerminalStatus, CoreError> {
+    let ours = paths.bin.display().to_string();
+    let (value, _) = registry::user_path()?;
+    let enabled = value.split(';').any(|e| same(e, &ours, true));
+    Ok(TerminalStatus { enabled, others: others(&ours) })
+}
+
+#[cfg(windows)]
+pub fn set_terminal(paths: &crate::HearthPaths, on: bool) -> Result<TerminalStatus, CoreError> {
+    let ours = paths.bin.display().to_string();
+    let (value, kind) = registry::user_path()?;
+    let next = if on { with_entry(&value, &ours, ';', true) } else { without_entry(&value, &ours, ';', true) };
+    if next != value {
+        registry::set_user_path(&next, kind)?;
+    }
+    terminal_status(paths)
+}
+
+#[cfg(unix)]
+fn profiles() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    vec![home.join(".zprofile"), home.join(".bash_profile")]
+}
+
+#[cfg(unix)]
+fn profile_line(paths: &crate::HearthPaths) -> String {
+    // Inside double quotes only these four are special to the shell.
+    let bin = paths
+        .bin
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$")
+        .replace('`', "\\`");
+    format!("export PATH=\"{bin}:$PATH\"")
+}
+
+#[cfg(unix)]
+pub fn terminal_status(paths: &crate::HearthPaths) -> Result<TerminalStatus, CoreError> {
+    Ok(TerminalStatus { enabled: profile_has_block(&profiles()), others: others(&paths.bin.display().to_string()) })
+}
+
+#[cfg(unix)]
+pub fn set_terminal(paths: &crate::HearthPaths, on: bool) -> Result<TerminalStatus, CoreError> {
+    apply_profiles(&profiles(), &profile_line(paths), on)?;
+    terminal_status(paths)
+}
+
+/// The user's PATH in `HKCU\Environment`, written back with its original value type.
+#[cfg(windows)]
+mod registry {
+    use std::ptr::null_mut;
+
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE,
+        KEY_SET_VALUE, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HWND_BROADCAST, SMTO_ABORTIFHUNG, WM_SETTINGCHANGE,
+    };
+
+    use crate::CoreError;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    fn failed(what: &str, code: u32) -> CoreError {
+        CoreError::Php(format!("Could not {what} the user PATH (Windows error {code})"))
+    }
+
+    struct Key(HKEY);
+
+    impl Drop for Key {
+        fn drop(&mut self) {
+            // SAFETY: the key was opened by `open` and is closed once.
+            unsafe { RegCloseKey(self.0) };
+        }
+    }
+
+    fn open(access: u32) -> Result<Key, CoreError> {
+        let mut key: HKEY = null_mut();
+        // SAFETY: valid NUL-terminated name and out pointer.
+        let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide("Environment").as_ptr(), 0, access, &mut key) };
+        if status != ERROR_SUCCESS {
+            return Err(failed("open", status));
+        }
+        Ok(Key(key))
+    }
+
+    /// The value (empty when unset) and its type (REG_EXPAND_SZ for a new value).
+    pub fn user_path() -> Result<(String, REG_VALUE_TYPE), CoreError> {
+        let key = open(KEY_QUERY_VALUE)?;
+        let name = wide("Path");
+        let (mut kind, mut size) = (0u32, 0u32);
+        // SAFETY: size query with a null buffer.
+        let status = unsafe { RegQueryValueExW(key.0, name.as_ptr(), null_mut(), &mut kind, null_mut(), &mut size) };
+        if status == ERROR_FILE_NOT_FOUND {
+            return Ok((String::new(), REG_EXPAND_SZ));
+        }
+        if status != ERROR_SUCCESS {
+            return Err(failed("read", status));
+        }
+        let mut buf = vec![0u16; (size as usize).div_ceil(2) + 1];
+        // SAFETY: the buffer holds `size` bytes plus one spare u16.
+        let status = unsafe {
+            RegQueryValueExW(key.0, name.as_ptr(), null_mut(), &mut kind, buf.as_mut_ptr().cast(), &mut size)
+        };
+        if status != ERROR_SUCCESS {
+            return Err(failed("read", status));
+        }
+        let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        let kind = if kind == REG_SZ { REG_SZ } else { REG_EXPAND_SZ };
+        Ok((String::from_utf16_lossy(&buf[..len]), kind))
+    }
+
+    /// Writes the value, then tells running programs (Explorer, new terminals) that it changed.
+    pub fn set_user_path(value: &str, kind: REG_VALUE_TYPE) -> Result<(), CoreError> {
+        let key = open(KEY_SET_VALUE)?;
+        let data = wide(value);
+        // SAFETY: `data` is NUL-terminated UTF-16 and its byte length is passed.
+        let status = unsafe {
+            RegSetValueExW(key.0, wide("Path").as_ptr(), 0, kind, data.as_ptr().cast(), (data.len() * 2) as u32)
+        };
+        if status != ERROR_SUCCESS {
+            return Err(failed("change", status));
+        }
+        let env = wide("Environment");
+        let mut result = 0usize;
+        // SAFETY: broadcast with a 2 s timeout so a hung window cannot block Hearth.
+        unsafe {
+            SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SETTINGCHANGE,
+                0,
+                env.as_ptr() as isize,
+                SMTO_ABORTIFHUNG,
+                2000,
+                &mut result,
+            )
+        };
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
