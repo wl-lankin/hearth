@@ -11,7 +11,7 @@ use tokio::task::JoinHandle;
 
 use super::lines::read_line;
 use super::protocol::{Request, Response, RpcError, PARSE_ERROR};
-use super::{client, endpoint};
+use super::{client, endpoint, peer};
 use crate::{CoreError, HearthPaths};
 
 pub type HandlerFuture = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + Send>>;
@@ -59,6 +59,7 @@ pub async fn serve(paths: &HearthPaths, handler: Handler) -> Result<ServerHandle
     // On Windows the first pipe instance is created exclusively, so a pre-created pipe of the same
     // name makes this fail instead of sharing it.
     let listener = options.create_tokio().map_err(|e| CoreError::io(&paths.run, e))?;
+    after_bind(paths)?;
 
     let (stop, mut stopped) = watch::channel(false);
     let task = tokio::spawn(async move {
@@ -67,7 +68,11 @@ pub async fn serve(paths: &HearthPaths, handler: Handler) -> Result<ServerHandle
             tokio::select! {
                 _ = stopped.changed() => break,
                 accepted = listener.accept() => match accepted {
-                    Ok(stream) => connections.push(tokio::spawn(handle_connection(stream, handler.clone()))),
+                    // Defence in depth next to the pipe ACL / private run dir: serve only the current user.
+                    Ok(stream) if peer::is_trusted(&stream).unwrap_or(false) => {
+                        connections.push(tokio::spawn(handle_connection(stream, handler.clone())))
+                    }
+                    Ok(_) => continue,
                     Err(_) => continue,
                 },
             }
@@ -102,12 +107,27 @@ fn restrict_to_current_user<'n>(
     options: ListenerOptions<'n>,
     paths: &HearthPaths,
 ) -> Result<ListenerOptions<'n>, CoreError> {
-    use interprocess::os::unix::local_socket::ListenerOptionsExt;
     use std::os::unix::fs::PermissionsExt;
 
+    // The private run dir is the real guard: other users cannot reach the socket inside it. (Setting
+    // the socket's mode before bind needs fchmod on a socket, which macOS refuses.)
     std::fs::set_permissions(&paths.run, std::fs::Permissions::from_mode(0o700))
         .map_err(|e| CoreError::io(&paths.run, e))?;
-    Ok(options.mode(0o600))
+    Ok(options)
+}
+
+/// After bind: the socket file itself is private too.
+#[cfg(unix)]
+fn after_bind(paths: &HearthPaths) -> Result<(), CoreError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let socket = endpoint::socket_path(paths);
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).map_err(|e| CoreError::io(socket, e))
+}
+
+#[cfg(windows)]
+fn after_bind(_paths: &HearthPaths) -> Result<(), CoreError> {
+    Ok(())
 }
 
 async fn handle_connection(stream: Stream, handler: Handler) {
