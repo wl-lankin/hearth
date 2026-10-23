@@ -251,7 +251,12 @@ fn watch(table: &Table, #[cfg(windows)] job: &job::Job) {
         if let Some(child) = entry.child.as_mut() {
             if let Ok(Some(status)) = child.try_wait() {
                 entry.child = None;
-                entry.last_error = Some(format!("{} exited ({status})", entry.spec.key));
+                let tail = log_tail(&entry.spec.log);
+                entry.last_error = Some(if tail.is_empty() {
+                    format!("{} exited ({status})", entry.spec.key)
+                } else {
+                    format!("{} exited ({status}): {tail}", entry.spec.key)
+                });
                 if entry.started.elapsed() >= STABLE {
                     entry.backoff_step = 0;
                 }

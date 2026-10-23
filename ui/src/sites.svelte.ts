@@ -65,6 +65,13 @@ export function createSitesStore(api: SitesApi) {
     get defaultPhp() {
       return php.default;
     },
+    /** The one-line web server state above the sites. */
+    get server(): { kind: 'error' | 'running' | 'stopped' | 'idle'; text: string } {
+      if (status?.error) return { kind: 'error', text: status.error };
+      if (status?.running) return { kind: 'running', text: `Serving on port ${list.httpPort}` };
+      if (list.sites.length > 0) return { kind: 'stopped', text: 'Not running yet' };
+      return { kind: 'idle', text: 'Not serving yet: park or link a folder' };
+    },
     /** The next port when the current one is taken by another program. */
     get portSuggestion(): number | null {
       const taken = status?.error?.match(/^Port (\d+) is used by another program/);

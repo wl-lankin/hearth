@@ -64,6 +64,21 @@ describe('sites store', () => {
     expect(store.parked).toEqual(['C:\\p']);
   });
 
+  test('the server line never claims there is nothing to serve when sites exist', async () => {
+    const api = fakeApi();
+    api.setStatus({ httpPort: 8080, running: false, processes: [], error: null, notes: {} });
+    const store = createSitesStore(api);
+    await store.load();
+    expect(store.server).toEqual({ kind: 'stopped', text: 'Not running yet' });
+    api.setList({ sites: [], parked: [], httpPort: 8080 });
+    await store.load();
+    expect(store.server).toEqual({ kind: 'idle', text: 'Not serving yet: park or link a folder' });
+    api.setList({ sites: [shop], parked: [], httpPort: 8080 });
+    api.setStatus({ httpPort: 8080, running: false, processes: [], error: 'caddy exited (exit code: 1)', notes: {} });
+    await store.load();
+    expect(store.server).toEqual({ kind: 'error', text: 'caddy exited (exit code: 1)' });
+  });
+
   test('a taken port suggests the next one', async () => {
     const api = fakeApi();
     api.setStatus({ httpPort: 8080, running: false, processes: [], error: 'Port 8080 is used by another program', notes: {} });

@@ -46,18 +46,12 @@
 <h1>Sites</h1>
 
 <section class="server" aria-live="polite">
-  {#if store.status?.error}
-    <span class="dot bad" aria-hidden="true"></span>
-    <span class="error">{store.status.error}</span>
-    {#if store.portSuggestion}
-      <button onclick={() => store.setPort(store.portSuggestion!)}>Use port {store.portSuggestion}</button>
-    {/if}
-  {:else if store.status?.running}
-    <span class="dot ok" aria-hidden="true"></span>
-    <span>Serving on port {store.httpPort}</span>
-  {:else}
-    <span class="dot" aria-hidden="true"></span>
-    <span class="muted">Not serving yet: park or link a folder</span>
+  <span class="dot" class:ok={store.server.kind === 'running'} class:bad={store.server.kind === 'error'} aria-hidden="true"></span>
+  <span class:error={store.server.kind === 'error'} class:muted={store.server.kind !== 'running' && store.server.kind !== 'error'}>
+    {store.server.text}
+  </span>
+  {#if store.portSuggestion}
+    <button onclick={() => store.setPort(store.portSuggestion!)}>Use port {store.portSuggestion}</button>
   {/if}
   <span class="actions">
     <button onclick={parkFolder}>Park a folder</button>

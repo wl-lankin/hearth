@@ -101,7 +101,8 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
     }
 
     // Caddy: only with something to serve.
-    let serving = !routes.is_empty();
+    // Caddy only with a site it can serve (comments alone would leave it without a listener).
+    let serving = routes.iter().any(|r| !matches!(r.target, Route::Skip { .. }));
     if !serving {
         core.supervisor.stop(CADDY);
     } else {
@@ -148,7 +149,18 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
 
     let processes = core.supervisor.status();
     let running = processes.iter().any(|p| p.key == CADDY && p.running);
-    Ok(WebStatus { http_port: config.http_port, running, processes, error: errors.into_iter().last(), notes })
+    // A process that should run but does not (crashed, waiting to restart) is never silent.
+    if serving {
+        wanted_keys.insert(CADDY.into());
+    }
+    for p in processes.iter().filter(|p| wanted_keys.contains(&p.key) && !p.running) {
+        let why = p.last_error.clone().unwrap_or_else(|| format!("{} is not running", p.key));
+        if !errors.contains(&why) {
+            errors.push(why);
+        }
+    }
+    let error = (!errors.is_empty()).then(|| errors.join("; "));
+    Ok(WebStatus { http_port: config.http_port, running, processes, error, notes })
 }
 
 /// Writes `rendered` as the new Caddyfile only when Caddy accepts it; otherwise the last good one stays.

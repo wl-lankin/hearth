@@ -149,3 +149,44 @@ fn a_site_on_a_removed_version_is_served_by_the_default_with_a_note() {
     assert!(caddyfile(&h).contains(pool.as_str()));
     h.core.supervisor.stop_all();
 }
+
+#[test]
+fn sites_that_cannot_be_served_do_not_start_the_web_server() {
+    let h = home();
+    let empty = h.projects.join("..").join("Empty");
+    std::fs::create_dir_all(empty.join("notes")).unwrap();
+    registry::park(&h.core.paths, &empty).unwrap();
+    let started = std::time::Instant::now();
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    assert!(!status.running);
+    assert_eq!(status.error, None, "nothing to serve is not an error");
+    assert!(started.elapsed() < Duration::from_secs(2), "no 5 s wait for a Caddy without sites");
+    assert!(h.core.supervisor.status().is_empty());
+}
+
+#[test]
+fn a_web_server_that_dies_later_is_reported() {
+    let h = home();
+    registry::park(&h.core.paths, &h.projects).unwrap();
+    let first = sync_with(&h.core, &example("fake_server")).unwrap();
+    assert!(first.running);
+    let pid = h.core.supervisor.status().into_iter().find(|p| p.key == "caddy").and_then(|p| p.pid).unwrap();
+    kill(pid);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while h.core.supervisor.status().iter().any(|p| p.key == "caddy" && p.running) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    if !status.running {
+        assert!(status.error.as_deref().unwrap_or_default().contains("caddy"), "{status:?}");
+    }
+    h.core.supervisor.stop_all();
+}
+
+fn kill(pid: u32) {
+    #[cfg(windows)]
+    std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output().unwrap();
+    #[cfg(unix)]
+    std::process::Command::new("kill").args(["-9", &pid.to_string()]).output().unwrap();
+}
