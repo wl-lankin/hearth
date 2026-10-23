@@ -129,6 +129,39 @@ fn endpoint_names_differ_per_home_and_are_safe() {
     assert!(n1.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'), "{n1}");
 }
 
+#[cfg(windows)]
+#[test]
+fn own_process_counts_as_same_user() {
+    assert!(peer::same_user_as_me(std::process::id()));
+}
+
+#[cfg(windows)]
+#[test]
+fn system_process_is_not_same_user() {
+    // PID 4 is the Windows "System" process, which never runs as the logged-in user.
+    assert!(!peer::same_user_as_me(4));
+}
+
+#[cfg(windows)]
+#[test]
+fn pipe_is_restricted_to_the_current_user() {
+    let sddl = peer::pipe_sddl().unwrap();
+    assert!(sddl.starts_with("D:P(A;;GA;;;S-1-"), "{sddl}");
+    assert_eq!(sddl.matches("(A;").count(), 1, "{sddl}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn run_dir_and_socket_are_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, paths) = home();
+    let server = start(&paths).await;
+    let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&paths.run), 0o700);
+    assert_eq!(mode(&paths.run.join("hearth.sock")), 0o600);
+    server.shutdown().await;
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn stale_socket_is_replaced() {

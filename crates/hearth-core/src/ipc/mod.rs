@@ -3,6 +3,7 @@
 mod client;
 pub(crate) mod endpoint;
 mod lines;
+mod peer;
 pub mod protocol;
 mod server;
 

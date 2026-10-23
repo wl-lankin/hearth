@@ -11,6 +11,8 @@ pub enum CoreError {
     AlreadyRunning,
     #[error("Hearth core is not running")]
     NotRunning,
+    #[error("the Hearth endpoint is held by a process of another user")]
+    ForeignEndpoint,
     #[error("protocol error: {0}")]
     Protocol(String),
     #[error("{message} (code {code})")]

@@ -34,16 +34,18 @@ impl ServerHandle {
 
 /// Starts the core server for this Hearth home. `AlreadyRunning` when a live core answers there.
 pub async fn serve(paths: &HearthPaths, handler: Handler) -> Result<ServerHandle, CoreError> {
-    if client::call(paths, "core.ping", Value::Null).await.is_ok() {
-        return Err(CoreError::AlreadyRunning);
+    match client::call(paths, "core.ping", Value::Null).await {
+        Ok(_) => return Err(CoreError::AlreadyRunning),
+        Err(CoreError::ForeignEndpoint) => return Err(CoreError::ForeignEndpoint),
+        Err(_) => {}
     }
     let name = endpoint::name(paths).map_err(|e| CoreError::io(&paths.run, e))?;
     // A socket file nobody answers on is left over from a crash: take its place.
-    let listener = ListenerOptions::new()
-        .name(name)
-        .try_overwrite(true)
-        .create_tokio()
-        .map_err(|e| CoreError::io(&paths.run, e))?;
+    let options = ListenerOptions::new().name(name).try_overwrite(true);
+    let options = restrict_to_current_user(options, paths)?;
+    // On Windows the first pipe instance is created exclusively, so a pre-created pipe of the same
+    // name makes this fail instead of sharing it.
+    let listener = options.create_tokio().map_err(|e| CoreError::io(&paths.run, e))?;
 
     let (stop, mut stopped) = watch::channel(false);
     let task = tokio::spawn(async move {
@@ -65,6 +67,34 @@ pub async fn serve(paths: &HearthPaths, handler: Handler) -> Result<ServerHandle
         drop(listener);
     });
     Ok(ServerHandle { stop, task })
+}
+
+#[cfg(windows)]
+fn restrict_to_current_user<'n>(
+    options: ListenerOptions<'n>,
+    paths: &HearthPaths,
+) -> Result<ListenerOptions<'n>, CoreError> {
+    use interprocess::os::windows::local_socket::ListenerOptionsExt;
+    use interprocess::os::windows::security_descriptor::SecurityDescriptor;
+
+    let denied = |what: &str| CoreError::io(&paths.run, std::io::Error::other(what.to_string()));
+    let sddl = super::peer::pipe_sddl().ok_or_else(|| denied("the current user could not be determined"))?;
+    let sddl = widestring::U16CString::from_str(sddl).map_err(|_| denied("invalid security descriptor"))?;
+    let descriptor = SecurityDescriptor::deserialize(&sddl).map_err(|e| CoreError::io(&paths.run, e))?;
+    Ok(options.security_descriptor(descriptor))
+}
+
+#[cfg(unix)]
+fn restrict_to_current_user<'n>(
+    options: ListenerOptions<'n>,
+    paths: &HearthPaths,
+) -> Result<ListenerOptions<'n>, CoreError> {
+    use interprocess::os::unix::local_socket::ListenerOptionsExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::set_permissions(&paths.run, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| CoreError::io(&paths.run, e))?;
+    Ok(options.mode(0o600))
 }
 
 async fn handle_connection(stream: Stream, handler: Handler) {
