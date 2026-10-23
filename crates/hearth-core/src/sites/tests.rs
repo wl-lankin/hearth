@@ -85,10 +85,26 @@ fn names_and_upstreams_are_checked() {
             "Use lowercase letters, digits and dashes for the site name"
         );
     }
-    assert_eq!(
-        proxy(&p, "vite", "ftp://localhost:21").unwrap_err().to_string(),
-        "Use an address like http://localhost:5173"
-    );
+    // Caddy takes scheme, host and port only; anything else could also inject Caddyfile text.
+    for bad in [
+        "ftp://localhost:21",
+        "http://localhost:5173/app",
+        "http://localhost:5173 {",
+        "http://localhost:5173\n:80 {",
+        "http://local host:5173",
+        "http://:5173",
+        "http://localhost:99999",
+        "http://localhost:51x3",
+    ] {
+        assert_eq!(
+            proxy(&p, "vite", bad).unwrap_err().to_string(),
+            "Use an address like http://localhost:5173",
+            "{bad:?}"
+        );
+    }
+    for good in ["http://localhost", "https://127.0.0.1:8443", "http://[::1]:5173", "http://my-app.local:3000/"] {
+        assert!(proxy(&p, "ok", good).is_ok(), "{good}");
+    }
     proxy(&p, "vite", "http://localhost:5173").unwrap();
     let vite = list(&p).into_iter().find(|s| s.name == "vite").unwrap();
     assert_eq!((vite.kind, vite.upstream.as_deref()), (SiteKind::Proxy, Some("http://localhost:5173")));

@@ -212,13 +212,33 @@ pub fn unlink(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
     save(paths, &config)
 }
 
-/// `http(s)://host:port` with a host and nothing after the port but an optional path.
+/// `http(s)://host[:port]` and nothing else (a trailing `/` is dropped): Caddy's proxy upstreams take
+/// no path, and only host/port characters can reach the Caddyfile.
 fn valid_upstream(upstream: &str) -> bool {
     let Some(rest) = upstream.strip_prefix("http://").or_else(|| upstream.strip_prefix("https://")) else {
         return false;
     };
-    let host_port = rest.split('/').next().unwrap_or_default();
-    !host_port.is_empty() && !host_port.contains(char::is_whitespace) && !host_port.contains(['{', '}', '"'])
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let (host, port) = if let Some(v6) = rest.strip_prefix('[') {
+        match v6.split_once(']') {
+            Some((addr, after)) if !addr.is_empty() && addr.chars().all(|c| c.is_ascii_hexdigit() || c == ':') => {
+                (addr, after.strip_prefix(':'))
+            }
+            _ => return false,
+        }
+    } else {
+        match rest.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (rest, None),
+        }
+    };
+    if host.is_empty() || !host.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == ':') {
+        return false;
+    }
+    match port {
+        None => !rest.ends_with(':'),
+        Some(p) => p.parse::<u16>().is_ok_and(|n| n > 0),
+    }
 }
 
 pub fn proxy(paths: &HearthPaths, name: &str, upstream: &str) -> Result<(), CoreError> {
