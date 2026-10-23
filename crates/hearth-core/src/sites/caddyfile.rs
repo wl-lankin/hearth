@@ -94,7 +94,11 @@ pub fn render(ctx: &CaddyContext) -> String {
                 );
             }
             Route::Proxy { upstream } => {
-                let _ = write!(out, "{address} {{\n\treverse_proxy {upstream}\n}}\n");
+                // Dev servers (Vite 6) only accept their own host; `{upstream_hostport}` is Caddy's placeholder.
+                let _ = write!(
+                    out,
+                    "{address} {{\n\treverse_proxy {upstream} {{\n\t\theader_up Host {{upstream_hostport}}\n\t}}\n}}\n"
+                );
             }
             Route::Skip { reason } => {
                 let _ = writeln!(out, "# {}: {reason}", route.name);

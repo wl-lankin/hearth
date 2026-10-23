@@ -50,7 +50,13 @@ fn a_proxy_forwards_to_its_upstream() {
         name: "app.shop".into(),
         target: Route::Proxy { upstream: "http://localhost:5173".into() },
     }]));
-    assert!(file.contains("\nhttp://app.shop.test:8080 {\n\treverse_proxy http://localhost:5173\n}\n"), "{file}");
+    // Dev servers like Vite 6 refuse unknown Host headers: send the upstream's own host.
+    assert!(
+        file.contains(
+            "\nhttp://app.shop.test:8080 {\n\treverse_proxy http://localhost:5173 {\n\t\theader_up Host {upstream_hostport}\n\t}\n}\n"
+        ),
+        "{file}"
+    );
 }
 
 #[test]
