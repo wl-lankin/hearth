@@ -9,7 +9,7 @@ use std::time::Instant;
 use hearth_core::ipc::{self, CoreState, ServerHandle};
 use hearth_core::{paths, settings, CoreError, HearthPaths};
 use tauri::{AppHandle, Manager, WindowEvent};
-use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 
 /// The running IPC server, taken on quit so its endpoint is released before the process exits.
@@ -24,15 +24,24 @@ pub fn run() {
             std::process::exit(1);
         }
     };
+    let first_run = !settings::exists(&paths);
+    let default_home = startup::use_single_instance(std::env::var_os(paths::HOME_VAR).as_deref());
+    // Only an installed copy registers itself at login: never a dev build or a custom (test) home.
+    let installed = !cfg!(debug_assertions) && default_home;
     let state = CoreState { paths, started: Instant::now() };
 
     let mut builder = tauri::Builder::default();
-    if startup::use_single_instance(std::env::var_os(paths::HOME_VAR).as_deref()) {
+    if default_home {
         // Registered first: a second Hearth process only brings the first one's window up.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::show(app)));
     }
     builder
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![startup::HIDDEN_FLAG])))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .app_name(startup::LOGIN_ENTRY_NAME)
+                .arg(startup::HIDDEN_FLAG)
+                .build(),
+        )
         .plugin(tauri_plugin_dialog::init())
         .manage(state.clone())
         .manage(Server::default())
@@ -60,8 +69,20 @@ pub fn run() {
                 }
             }
             tray::create(&handle)?;
+            let current = settings::load(&state.paths);
+            if let Some(next) = startup::first_run_settings(first_run, installed, &current) {
+                // A failure leaves the setting off; the next start tries again (no settings file yet).
+                match handle.autolaunch().enable() {
+                    Ok(()) => {
+                        if let Err(e) = settings::save(&state.paths, &next) {
+                            eprintln!("Hearth could not save its settings: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("Hearth could not register Start at login: {e}"),
+                }
+            }
             let args: Vec<String> = std::env::args().collect();
-            if !startup::start_hidden(&settings::load(&state.paths), &args) {
+            if !startup::start_hidden(&current, &args) {
                 window::show(&handle);
             }
             Ok(())

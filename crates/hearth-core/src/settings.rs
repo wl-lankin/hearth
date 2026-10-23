@@ -56,6 +56,11 @@ fn keep_aside(paths: &HearthPaths) -> Result<(), CoreError> {
     std::fs::rename(&from, paths.config.join(format!("settings.json.corrupt-{ts}"))).map_err(|e| CoreError::io(from, e))
 }
 
+/// True once settings were saved for this Hearth home (false on its very first run).
+pub fn exists(paths: &HearthPaths) -> bool {
+    file(paths).exists()
+}
+
 /// Never fails: a missing file gives the defaults, and a file that does not parse (also one in
 /// another encoding) is kept aside as `settings.json.corrupt-<unix-ts>` before the defaults apply.
 pub fn load(paths: &HearthPaths) -> Settings {
@@ -93,6 +98,14 @@ mod tests {
 
     fn file(paths: &HearthPaths) -> std::path::PathBuf {
         paths.config.join("settings.json")
+    }
+
+    #[test]
+    fn exists_is_false_before_the_first_save() {
+        let (_d, paths) = home();
+        assert!(!exists(&paths));
+        save(&paths, &Settings::default()).unwrap();
+        assert!(exists(&paths));
     }
 
     #[test]

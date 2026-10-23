@@ -31,13 +31,25 @@
         "img-src": "'self' data:",
         "connect-src": "'self' ipc: http://ipc.localhost"
       },
-      "dangerousDisableAssetCspModification": ["style-src"]
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "app", "dmg"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "targets": [
+      "nsis",
+      "app",
+      "dmg"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "publisher": "Wolfgang Linz",
     "copyright": "Copyright 2026 Wolfgang Linz",
     "homepage": "https://wolfgang-linz.de",
@@ -47,7 +59,8 @@
     "license": "MIT",
     "windows": {
       "nsis": {
-        "installMode": "currentUser"
+        "installMode": "currentUser",
+        "installerHooks": "./windows/hooks.nsh"
       }
     },
     "macOS": {
