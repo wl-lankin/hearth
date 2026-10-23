@@ -184,9 +184,20 @@ pub async fn fetch(paths: &HearthPaths, url: &str, public_key: &str) -> Result<M
     match downloaded {
         Ok((json, sig)) => {
             let manifest = parse_signed(&json, &sig, public_key)?;
+            // Rollback protection: never accept a signed catalog older than the newest one seen, so an
+            // old catalog (pointing at old PHP builds) cannot be replayed. `generated` is UTC RFC 3339,
+            // which compares correctly as text.
+            let newest = json_path.with_file_name("newest-generated");
+            let seen = std::fs::read_to_string(&newest).unwrap_or_default();
+            if manifest.generated.as_str() < seen.trim() {
+                return Err(CoreError::Php(
+                    "The downloaded PHP catalog is older than the one Hearth already has; try again later".into(),
+                ));
+            }
             std::fs::create_dir_all(json_path.parent().unwrap()).map_err(|e| CoreError::io(&json_path, e))?;
             atomic::write(&json_path, &json)?;
             atomic::write(&sig_path, &sig)?;
+            atomic::write(&newest, manifest.generated.as_bytes())?;
             Ok(manifest)
         }
         Err(download_error) => {
@@ -274,6 +285,25 @@ mod tests {
         drop(server);
         let offline = fetch(&paths, "http://127.0.0.1:9/manifest.json", TEST_KEY.trim()).await.unwrap();
         assert_eq!(online, offline);
+    }
+
+    #[tokio::test]
+    async fn an_older_catalog_never_replaces_a_newer_cached_one() {
+        // Rollback protection: a validly signed but older catalog (e.g. replayed by an attacker) is ignored.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HearthPaths::at(dir.path());
+        paths.ensure().unwrap();
+        let (base, _server) = serve(vec![
+            ("/manifest.json", FIXTURE.to_vec()),
+            ("/manifest.json.sig", FIXTURE_SIG.to_vec()),
+        ]);
+        let url = format!("{base}/manifest.json");
+        let served = fetch(&paths, &url, TEST_KEY.trim()).await.unwrap();
+        // Pretend the cache holds a newer catalog: same signed bytes, but remembered as newer.
+        std::fs::write(paths.data.join("php").join("newest-generated"), "2999-01-01T00:00:00Z").unwrap();
+        let err = fetch(&paths, &url, TEST_KEY.trim()).await.unwrap_err();
+        assert!(err.to_string().contains("older"), "{err}");
+        assert_eq!(served.schema, 1);
     }
 
     #[tokio::test]
