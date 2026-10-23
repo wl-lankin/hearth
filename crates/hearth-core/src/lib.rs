@@ -8,6 +8,9 @@ pub mod path_env;
 pub mod paths;
 pub mod php;
 pub mod settings;
+pub mod supervisor;
+#[cfg(test)]
+mod supervisor_tests;
 pub mod web;
 
 pub use error::CoreError;
