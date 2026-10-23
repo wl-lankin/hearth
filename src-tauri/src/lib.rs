@@ -140,6 +140,8 @@ fn start_web(app: &AppHandle) {
 
 /// Quits Hearth; a downloaded update is installed on the way out.
 pub(crate) fn quit(app: &AppHandle) {
+    // No new web server syncs from here on: one could start Caddy or PHP again after stop_all.
+    app.state::<CoreState>().quitting.store(true, std::sync::atomic::Ordering::Relaxed);
     if updates::install(app, false) {
         return;
     }

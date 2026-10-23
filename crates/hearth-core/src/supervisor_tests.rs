@@ -136,3 +136,23 @@ fn a_clean_exit_is_restarted_at_once() {
     assert!(started.elapsed() < Duration::from_millis(1500), "took {:?}", started.elapsed());
     sup.stop_all();
 }
+
+/// macOS has no job object: after a Hearth crash, its children keep running. The next supervisor
+/// for the same home stops the ones it recorded (still running the same program).
+#[cfg(unix)]
+#[test]
+fn children_left_by_a_crash_are_stopped_on_the_next_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = dir.path().join("run");
+    std::fs::create_dir_all(&run).unwrap();
+    let port = free_port();
+    {
+        let sup = Supervisor::new_in(Some(run.clone())).unwrap();
+        sup.ensure(spec(&dir, "web", port, None)).unwrap();
+        sup.forget_without_stopping();
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(answers(port), "the child outlived its supervisor, as after a crash");
+    let _next = Supervisor::new_in(Some(run)).unwrap();
+    eventually("the leftover child is stopped", || !answers(port));
+}

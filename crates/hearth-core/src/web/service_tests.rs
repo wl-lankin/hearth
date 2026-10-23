@@ -190,3 +190,11 @@ fn kill(pid: u32) {
     #[cfg(unix)]
     std::process::Command::new("kill").args(["-9", &pid.to_string()]).output().unwrap();
 }
+
+#[test]
+fn nothing_is_synced_while_hearth_quits() {
+    let mut h = home();
+    h.core.web_sync = true;
+    h.core.quitting.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(!super::service::schedule_sync(&h.core), "a sync while quitting could start Caddy again");
+}

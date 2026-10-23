@@ -63,8 +63,46 @@ pub struct Supervisor {
     table: Table,
     stop: Arc<AtomicBool>,
     keep_children: AtomicBool,
+    /// `<run>/children.json`: the running children, so the next start can stop leftovers (macOS).
+    record: Option<PathBuf>,
     #[cfg(windows)]
     job: Arc<job::Job>,
+}
+
+/// Writes the running children (key, pid, program) to the record file.
+fn persist(table: &HashMap<String, Entry>, record: &Option<PathBuf>) {
+    let Some(path) = record else { return };
+    let children: Vec<(String, u32, String)> = table
+        .values()
+        .filter_map(|e| e.child.as_ref().map(|c| (e.spec.key.clone(), c.id(), e.spec.program.display().to_string())))
+        .collect();
+    if let Ok(bytes) = serde_json::to_vec(&children) {
+        let _ = crate::atomic::write(path, &bytes);
+    }
+}
+
+/// Stops children a crashed Hearth left running (macOS; on Windows the Job Object already did).
+/// Only processes that still run the recorded program are touched, never a reused pid.
+#[cfg(unix)]
+fn stop_leftovers(record: &std::path::Path) {
+    let Ok(bytes) = std::fs::read(record) else { return };
+    let children: Vec<(String, u32, String)> = serde_json::from_slice(&bytes).unwrap_or_default();
+    for (_, pid, program) in children {
+        let name = std::path::Path::new(&program).file_name().map(|n| n.to_string_lossy().into_owned());
+        let running = std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        if running.is_empty() || name.is_none_or(|n| !running.ends_with(&n)) {
+            continue;
+        }
+        // SAFETY: plain signal calls on that child's own process group.
+        unsafe { libc::kill(-(pid as i32), libc::SIGTERM) };
+        std::thread::sleep(Duration::from_millis(500));
+        unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
+    }
+    let _ = std::fs::remove_file(record);
 }
 
 fn answers(port: u16) -> bool {
@@ -79,13 +117,25 @@ fn log_tail(path: &std::path::Path) -> String {
 }
 
 impl Supervisor {
+    /// A supervisor that keeps no record of its children (tests).
     pub fn new() -> Result<Supervisor, CoreError> {
+        Self::new_in(None)
+    }
+
+    /// A supervisor recording its children in `<run>/children.json`; on macOS it first stops the
+    /// children a crashed earlier Hearth left there.
+    pub fn new_in(run: Option<PathBuf>) -> Result<Supervisor, CoreError> {
+        let record = run.map(|dir| dir.join("children.json"));
+        #[cfg(unix)]
+        if let Some(path) = &record {
+            stop_leftovers(path);
+        }
         let table: Table = Arc::default();
         let stop = Arc::new(AtomicBool::new(false));
         #[cfg(windows)]
         let job =
             Arc::new(job::Job::new().map_err(|e| CoreError::Php(format!("Could not set up child processes: {e}")))?);
-        let (t, s) = (table.clone(), stop.clone());
+        let (t, s, r) = (table.clone(), stop.clone(), record.clone());
         #[cfg(windows)]
         let j = job.clone();
         std::thread::Builder::new()
@@ -93,9 +143,9 @@ impl Supervisor {
             .spawn(move || {
                 while !s.load(Ordering::Relaxed) {
                     #[cfg(windows)]
-                    watch(&t, &j);
+                    watch(&t, &r, &j);
                     #[cfg(unix)]
-                    watch(&t);
+                    watch(&t, &r);
                     std::thread::sleep(Duration::from_millis(100));
                 }
             })
@@ -104,6 +154,7 @@ impl Supervisor {
             table,
             stop,
             keep_children: AtomicBool::new(false),
+            record,
             #[cfg(windows)]
             job,
         })
@@ -149,18 +200,22 @@ impl Supervisor {
         let child = self.spawn(&spec)?;
         let key = spec.key.clone();
         let (ready_port, ready_socket, log) = (spec.ready_port, spec.ready_socket.clone(), spec.log.clone());
-        self.table.lock().unwrap().insert(
-            key.clone(),
-            Entry {
-                spec,
-                child: Some(child),
-                restarts: 0,
-                last_error: None,
-                started: Instant::now(),
-                retry_at: None,
-                backoff_step: 0,
-            },
-        );
+        {
+            let mut table = self.table.lock().unwrap();
+            table.insert(
+                key.clone(),
+                Entry {
+                    spec,
+                    child: Some(child),
+                    restarts: 0,
+                    last_error: None,
+                    started: Instant::now(),
+                    retry_at: None,
+                    backoff_step: 0,
+                },
+            );
+            persist(&table, &self.record);
+        }
         if ready_port.is_none() && ready_socket.is_none() {
             return Ok(());
         }
@@ -189,14 +244,24 @@ impl Supervisor {
     }
 
     pub fn stop(&self, key: &str) {
-        let entry = self.table.lock().unwrap().remove(key);
+        let entry = {
+            let mut table = self.table.lock().unwrap();
+            let entry = table.remove(key);
+            persist(&table, &self.record);
+            entry
+        };
         if let Some(mut child) = entry.and_then(|e| e.child) {
             terminate(&mut child);
         }
     }
 
     pub fn stop_all(&self) {
-        let entries: Vec<Entry> = self.table.lock().unwrap().drain().map(|(_, e)| e).collect();
+        let entries: Vec<Entry> = {
+            let mut table = self.table.lock().unwrap();
+            let entries = table.drain().map(|(_, e)| e).collect();
+            persist(&table, &self.record);
+            entries
+        };
         for mut entry in entries {
             if let Some(child) = entry.child.as_mut() {
                 terminate(child);
@@ -244,9 +309,10 @@ impl Drop for Supervisor {
 }
 
 /// Notices exited children and restarts them after their back-off delay.
-fn watch(table: &Table, #[cfg(windows)] job: &job::Job) {
+fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job) {
     let mut table = table.lock().unwrap();
     let now = Instant::now();
+    let mut respawned = false;
     for entry in table.values_mut() {
         if let Some(child) = entry.child.as_mut() {
             if let Ok(Some(status)) = child.try_wait() {
@@ -282,6 +348,7 @@ fn watch(table: &Table, #[cfg(windows)] job: &job::Job) {
                     entry.restarts += 1;
                     entry.started = now;
                     entry.retry_at = None;
+                    respawned = true;
                 }
                 Err(e) => {
                     entry.last_error = Some(e.to_string());
@@ -291,6 +358,9 @@ fn watch(table: &Table, #[cfg(windows)] job: &job::Job) {
                 }
             }
         }
+    }
+    if respawned {
+        persist(&table, record);
     }
 }
 

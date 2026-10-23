@@ -56,10 +56,16 @@ pub struct CoreState {
     /// Sync the web server after site and PHP changes. Off by default (tests, CLI-only setups);
     /// the app turns it on.
     pub web_sync: bool,
+    /// Set while Hearth quits: no new syncs (they could start Caddy or PHP again).
+    pub quitting: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CoreState {
     pub fn new(paths: HearthPaths) -> CoreState {
+        let supervisor = Arc::new(
+            // Only fails when Windows refuses a Job Object, which leaves Hearth unable to run anything safely.
+            Supervisor::new_in(Some(paths.run.clone())).expect("Hearth could not set up its process supervisor"),
+        );
         CoreState {
             paths,
             started: Instant::now(),
@@ -68,11 +74,10 @@ impl CoreState {
             php_lock: Arc::default(),
             tools_lock: Arc::default(),
             sites_lock: Arc::default(),
-            // Creating the supervisor only fails when Windows refuses a Job Object, which leaves
-            // Hearth unable to run anything safely.
-            supervisor: Arc::new(Supervisor::new().expect("Hearth could not set up its process supervisor")),
+            supervisor,
             web_status: Arc::default(),
             web_sync: false,
+            quitting: Arc::default(),
         }
     }
 }

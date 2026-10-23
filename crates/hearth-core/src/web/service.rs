@@ -209,9 +209,10 @@ pub fn current_status(core: &CoreState) -> WebStatus {
 }
 
 /// Syncs in the background (when the host turned syncing on) and keeps the result for `web.status`.
-pub fn schedule_sync(core: &CoreState) {
-    if !core.web_sync {
-        return;
+/// Returns whether a sync was scheduled (not when syncing is off or Hearth is quitting).
+pub fn schedule_sync(core: &CoreState) -> bool {
+    if !core.web_sync || core.quitting.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
     }
     let core = core.clone();
     tokio::spawn(async move {
@@ -221,4 +222,5 @@ pub fn schedule_sync(core: &CoreState) {
         };
         *core.web_status.lock().unwrap_or_else(|e| e.into_inner()) = Some(status);
     });
+    true
 }
