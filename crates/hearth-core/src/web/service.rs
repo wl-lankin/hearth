@@ -173,3 +173,32 @@ fn validated(caddy: &Path, path: &Path, rendered: &str) -> Result<(), String> {
     let _ = std::fs::remove_file(&candidate);
     Ok(())
 }
+
+/// The latest sync result, or a resting status before the first sync.
+pub fn current_status(core: &CoreState) -> WebStatus {
+    if let Some(status) = core.web_status.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return status;
+    }
+    WebStatus {
+        http_port: registry::load(&core.paths).http_port,
+        running: false,
+        processes: core.supervisor.status(),
+        error: None,
+        notes: BTreeMap::new(),
+    }
+}
+
+/// Syncs in the background (when the host turned syncing on) and keeps the result for `web.status`.
+pub fn schedule_sync(core: &CoreState) {
+    if !core.web_sync {
+        return;
+    }
+    let core = core.clone();
+    tokio::spawn(async move {
+        let status = match sync(&core).await {
+            Ok(status) => status,
+            Err(e) => WebStatus { error: Some(e.to_string()), ..current_status(&core) },
+        };
+        *core.web_status.lock().unwrap_or_else(|e| e.into_inner()) = Some(status);
+    });
+}

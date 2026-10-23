@@ -20,6 +20,7 @@ pub use server::{serve, Handler, HandlerFuture, ServerHandle};
 use crate::jobs::Jobs;
 use crate::php::manifest::{CATALOG_PUBLIC_KEY, CATALOG_URL};
 use crate::supervisor::Supervisor;
+use crate::web::service::WebStatus;
 use crate::HearthPaths;
 
 /// Where the PHP catalog comes from and which key must have signed it.
@@ -50,6 +51,11 @@ pub struct CoreState {
     pub sites_lock: Arc<std::sync::Mutex<()>>,
     /// Caddy and the PHP pools.
     pub supervisor: Arc<Supervisor>,
+    /// The latest web server sync result, for `web.status`.
+    pub web_status: Arc<std::sync::Mutex<Option<WebStatus>>>,
+    /// Sync the web server after site and PHP changes. Off by default (tests, CLI-only setups);
+    /// the app turns it on.
+    pub web_sync: bool,
 }
 
 impl CoreState {
@@ -65,6 +71,8 @@ impl CoreState {
             // Creating the supervisor only fails when Windows refuses a Job Object, which leaves
             // Hearth unable to run anything safely.
             supervisor: Arc::new(Supervisor::new().expect("Hearth could not set up its process supervisor")),
+            web_status: Arc::default(),
+            web_sync: false,
         }
     }
 }
@@ -90,7 +98,10 @@ pub fn router(state: CoreState) -> Handler {
                 "core.status" => Ok(status_of(&state)),
                 other => match crate::php::api::handle(&state, other, &params).await {
                     Some(result) => result,
-                    None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                    None => match crate::sites::api::handle(&state, other, &params).await {
+                        Some(result) => result,
+                        None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                    },
                 },
             }
         })

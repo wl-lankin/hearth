@@ -122,7 +122,10 @@ async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), Cor
         refresh_shims(&paths)
     })
     .await
-    .map_err(|e| CoreError::Php(e.to_string()))?
+    .map_err(|e| CoreError::Php(e.to_string()))??;
+    // Sites on this version (or the new default) are served by it now.
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 fn extension_of(build: &PhpBuild) -> &'static str {
@@ -235,6 +238,7 @@ pub fn uninstall(core: &CoreState, minor: &str) -> Result<Option<String>, CoreEr
     let _ = std::fs::remove_file(generated);
     let default = store::forget(paths, minor)?;
     refresh_shims(paths)?;
+    crate::web::service::schedule_sync(core);
     Ok(default)
 }
 
@@ -242,7 +246,9 @@ pub fn uninstall(core: &CoreState, minor: &str) -> Result<Option<String>, CoreEr
 pub fn use_version(core: &CoreState, minor: &str) -> Result<(), CoreError> {
     let _guard = locked(core);
     store::set_default(&core.paths, minor)?;
-    refresh_shims(&core.paths)
+    refresh_shims(&core.paths)?;
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 pub fn set_extension(core: &CoreState, minor: &str, name: &str, on: bool) -> Result<(), CoreError> {
