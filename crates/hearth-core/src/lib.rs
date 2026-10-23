@@ -2,6 +2,7 @@
 
 pub mod atomic;
 pub mod error;
+pub mod ipc;
 pub mod paths;
 pub mod settings;
 
