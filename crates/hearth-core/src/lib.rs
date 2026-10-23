@@ -1,7 +1,7 @@
 //! The Hearth core: paths, settings and the local IPC server every frontend talks to.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_builds() {}
-}
+pub mod error;
+pub mod paths;
+
+pub use error::CoreError;
+pub use paths::HearthPaths;
