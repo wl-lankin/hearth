@@ -62,13 +62,16 @@ pub fn status_of(state: &CoreState) -> Value {
 /// The handler for the methods the core answers itself.
 pub fn router(state: CoreState) -> Handler {
     let state = Arc::new(state);
-    Arc::new(move |method, _params| {
+    Arc::new(move |method, params| {
         let state = state.clone();
         Box::pin(async move {
             match method.as_str() {
                 "core.ping" => Ok(json!("pong")),
                 "core.status" => Ok(status_of(&state)),
-                other => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                other => match crate::php::api::handle(&state, other, &params).await {
+                    Some(result) => result,
+                    None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                },
             }
         })
     })

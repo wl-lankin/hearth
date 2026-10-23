@@ -54,14 +54,14 @@ fn tar_gz_with(entries: &[(&str, &[u8])]) -> Vec<u8> {
     b.into_inner().unwrap().finish().unwrap()
 }
 
-struct Fixture {
+pub(crate) struct Fixture {
     _dir: tempfile::TempDir,
     _server: std::sync::Arc<tiny_http::Server>,
-    core: CoreState,
+    pub(crate) core: CoreState,
 }
 
 /// A served catalog with PHP 8.4.27 for this OS. `damage_php` serves bytes that do not match the hash.
-fn fixture(damage_php: bool) -> Fixture {
+pub(crate) fn fixture(damage_php: bool) -> Fixture {
     let (php, format, root, extensions_src) = match Os::current() {
         Os::Windows => (
             zip_with(&[("php.exe", b"exe"), ("ext/php_curl.dll", b"dll")]),
@@ -144,7 +144,7 @@ fn fixture(damage_php: bool) -> Fixture {
     Fixture { _dir: dir, _server: server, core }
 }
 
-async fn wait(core: &CoreState, id: JobId) -> JobStatus {
+pub(crate) async fn wait(core: &CoreState, id: JobId) -> JobStatus {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let job = core.jobs.get(id).unwrap();
