@@ -13,6 +13,13 @@ pub fn first_run_settings(first_run: bool, release_build: bool, current: &Settin
     (first_run && release_build).then(|| Settings { launch_at_login: true, ..current.clone() })
 }
 
+/// An installed copy re-registers an enabled login entry on every start: a manual reinstall or upgrade
+/// (or an uninstall that kept the settings) removes the entry while settings.json still says "on".
+/// Registering is idempotent and also refreshes the path to the current executable.
+pub fn reassert_login_entry(installed: bool, settings: &Settings) -> bool {
+    installed && settings.launch_at_login
+}
+
 /// The app-wide single-instance lock is keyed on the app identifier only, so it applies to the
 /// default home alone; a custom `HEARTH_HOME` (dev or test build) relies on the core's per-home lock.
 pub fn use_single_instance(hearth_home: Option<&std::ffi::OsStr>) -> bool {
@@ -72,6 +79,24 @@ mod tests {
     #[test]
     fn later_runs_keep_the_users_choice() {
         assert_eq!(first_run_settings(false, true, &Settings::default()), None);
+    }
+
+    #[test]
+    fn installed_start_reasserts_an_enabled_login_entry() {
+        // A manual reinstall or upgrade removes the entry while settings.json keeps saying "on".
+        let on = Settings { launch_at_login: true, ..Settings::default() };
+        assert!(reassert_login_entry(true, &on));
+    }
+
+    #[test]
+    fn installed_start_leaves_a_disabled_choice_alone() {
+        assert!(!reassert_login_entry(true, &Settings::default()));
+    }
+
+    #[test]
+    fn dev_builds_never_touch_the_login_entry() {
+        let on = Settings { launch_at_login: true, ..Settings::default() };
+        assert!(!reassert_login_entry(false, &on));
     }
 
     #[test]

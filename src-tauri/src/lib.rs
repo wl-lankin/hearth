@@ -89,6 +89,10 @@ pub fn run() {
                     }
                     Err(e) => eprintln!("Hearth could not register Start at login: {e}"),
                 }
+            } else if startup::reassert_login_entry(installed, &current) {
+                if let Err(e) = handle.autolaunch().enable() {
+                    eprintln!("Hearth could not renew Start at login: {e}");
+                }
             }
             let args: Vec<String> = std::env::args().collect();
             if !startup::start_hidden(&current, &args) {
