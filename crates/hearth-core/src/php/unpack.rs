@@ -100,12 +100,10 @@ pub fn unpack(archive: &Path, format: Format, root: &str, target: &Path) -> Resu
         let _ = std::fs::remove_dir_all(&new);
         return Err(e);
     }
-    if target.exists() {
-        if std::fs::rename(target, &old).is_err() {
-            let _ = std::fs::remove_dir_all(&new);
-            let minor = target.file_name().unwrap_or_default().to_string_lossy();
-            return Err(CoreError::Php(format!("Close the programs using PHP {minor} and try again")));
-        }
+    if target.exists() && std::fs::rename(target, &old).is_err() {
+        let _ = std::fs::remove_dir_all(&new);
+        let minor = target.file_name().unwrap_or_default().to_string_lossy();
+        return Err(CoreError::Php(format!("Close the programs using PHP {minor} and try again")));
     }
     if let Err(e) = std::fs::rename(&new, target) {
         let _ = std::fs::rename(&old, target);
