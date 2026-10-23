@@ -87,6 +87,18 @@ fn extract_tar_gz(archive: &Path, root: &str, dest: &Path) -> Result<(), CoreErr
 /// Unpacks `archive` into `<target>.new`, then swaps it for `target`. When the old install cannot be
 /// moved (Windows locks a running php.exe), the old install stays and nothing new is left behind.
 pub fn unpack(archive: &Path, format: Format, root: &str, target: &Path) -> Result<(), CoreError> {
+    unpack_with(archive, format, root, target, |_| Ok(()))
+}
+
+/// Like `unpack`, with `prepare(new_dir)` run on the unpacked folder before the swap (extra files
+/// that must be there before the install counts as complete). Its failure leaves the old install.
+pub fn unpack_with(
+    archive: &Path,
+    format: Format,
+    root: &str,
+    target: &Path,
+    prepare: impl FnOnce(&Path) -> Result<(), CoreError>,
+) -> Result<(), CoreError> {
     let new = sibling(target, ".new");
     let old = sibling(target, ".old");
     let _ = std::fs::remove_dir_all(&new);
@@ -95,7 +107,8 @@ pub fn unpack(archive: &Path, format: Format, root: &str, target: &Path) -> Resu
     let extracted = match format {
         Format::Zip => extract_zip(archive, root, &new),
         Format::TarGz => extract_tar_gz(archive, root, &new),
-    };
+    }
+    .and_then(|()| prepare(&new));
     if let Err(e) = extracted {
         let _ = std::fs::remove_dir_all(&new);
         return Err(e);
@@ -231,6 +244,18 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.to_string(), "Close the programs using PHP 8.4 and try again");
         drop(running);
+        assert_eq!(std::fs::read(target.join("php.exe")).unwrap(), b"old");
+        assert!(!d.path().join("8.4.new").exists());
+    }
+
+    #[test]
+    fn a_failing_prepare_keeps_the_old_install() {
+        let d = tempfile::tempdir().unwrap();
+        let target = d.path().join("8.4");
+        unpack(&archive(d.path(), "a.zip", &zip_with(&[("php.exe", b"old")])), Format::Zip, "", &target).unwrap();
+        let b = archive(d.path(), "b.zip", &zip_with(&[("php.exe", b"new")]));
+        let err = unpack_with(&b, Format::Zip, "", &target, |_| Err(CoreError::Php("no redis".into()))).unwrap_err();
+        assert_eq!(err.to_string(), "no redis");
         assert_eq!(std::fs::read(target.join("php.exe")).unwrap(), b"old");
         assert!(!d.path().join("8.4.new").exists());
     }
