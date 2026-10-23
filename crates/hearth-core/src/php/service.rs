@@ -273,6 +273,8 @@ async fn run_laravel_installer(paths: &HearthPaths) -> Result<(), CoreError> {
         .arg(paths.bin.join("composer.phar"))
         .args(["global", "require", "laravel/installer", "--no-interaction", "--no-progress"])
         .env("COMPOSER_HOME", &composer_home)
+        // The installer starts PHP again for its own steps; those find php.ini through PHPRC.
+        .env("PHPRC", ini_dir(paths, &minor))
         .output()
         .await
         .map_err(|e| CoreError::Php(format!("Could not run Composer: {e}")))?;

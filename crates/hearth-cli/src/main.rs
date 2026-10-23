@@ -188,6 +188,15 @@ async fn install(paths: &HearthPaths, minor: &str) -> ExitCode {
     }
 }
 
+/// The exit code to hand on: 0 to 255 pass through; a crash (negative on Windows, e.g. 0xC0000005),
+/// an out-of-range code or a signal (no code) is a failure, never a success.
+fn exit_code(code: Option<i32>) -> u8 {
+    match code {
+        Some(c @ 0..=255) => c as u8,
+        _ => 1,
+    }
+}
+
 /// Runs the default PHP directly (no core needed), passing the exit code through.
 fn run_php(paths: &HearthPaths, script: Option<std::path::PathBuf>, args: &[String]) -> ExitCode {
     let Some(minor) = store::load(paths).default.filter(|m| install_dir(paths, m).join(store::VERSION_FILE).is_file())
@@ -200,12 +209,13 @@ fn run_php(paths: &HearthPaths, script: Option<std::path::PathBuf>, args: &[Stri
     };
     let ini = paths.config.join("php").join(&minor).join("php.ini");
     let mut command = std::process::Command::new(php);
-    command.arg("-c").arg(ini);
+    // PHPRC lets PHP processes this one starts find the same php.ini (see php/shims.rs).
+    command.arg("-c").arg(&ini).env("PHPRC", ini.parent().unwrap_or(&ini));
     if let Some(script) = script {
         command.arg(script);
     }
     match command.args(args).status() {
-        Ok(status) => ExitCode::from(status.code().unwrap_or(1).clamp(0, 255) as u8),
+        Ok(status) => ExitCode::from(exit_code(status.code())),
         Err(e) => fail(&format!("Could not start PHP {minor}: {e}")),
     }
 }
@@ -230,5 +240,21 @@ async fn status(paths: &HearthPaths, as_json: bool) -> ExitCode {
             ExitCode::FAILURE
         }
         Err(e) => fail(&message(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_codes_pass_through_and_crashes_are_failures() {
+        assert_eq!(exit_code(Some(0)), 0);
+        assert_eq!(exit_code(Some(255)), 255);
+        // 0xC0000005 (access violation) as Windows reports it.
+        assert_eq!(exit_code(Some(-1073741819)), 1);
+        assert_eq!(exit_code(Some(256)), 1);
+        // Killed by a signal on Unix.
+        assert_eq!(exit_code(None), 1);
     }
 }

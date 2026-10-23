@@ -8,20 +8,24 @@ use crate::{atomic, CoreError, HearthPaths};
 /// Identifies a script as Hearth's, so only those are ever deleted.
 const MARKER: &str = "hearth-shim";
 
+// Every shim also sets PHPRC to the version's config folder: tools that start PHP again themselves
+// (`artisan serve`, `queue:listen`, parallel test runners) pass no `-c`, and without PHPRC that child
+// PHP would load no php.ini at all (on Windows: no openssl, mbstring or database drivers).
+
 /// Renders one shim: PHP version, optional script to run.
 type ShimFn = fn(&str, Option<&str>) -> String;
 
 fn windows_shim(minor: &str, script: Option<&str>) -> String {
     let script = script.map(|s| format!(" \"{s}\"")).unwrap_or_default();
     format!(
-        "@echo off\r\nrem {MARKER}\r\n\"%~dp0..\\data\\php\\versions\\{minor}\\php.exe\" -c \"%~dp0..\\config\\php\\{minor}\\php.ini\"{script} %*\r\n"
+        "@echo off\r\nrem {MARKER}\r\nsetlocal\r\nset \"PHPRC=%~dp0..\\config\\php\\{minor}\"\r\n\"%~dp0..\\data\\php\\versions\\{minor}\\php.exe\" -c \"%~dp0..\\config\\php\\{minor}\\php.ini\"{script} %*\r\n"
     )
 }
 
 fn sh_shim(minor: &str, script: Option<&str>) -> String {
     let script = script.map(|s| format!(" \"{s}\"")).unwrap_or_default();
     format!(
-        "#!/bin/sh\n# {MARKER}\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexec \"$HERE/../data/php/versions/{minor}/bin/php\" -c \"$HERE/../config/php/{minor}/php.ini\"{script} \"$@\"\n"
+        "#!/bin/sh\n# {MARKER}\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexport PHPRC=\"$HERE/../config/php/{minor}\"\nexec \"$HERE/../data/php/versions/{minor}/bin/php\" -c \"$HERE/../config/php/{minor}/php.ini\"{script} \"$@\"\n"
     )
 }
 
@@ -90,7 +94,7 @@ mod tests {
         assert_eq!(names(&shims), ["php.bat", "composer.bat", "laravel.bat", "php84.bat", "php83.bat"]);
         assert_eq!(
             shims[0].1,
-            "@echo off\r\nrem hearth-shim\r\n\"%~dp0..\\data\\php\\versions\\8.4\\php.exe\" -c \"%~dp0..\\config\\php\\8.4\\php.ini\" %*\r\n"
+            "@echo off\r\nrem hearth-shim\r\nsetlocal\r\nset \"PHPRC=%~dp0..\\config\\php\\8.4\"\r\n\"%~dp0..\\data\\php\\versions\\8.4\\php.exe\" -c \"%~dp0..\\config\\php\\8.4\\php.ini\" %*\r\n"
         );
         assert!(shims[1].1.contains("\"%~dp0composer.phar\" %*"), "{}", shims[1].1);
         assert!(shims[4].1.contains("versions\\8.3\\php.exe"), "{}", shims[4].1);
@@ -102,7 +106,7 @@ mod tests {
         assert_eq!(names(&shims), ["php", "composer", "laravel", "php84"]);
         assert_eq!(
             shims[0].1,
-            "#!/bin/sh\n# hearth-shim\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexec \"$HERE/../data/php/versions/8.4/bin/php\" -c \"$HERE/../config/php/8.4/php.ini\" \"$@\"\n"
+            "#!/bin/sh\n# hearth-shim\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexport PHPRC=\"$HERE/../config/php/8.4\"\nexec \"$HERE/../data/php/versions/8.4/bin/php\" -c \"$HERE/../config/php/8.4/php.ini\" \"$@\"\n"
         );
     }
 
