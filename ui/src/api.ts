@@ -154,7 +154,7 @@ export interface TerminalStatus {
   others: string[];
 }
 
-let demoTerminal: TerminalStatus = { enabled: false, others: ['C:\Users\you\.config\herd\bin'] };
+let demoTerminal: TerminalStatus = { enabled: false, others: [String.raw`C:\Users\you\.config\herd\bin`] };
 export const terminalGet = (): Promise<TerminalStatus> => (demo ? Promise.resolve({ ...demoTerminal }) : core('terminal.get'));
 export const terminalSet = async (on: boolean): Promise<TerminalStatus> => {
   if (demo) {
@@ -164,3 +164,66 @@ export const terminalSet = async (on: boolean): Promise<TerminalStatus> => {
   return core('terminal.set', { on });
 };
 export const jobsList = (): Promise<JobStatus[]> => (demo ? Promise.resolve([]) : core('jobs.list'));
+
+export interface Site {
+  name: string;
+  kind: 'parked' | 'linked' | 'proxy';
+  path: string | null;
+  upstream: string | null;
+  docroot: string | null;
+  php: string | null;
+  problem: string | null;
+}
+
+export interface SitesList {
+  sites: Site[];
+  parked: string[];
+  httpPort: number;
+}
+
+export interface WebStatus {
+  httpPort: number;
+  running: boolean;
+  processes: { key: string; running: boolean; pid: number | null; restarts: number; lastError: string | null }[];
+  error: string | null;
+  notes: Record<string, string>;
+}
+
+const demoSites: SitesList = {
+  httpPort: 8080,
+  parked: [String.raw`C:\Users\you\Projects`],
+  sites: [
+    { name: 'blog', kind: 'parked', path: String.raw`C:\Users\you\Projects\blog`, upstream: null, docroot: String.raw`C:\Users\you\Projects\blog\public`, php: null, problem: null },
+    { name: 'shop', kind: 'linked', path: String.raw`C:\Users\you\Code\shop`, upstream: null, docroot: String.raw`C:\Users\you\Code\shop\public`, php: '8.3', problem: null },
+    { name: 'app.shop', kind: 'proxy', path: null, upstream: 'http://localhost:5173', docroot: null, php: null, problem: null },
+    { name: 'notes', kind: 'parked', path: String.raw`C:\Users\you\Projects\notes`, upstream: null, docroot: null, php: null, problem: 'No index.php or index.html found' },
+  ],
+};
+
+export const sitesList = (): Promise<SitesList> => (demo ? Promise.resolve(structuredClone(demoSites)) : core('sites.list'));
+export const webStatus = (): Promise<WebStatus> =>
+  demo ? Promise.resolve({ httpPort: 8080, running: true, processes: [], error: null, notes: {} }) : core('web.status');
+const change = (method: string, params: Record<string, unknown>) => async (): Promise<void> => {
+  if (!demo) await core(method, params);
+};
+export const sitesPark = (dir: string) => change('sites.park', { dir })();
+export const sitesUnpark = (dir: string) => change('sites.unpark', { dir })();
+export const sitesLink = (name: string, dir: string) => change('sites.link', { name, dir })();
+export const sitesUnlink = (name: string) => change('sites.unlink', { name })();
+export const sitesProxy = (name: string, upstream: string) => change('sites.proxy', { name, upstream })();
+export const sitesUnproxy = (name: string) => change('sites.unproxy', { name })();
+export const sitesIsolate = (name: string, minor: string | null) => change('sites.isolate', { name, minor })();
+export const sitesPort = (port: number) => change('sites.port', { port })();
+
+/** A folder picked in the system dialog, or null when cancelled. */
+export async function pickFolder(): Promise<string | null> {
+  if (demo) return null;
+  const { open } = await import('@tauri-apps/plugin-dialog');
+  const picked = await open({ directory: true, multiple: false });
+  return typeof picked === 'string' ? picked : null;
+}
+
+export async function openUrl(url: string): Promise<void> {
+  if (demo) return void window.open(url, '_blank');
+  await invoke('open_url', { url });
+}

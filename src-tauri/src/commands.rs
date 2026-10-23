@@ -49,8 +49,27 @@ pub fn settings_set(app: AppHandle, state: State<'_, CoreState>, settings: Setti
 #[tauri::command]
 pub async fn core_call(state: State<'_, CoreState>, method: String, params: Value) -> Result<Value, String> {
     let core = state.inner().clone();
-    match hearth_core::php::api::handle(&core, &method, &params).await {
+    if let Some(result) = hearth_core::php::api::handle(&core, &method, &params).await {
+        return result.map_err(|e| e.message);
+    }
+    match hearth_core::sites::api::handle(&core, &method, &params).await {
         Some(result) => result.map_err(|e| e.message),
         None => Err(format!("unknown method: {method}")),
+    }
+}
+
+/// Opens a site in the default browser. Only http(s) URLs, so the UI cannot start other programs.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) || url.contains(['"', '\n', '\r']) {
+        return Err("Only web addresses can be opened".into());
+    }
+    #[cfg(windows)]
+    let status = std::process::Command::new("rundll32").args(["url.dll,FileProtocolHandler", &url]).status();
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(&url).status();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        _ => Err(format!("Could not open {url}")),
     }
 }
