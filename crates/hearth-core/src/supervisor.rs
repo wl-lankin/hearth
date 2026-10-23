@@ -251,6 +251,11 @@ fn watch(table: &Table, #[cfg(windows)] job: &job::Job) {
         if let Some(child) = entry.child.as_mut() {
             if let Ok(Some(status)) = child.try_wait() {
                 entry.child = None;
+                if status.success() {
+                    // A clean exit is routine (php-cgi after PHP_FCGI_MAX_REQUESTS): back at once.
+                    entry.retry_at = Some(now);
+                    continue;
+                }
                 let tail = log_tail(&entry.spec.log);
                 entry.last_error = Some(if tail.is_empty() {
                     format!("{} exited ({status})", entry.spec.key)

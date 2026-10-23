@@ -121,3 +121,18 @@ fn children_die_with_the_supervisor() {
     }
     eventually("the child is gone with the job object", || !answers(port));
 }
+
+#[test]
+fn a_clean_exit_is_restarted_at_once() {
+    // php-cgi exits with code 0 after PHP_FCGI_MAX_REQUESTS: routine, not a crash, so no back-off.
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    let port = free_port();
+    let mut s = spec(&dir, "php", port, Some(150));
+    s.args.push("0".into());
+    sup.ensure(s).unwrap();
+    let started = Instant::now();
+    eventually("two quick restarts", || sup.status()[0].restarts >= 2);
+    assert!(started.elapsed() < Duration::from_millis(1500), "took {:?}", started.elapsed());
+    sup.stop_all();
+}

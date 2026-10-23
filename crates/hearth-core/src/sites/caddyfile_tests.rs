@@ -25,7 +25,7 @@ fn a_php_site_is_served_through_its_pool() {
         target: Route::Php { docroot: PathBuf::from(r"C:\x\shop\public"), minor: "8.4".into() },
     }]));
     assert!(file.contains(
-        "\nhttp://shop.test:8080 {\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tlb_policy least_conn\n\t}\n\tfile_server\n\tencode gzip\n}\n"
+        "\nhttp://shop.test:8080 {\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
     ), "{file}");
 }
 

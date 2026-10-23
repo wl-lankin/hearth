@@ -62,7 +62,7 @@ pub fn render(ctx: &CaddyContext) -> String {
                 };
                 let _ = write!(
                     out,
-                    "{address} {{\n\troot * {}\n\tphp_fastcgi {} {{\n\t\tlb_policy least_conn\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
+                    "{address} {{\n\troot * {}\n\tphp_fastcgi {} {{\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
                     quoted(docroot),
                     upstreams.join(" ")
                 );
