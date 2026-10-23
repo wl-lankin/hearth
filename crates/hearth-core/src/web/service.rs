@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::ipc::CoreState;
 use crate::php::manifest::Os;
 use crate::php::store;
-use crate::sites::caddyfile::{render, CaddyContext, Route, SiteRoute};
+use crate::sites::caddyfile::{render, servable, CaddyContext, Route, SiteRoute};
 use crate::sites::registry::{self, SiteKind};
 use crate::supervisor::{ProcessSpec, ProcessStatus};
 use crate::web::caddy_install::ensure_caddy;
@@ -57,6 +57,9 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
         let target = match (site.kind, &site.problem, &site.docroot) {
             (SiteKind::Proxy, _, _) => Route::Proxy { upstream: site.upstream.clone().unwrap_or_default() },
             (_, Some(problem), _) => Route::Skip { reason: problem.clone() },
+            (_, None, Some(docroot)) if servable(docroot).is_err() => {
+                Route::Skip { reason: servable(docroot).unwrap_err() }
+            }
             (_, None, Some(docroot)) => {
                 let (minor, note) = effective_php(site.php.as_deref(), &installed, php_state.default.as_deref());
                 if let Some(note) = note.clone() {
@@ -111,6 +114,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
             routes,
             php_upstreams: upstreams,
             log: paths.logs.join("caddy.log"),
+            windows_paths: Os::current() == Os::Windows,
         });
         let path = caddyfile_path(core);
         let current = std::fs::read_to_string(&path).unwrap_or_default();

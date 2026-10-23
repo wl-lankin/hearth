@@ -33,12 +33,28 @@ pub struct CaddyContext {
     /// PHP minor -> FastCGI addresses of its running pool ("127.0.0.1:19840", "unix//.../php-8.4.sock").
     pub php_upstreams: BTreeMap<String, Vec<String>>,
     pub log: PathBuf,
+    /// Write Windows paths with forward slashes (Caddy accepts them there). On macOS a backslash is
+    /// a legal file name character and stays.
+    pub windows_paths: bool,
 }
 
-/// A path as one quoted Caddyfile token: forward slashes (Caddy accepts them on Windows and they
-/// avoid backslash escapes), `"` escaped; braces are literal inside quotes.
-fn quoted(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/").replace('"', "\\\"");
+/// Paths Caddy cannot be made to read literally: `{$...}` is replaced with an environment variable
+/// while the Caddyfile is parsed, before any escaping applies.
+pub fn servable(path: &Path) -> Result<(), String> {
+    if path.to_string_lossy().contains("{$") {
+        return Err("Caddy cannot serve a folder whose path contains {$".into());
+    }
+    Ok(())
+}
+
+/// A path as one quoted Caddyfile token: `"` escaped so it stays one token, `{` `}` escaped so Caddy
+/// does not read them as placeholders at runtime.
+fn quoted(path: &Path, windows_paths: bool) -> String {
+    let mut text = path.to_string_lossy().into_owned();
+    if windows_paths {
+        text = text.replace('\\', "/");
+    }
+    let text = text.replace('"', "\\\"").replace('{', "\\{").replace('}', "\\}");
     format!("\"{text}\"")
 }
 
@@ -49,7 +65,7 @@ pub fn render(ctx: &CaddyContext) -> String {
         // Loopback only: local sites are never reachable from the network.
         "{{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port {}\n\tlog {{\n\t\toutput file {}\n\t}}\n}}\n",
         ctx.http_port,
-        quoted(&ctx.log)
+        quoted(&ctx.log, ctx.windows_paths)
     );
     for route in &ctx.routes {
         out.push('\n');
@@ -63,7 +79,7 @@ pub fn render(ctx: &CaddyContext) -> String {
                 let _ = write!(
                     out,
                     "{address} {{\n\troot * {}\n\tphp_fastcgi {} {{\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
-                    quoted(docroot),
+                    quoted(docroot, ctx.windows_paths),
                     upstreams.join(" ")
                 );
             }
