@@ -56,6 +56,7 @@ pub fn run() {
             commands::update_state,
             commands::update_check,
             commands::update_install_now,
+            commands::core_call,
         ])
         .on_window_event(|window, event| {
             // Closing the window keeps Hearth running in the tray.
