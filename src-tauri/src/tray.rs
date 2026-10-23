@@ -1,6 +1,6 @@
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::image::Image;
 use tauri::AppHandle;
 
 use crate::window;
