@@ -58,6 +58,8 @@ pub(crate) struct Fixture {
     _dir: tempfile::TempDir,
     _server: std::sync::Arc<tiny_http::Server>,
     pub(crate) core: CoreState,
+    /// Requests per path, to prove what was (not) downloaded.
+    pub(crate) hits: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>>,
 }
 
 /// A served catalog with PHP 8.4.27 and 8.3.36 for this OS. `damage_php` serves bytes that do not
@@ -86,6 +88,10 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
     let xdebug = zip_with(&[("php_xdebug.dll", b"xdebug")]);
     let composer = b"<?php // composer".to_vec();
     let cacert = b"-----BEGIN CERTIFICATE-----".to_vec();
+    let (caddy, caddy_format, caddy_binary) = match Os::current() {
+        Os::Windows => (zip_with(&[("caddy.exe", b"caddy"), ("LICENSE", b"Apache")]), "zip", "caddy.exe"),
+        Os::Macos => (tar_gz_with(&[("caddy", b"caddy"), ("LICENSE", b"Apache")]), "tar.gz", "caddy"),
+    };
 
     // The server's address is only known once it runs, so the catalog is served from a slot filled below.
     let catalog_slot: std::sync::Arc<std::sync::Mutex<(Vec<u8>, Vec<u8>)>> = Default::default();
@@ -97,14 +103,17 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
         ("/redis.zip".into(), redis.clone()),
         ("/xdebug.zip".into(), xdebug.clone()),
         ("/cacert.pem".into(), cacert.clone()),
+        ("/caddy".into(), caddy.clone()),
     ];
     if serve_composer {
         files.push(("/composer.phar".into(), composer.clone()));
     }
-    let (s, slot) = (server.clone(), catalog_slot.clone());
+    let hits: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, usize>>> = Default::default();
+    let (s, slot, counter) = (server.clone(), catalog_slot.clone(), hits.clone());
     std::thread::spawn(move || {
         for request in s.incoming_requests() {
             let url = request.url().to_string();
+            *counter.lock().unwrap().entry(url.clone()).or_default() += 1;
             let body = match url.as_str() {
                 "/manifest.json" => Some(slot.lock().unwrap().0.clone()),
                 "/manifest.json.sig" => Some(slot.lock().unwrap().1.clone()),
@@ -145,6 +154,10 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
         }],
         "composer": { "url": format!("{base}/composer.phar"), "sha256": hex(&composer), "version": "2.10.3" },
         "cacert": { "url": format!("{base}/cacert.pem"), "sha256": hex(&cacert) },
+        "tools": { "caddy": [{
+            "os": Os::current(), "arch": Arch::current(), "version": "2.11.7",
+            "url": format!("{base}/caddy"), "sha256": hex(&caddy), "format": caddy_format, "binary": caddy_binary,
+        }] },
     });
     let json = serde_json::to_vec(&manifest).unwrap();
     *catalog_slot.lock().unwrap() = (json.clone(), sign(&json));
@@ -154,7 +167,7 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
     paths.ensure().unwrap();
     let mut core = CoreState::new(paths);
     core.catalog = Catalog { url: format!("{base}/manifest.json"), public_key: TEST_PUBLIC_KEY.trim().into() };
-    Fixture { _dir: dir, _server: server, core }
+    Fixture { _dir: dir, _server: server, core, hits }
 }
 
 pub(crate) async fn wait(core: &CoreState, id: JobId) -> JobStatus {
