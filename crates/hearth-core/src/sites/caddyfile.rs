@@ -46,7 +46,8 @@ pub fn render(ctx: &CaddyContext) -> String {
     let mut out = String::new();
     let _ = write!(
         out,
-        "{{\n\tadmin off\n\tauto_https off\n\thttp_port {}\n\tlog {{\n\t\toutput file {}\n\t}}\n}}\n",
+        // Loopback only: local sites are never reachable from the network.
+        "{{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port {}\n\tlog {{\n\t\toutput file {}\n\t}}\n}}\n",
         ctx.http_port,
         quoted(&ctx.log)
     );

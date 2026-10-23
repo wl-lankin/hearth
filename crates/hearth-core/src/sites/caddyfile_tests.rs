@@ -14,7 +14,7 @@ fn ctx(routes: Vec<SiteRoute>) -> CaddyContext {
 fn the_global_block_turns_off_admin_and_https() {
     let file = render(&ctx(vec![]));
     assert!(file.starts_with(
-        "{\n\tadmin off\n\tauto_https off\n\thttp_port 8080\n\tlog {\n\t\toutput file \"C:/h/logs/caddy.log\"\n\t}\n}\n"
+        "{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port 8080\n\tlog {\n\t\toutput file \"C:/h/logs/caddy.log\"\n\t}\n}\n"
     ), "{file}");
 }
 
