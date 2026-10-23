@@ -55,6 +55,13 @@ fn save(paths: &HearthPaths, state: &PhpState) -> Result<(), CoreError> {
     atomic::write(&file(paths), text.as_bytes())
 }
 
+/// True for a PHP minor like "8.4" (digits, one dot, digits).
+pub fn is_minor(text: &str) -> bool {
+    let mut parts = text.split('.');
+    let digits = |p: Option<&str>| p.is_some_and(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    digits(parts.next()) && digits(parts.next()) && parts.next().is_none()
+}
+
 /// Installed versions, newest first.
 pub fn installed(paths: &HearthPaths) -> Vec<InstalledPhp> {
     let Ok(entries) = std::fs::read_dir(paths.data.join("php").join("versions")) else { return Vec::new() };
@@ -62,6 +69,10 @@ pub fn installed(paths: &HearthPaths) -> Vec<InstalledPhp> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let minor = e.file_name().to_string_lossy().into_owned();
+            // Only "8.4"-style folders: swap leftovers ("8.4.old", "8.4.new") are never installs.
+            if !is_minor(&minor) {
+                return None;
+            }
             let version = std::fs::read_to_string(e.path().join(VERSION_FILE)).ok()?;
             Some(InstalledPhp { minor, version: version.trim().to_string(), path: e.path() })
         })
@@ -205,6 +216,24 @@ mod tests {
         let (_d, p) = home();
         std::fs::create_dir_all(install_dir(&p, "8.4")).unwrap();
         std::fs::create_dir_all(p.data.join("php").join("versions").join("8.4.new")).unwrap();
+        assert!(installed(&p).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod leftover_tests {
+    use super::*;
+
+    #[test]
+    fn swap_leftovers_are_never_listed_even_with_a_version_file() {
+        let d = tempfile::tempdir().unwrap();
+        let p = HearthPaths::at(d.path());
+        p.ensure().unwrap();
+        for name in ["8.4.old", "8.4.new", "notes"] {
+            let dir = p.data.join("php").join("versions").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(VERSION_FILE), "8.4.27").unwrap();
+        }
         assert!(installed(&p).is_empty());
     }
 }
