@@ -170,43 +170,48 @@ fn cache_paths(paths: &HearthPaths) -> (std::path::PathBuf, std::path::PathBuf) 
     (dir.join("manifest.json"), dir.join("manifest.json.sig"))
 }
 
-/// Downloads and verifies the catalog and caches it. Offline (or on any download failure) the cached
-/// copy is used, verified again; without one the download error is returned.
+/// Downloads and verifies the catalog and caches it. When the download fails, does not verify (a
+/// release caught mid-update) or is older than the newest catalog seen (rollback protection), the
+/// cached copy is used, verified again; without one that error is returned.
 pub async fn fetch(paths: &HearthPaths, url: &str, public_key: &str) -> Result<Manifest, CoreError> {
     let (json_path, sig_path) = cache_paths(paths);
-    let downloaded = async {
-        let client = crate::php::download::client()?;
-        let json = crate::php::download::get_bytes(&client, url).await?;
-        let sig = crate::php::download::get_bytes(&client, &format!("{url}.sig")).await?;
-        Ok::<_, CoreError>((json, sig))
-    }
-    .await;
-    match downloaded {
-        Ok((json, sig)) => {
-            let manifest = parse_signed(&json, &sig, public_key)?;
-            // Rollback protection: never accept a signed catalog older than the newest one seen, so an
-            // old catalog (pointing at old PHP builds) cannot be replayed. `generated` is UTC RFC 3339,
-            // which compares correctly as text.
-            let newest = json_path.with_file_name("newest-generated");
-            let seen = std::fs::read_to_string(&newest).unwrap_or_default();
-            if manifest.generated.as_str() < seen.trim() {
-                return Err(CoreError::Php(
-                    "The downloaded PHP catalog is older than the one Hearth already has; try again later".into(),
-                ));
-            }
-            std::fs::create_dir_all(json_path.parent().unwrap()).map_err(|e| CoreError::io(&json_path, e))?;
-            atomic::write(&json_path, &json)?;
-            atomic::write(&sig_path, &sig)?;
-            atomic::write(&newest, manifest.generated.as_bytes())?;
-            Ok(manifest)
-        }
-        Err(download_error) => {
+    let fresh = download_and_accept(&json_path, &sig_path, url, public_key).await;
+    match fresh {
+        Ok(manifest) => Ok(manifest),
+        Err(error) => {
             let (Ok(json), Ok(sig)) = (std::fs::read(&json_path), std::fs::read(&sig_path)) else {
-                return Err(download_error);
+                return Err(error);
             };
             parse_signed(&json, &sig, public_key)
         }
     }
+}
+
+async fn download_and_accept(
+    json_path: &std::path::Path,
+    sig_path: &std::path::Path,
+    url: &str,
+    public_key: &str,
+) -> Result<Manifest, CoreError> {
+    let client = crate::php::download::client()?;
+    let json = crate::php::download::get_bytes(&client, url).await?;
+    let sig = crate::php::download::get_bytes(&client, &format!("{url}.sig")).await?;
+    let manifest = parse_signed(&json, &sig, public_key)?;
+    // Rollback protection: never accept a signed catalog older than the newest one seen, so an old
+    // catalog (pointing at old PHP builds) cannot be replayed. `generated` is UTC RFC 3339, which
+    // compares correctly as text.
+    let newest = json_path.with_file_name("newest-generated");
+    let seen = std::fs::read_to_string(&newest).unwrap_or_default();
+    if manifest.generated.as_str() < seen.trim() {
+        return Err(CoreError::Php(
+            "The downloaded PHP catalog is older than the one Hearth already has; try again later".into(),
+        ));
+    }
+    std::fs::create_dir_all(json_path.parent().unwrap()).map_err(|e| CoreError::io(json_path, e))?;
+    atomic::write(json_path, &json)?;
+    atomic::write(sig_path, &sig)?;
+    atomic::write(&newest, manifest.generated.as_bytes())?;
+    Ok(manifest)
 }
 
 #[cfg(test)]
@@ -299,9 +304,26 @@ pub(crate) mod tests {
         let served = fetch(&paths, &url, TEST_KEY.trim()).await.unwrap();
         // Pretend the cache holds a newer catalog: same signed bytes, but remembered as newer.
         std::fs::write(paths.data.join("php").join("newest-generated"), "2999-01-01T00:00:00Z").unwrap();
-        let err = fetch(&paths, &url, TEST_KEY.trim()).await.unwrap_err();
-        assert!(err.to_string().contains("older"), "{err}");
-        assert_eq!(served.schema, 1);
+        // The older download is refused; the verified cached copy is used instead.
+        let used = fetch(&paths, &url, TEST_KEY.trim()).await.unwrap();
+        assert_eq!(used, served);
+        let mark = std::fs::read_to_string(paths.data.join("php").join("newest-generated")).unwrap();
+        assert_eq!(mark, "2999-01-01T00:00:00Z", "the high-water mark never goes down");
+    }
+
+    #[tokio::test]
+    async fn a_bad_download_falls_back_to_the_verified_cache() {
+        // A catalog caught mid-update (new json, old signature) must not block installs.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = HearthPaths::at(dir.path());
+        paths.ensure().unwrap();
+        let (good, _s1) =
+            serve(vec![("/manifest.json", FIXTURE.to_vec()), ("/manifest.json.sig", FIXTURE_SIG.to_vec())]);
+        let cached = fetch(&paths, &format!("{good}/manifest.json"), TEST_KEY.trim()).await.unwrap();
+        let mut tampered = FIXTURE.to_vec();
+        tampered.push(b' ');
+        let (bad, _s2) = serve(vec![("/manifest.json", tampered), ("/manifest.json.sig", FIXTURE_SIG.to_vec())]);
+        assert_eq!(fetch(&paths, &format!("{bad}/manifest.json"), TEST_KEY.trim()).await.unwrap(), cached);
     }
 
     #[tokio::test]
