@@ -57,8 +57,8 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
         let target = match (site.kind, &site.problem, &site.docroot) {
             (SiteKind::Proxy, _, _) => Route::Proxy { upstream: site.upstream.clone().unwrap_or_default() },
             (_, Some(problem), _) => Route::Skip { reason: problem.clone() },
-            (_, None, Some(docroot)) if servable(docroot).is_err() => {
-                Route::Skip { reason: servable(docroot).unwrap_err() }
+            (_, None, Some(docroot)) if servable(docroot, Os::current() == Os::Windows).is_err() => {
+                Route::Skip { reason: servable(docroot, Os::current() == Os::Windows).unwrap_err() }
             }
             (_, None, Some(docroot)) => {
                 let (minor, note) = effective_php(site.php.as_deref(), &installed, php_state.default.as_deref());

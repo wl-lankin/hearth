@@ -64,22 +64,24 @@ fn awkward_folder_names_stay_inside_one_quoted_string() {
 }
 
 #[test]
-fn macos_paths_keep_their_backslashes() {
-    let mut c = ctx(vec![SiteRoute {
-        name: "odd".into(),
-        target: Route::Php { docroot: PathBuf::from(r"/Users/j/a\b/public"), minor: "8.4".into() },
-    }]);
-    c.windows_paths = false;
-    assert!(render(&c).contains(r#"	root * "/Users/j/a\b/public""#), "{}", render(&c));
-}
-
-#[test]
 fn folders_caddy_cannot_serve_are_named() {
-    assert!(servable(std::path::Path::new(r"C:\Projects\shop {v2}\public")).is_ok());
+    use std::path::Path;
+    assert!(servable(Path::new(r"C:\Projects\shop {v2}\public"), true).is_ok());
     assert_eq!(
-        servable(std::path::Path::new(r"C:\Projects\{$HOME}\public")).unwrap_err(),
+        servable(Path::new(r"C:\Projects\{$HOME}\public"), true).unwrap_err(),
         "Caddy cannot serve a folder whose path contains {$"
     );
+    // On macOS a backslash is part of a name; one right before the closing quote would end the
+    // quoted path early and let the rest become Caddyfile directives.
+    assert_eq!(
+        servable(Path::new(r"/Users/j/evil\"), false).unwrap_err(),
+        "Caddy cannot serve a folder whose path contains a backslash"
+    );
+    assert_eq!(
+        servable(Path::new("/Users/j/a\nb"), false).unwrap_err(),
+        "Caddy cannot serve a folder whose path contains a line break or control character"
+    );
+    assert!(servable(Path::new("C:\\Projects\\a\rb"), true).is_err());
 }
 
 #[test]

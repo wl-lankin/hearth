@@ -38,11 +38,21 @@ pub struct CaddyContext {
     pub windows_paths: bool,
 }
 
-/// Paths Caddy cannot be made to read literally: `{$...}` is replaced with an environment variable
-/// while the Caddyfile is parsed, before any escaping applies.
-pub fn servable(path: &Path) -> Result<(), String> {
-    if path.to_string_lossy().contains("{$") {
+/// Paths that cannot be written into the Caddyfile safely and literally:
+/// - `{$...}` is replaced with an environment variable while Caddy parses, before any escaping;
+/// - a backslash kept as a name character (macOS) could escape the closing quote, letting the rest
+///   become directives (Windows backslashes are separators and become `/`);
+/// - line breaks and other control characters end the token.
+pub fn servable(path: &Path, windows_paths: bool) -> Result<(), String> {
+    let text = path.to_string_lossy();
+    if text.contains("{$") {
         return Err("Caddy cannot serve a folder whose path contains {$".into());
+    }
+    if !windows_paths && text.contains('\\') {
+        return Err("Caddy cannot serve a folder whose path contains a backslash".into());
+    }
+    if text.chars().any(char::is_control) {
+        return Err("Caddy cannot serve a folder whose path contains a line break or control character".into());
     }
     Ok(())
 }
