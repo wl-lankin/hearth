@@ -210,7 +210,7 @@ pub async fn fetch(paths: &HearthPaths, url: &str, public_key: &str) -> Result<M
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/manifest.json");
@@ -264,7 +264,7 @@ mod tests {
             for request in s.incoming_requests() {
                 let body = files.iter().find(|(p, _)| *p == request.url()).map(|(_, b)| b.clone());
                 let _ = match body {
-                    Some(b) => request.respond(tiny_http::Response::from_data(b)),
+                    Some(b) => request.respond(tiny_http::Response::from_data(b).with_chunked_threshold(usize::MAX)),
                     None => request.respond(tiny_http::Response::empty(404)),
                 };
             }
@@ -293,10 +293,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = HearthPaths::at(dir.path());
         paths.ensure().unwrap();
-        let (base, _server) = serve(vec![
-            ("/manifest.json", FIXTURE.to_vec()),
-            ("/manifest.json.sig", FIXTURE_SIG.to_vec()),
-        ]);
+        let (base, _server) =
+            serve(vec![("/manifest.json", FIXTURE.to_vec()), ("/manifest.json.sig", FIXTURE_SIG.to_vec())]);
         let url = format!("{base}/manifest.json");
         let served = fetch(&paths, &url, TEST_KEY.trim()).await.unwrap();
         // Pretend the cache holds a newer catalog: same signed bytes, but remembered as newer.
