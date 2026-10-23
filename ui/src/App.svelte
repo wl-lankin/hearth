@@ -1,4 +1,5 @@
 <script lang="ts">
+  import logo from '../../assets/logo.svg?url';
   import * as api from './api';
   import { createSettingsStore } from './settings.svelte';
   import { applyTheme, resolveTheme } from './theme';
@@ -32,7 +33,7 @@
 <div class="shell">
   <aside>
     <div class="brand">
-      <span class="mark" aria-hidden="true"></span>
+      <img class="mark" src={logo} alt="" width="26" height="26" />
       <span class="name">Hearth</span>
     </div>
     <nav aria-label="Sections">
@@ -77,10 +78,7 @@
   }
 
   .mark {
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
-    background: radial-gradient(circle at 50% 62%, var(--accent) 0 34%, transparent 36%), #2a2420;
+    display: block;
   }
 
   .name {

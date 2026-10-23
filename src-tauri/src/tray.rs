@@ -1,5 +1,6 @@
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::image::Image;
 use tauri::AppHandle;
 
 use crate::window;
@@ -30,8 +31,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
                 window::toggle(tray.app_handle());
             }
         });
-    if let Some(icon) = app.default_window_icon() {
-        builder = builder.icon(icon.clone());
+    // macOS tints a one-color template image to match the menu bar; Windows shows the color logo.
+    if cfg!(target_os = "macos") {
+        builder = builder.icon(Image::from_bytes(include_bytes!("../icons/tray-template.png"))?).icon_as_template(true);
+    } else {
+        builder = builder.icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?);
     }
     builder.build(app)?;
     Ok(())
