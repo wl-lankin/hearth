@@ -1,5 +1,3 @@
-use std::time::Instant;
-
 use assert_cmd::Command;
 use hearth_core::ipc::{router, serve, CoreState};
 use hearth_core::HearthPaths;
@@ -33,7 +31,7 @@ fn status_json_when_not_running() {
 #[tokio::test(flavor = "multi_thread")]
 async fn status_when_running() {
     let (_d, paths) = home();
-    let state = CoreState { paths: paths.clone(), started: Instant::now() };
+    let state = CoreState::new(paths.clone());
     let server = serve(&paths, router(state)).await.unwrap();
     let cmd_paths = paths.clone();
     let output = tokio::task::spawn_blocking(move || hearth(&cmd_paths).arg("status").output().unwrap()).await.unwrap();
@@ -47,7 +45,7 @@ async fn status_when_running() {
 #[tokio::test(flavor = "multi_thread")]
 async fn status_json_when_running() {
     let (_d, paths) = home();
-    let state = CoreState { paths: paths.clone(), started: Instant::now() };
+    let state = CoreState::new(paths.clone());
     let server = serve(&paths, router(state)).await.unwrap();
     let cmd_paths = paths.clone();
     let output = tokio::task::spawn_blocking(move || hearth(&cmd_paths).args(["status", "--json"]).output().unwrap())

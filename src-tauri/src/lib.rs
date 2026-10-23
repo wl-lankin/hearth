@@ -5,7 +5,6 @@ mod updates;
 mod window;
 
 use std::sync::Mutex;
-use std::time::Instant;
 
 use hearth_core::ipc::{self, CoreState, ServerHandle};
 use hearth_core::{paths, settings, CoreError, HearthPaths};
@@ -30,7 +29,7 @@ pub fn run() {
     // Only an installed copy registers itself at login and updates itself: never a dev build or a
     // custom (test) home.
     let installed = !cfg!(debug_assertions) && default_home;
-    let state = CoreState { paths, started: Instant::now() };
+    let state = CoreState::new(paths);
 
     let mut builder = tauri::Builder::default();
     if default_home {

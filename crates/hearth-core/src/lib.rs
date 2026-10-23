@@ -3,6 +3,7 @@
 pub mod atomic;
 pub mod error;
 pub mod ipc;
+pub mod jobs;
 pub mod paths;
 pub mod php;
 pub mod settings;
