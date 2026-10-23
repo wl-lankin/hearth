@@ -1,0 +1,33 @@
+{
+  "name": "hearth",
+  "version": "0.1.0",
+  "description": "Hearth - a local PHP development environment for Windows and macOS.",
+  "author": "Wolfgang Linz <https://wolfgang-linz.de>",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json && tsc -p tsconfig.node.json",
+    "test": "vitest run",
+    "tauri": "tauri",
+    "icons": "node scripts/make-icons.mjs",
+    "version:check": "node scripts/check-version.mjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/node": "^26.6.5",
+    "jsdom": "^27.4.0",
+    "svelte": "^5.57.2",
+    "svelte-check": "^4.7.7",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.4"
+  }
+}

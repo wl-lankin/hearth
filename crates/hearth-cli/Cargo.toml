@@ -1,0 +1,22 @@
+[package]
+name = "hearth-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "hearth"
+path = "src/main.rs"
+
+[dependencies]
+hearth-core = { path = "../hearth-core" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

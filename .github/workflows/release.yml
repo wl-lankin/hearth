@@ -1,0 +1,110 @@
+name: release
+
+# A tag v<version> builds Hearth for Windows (NSIS installer) and macOS (universal .dmg) and
+# publishes them as a GitHub release, together with latest.json, the feed installed copies of
+# Hearth update from. The release notes come from docs/releases/<tag>.md.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: The tag matches every version file
+        env:
+          TAG: ${{ github.ref_name }}
+        run: node scripts/check-version.mjs "${TAG#v}"
+      - name: Create the draft release
+        id: create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes="docs/releases/$TAG.md"
+          if [ ! -f "$notes" ]; then echo "::error::$notes is missing"; exit 1; fi
+          # The create call answers with the id; listing releases right after can miss a fresh draft.
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="Hearth $TAG" -F body=@"$notes" -F draft=true --jq .id)
+          if [ -z "$id" ]; then echo "::error::Could not create the draft release"; exit 1; fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: draft
+    strategy:
+      # One platform at a time: both upload to the same latest.json, which must not race.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            args: '--bundles nsis'
+            targets: ''
+          - os: macos-latest
+            args: '--target universal-apple-darwin --bundles app,dmg'
+            targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: npm ci
+      - name: The draft release is known
+        if: needs.draft.outputs.release_id == ''
+        run: |
+          echo "::error::The draft job passed no release id; nothing would be uploaded."
+          exit 1
+      # Code signing (Azure Trusted Signing, Apple notarization) is added in M14, once the
+      # certificates exist. Until then only the update packages are signed.
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update packages; installed copies of Hearth accept only updates signed with this key.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.draft.outputs.release_id }}
+          args: ${{ matrix.args }}
+          # latest.json is the feed the in-app updater reads (releases/latest/download/latest.json).
+          includeUpdaterJson: true
+
+  publish:
+    needs: [draft, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Installers under fixed names
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # releases/latest/download/<fixed name> always serves the newest installer: copy every
+          # versioned installer to a name without the version.
+          version="${TAG#v}"
+          mkdir stable && cd stable
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "Hearth_${version}_*"
+          for file in Hearth_"${version}"_*; do
+            case "$file" in *.sig) continue ;; esac
+            mv "$file" "${file/_${version}_/_}"
+          done
+          ls -l
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber Hearth_*
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ github.ref_name }}" --repo "$GITHUB_REPOSITORY" --draft=false --latest

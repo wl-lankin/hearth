@@ -1,0 +1,166 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use interprocess::local_socket::tokio::{prelude::*, Stream};
+use interprocess::local_socket::ListenerOptions;
+use serde_json::Value;
+use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+
+use super::lines::read_line;
+use super::protocol::{Request, Response, RpcError, PARSE_ERROR};
+use super::{client, endpoint, peer};
+use crate::{CoreError, HearthPaths};
+
+pub type HandlerFuture = Pin<Box<dyn Future<Output = Result<Value, RpcError>> + Send>>;
+
+/// Answers one request: method name and params in, result or RPC error out.
+pub type Handler = Arc<dyn Fn(String, Value) -> HandlerFuture + Send + Sync>;
+
+pub struct ServerHandle {
+    stop: watch::Sender<bool>,
+    task: JoinHandle<()>,
+    /// Released (closed) only after the listener is gone, in `shutdown` or on drop.
+    _lock: std::fs::File,
+}
+
+impl ServerHandle {
+    /// Stops accepting connections and releases the endpoint (the socket file on Unix).
+    pub async fn shutdown(self) {
+        let _ = self.stop.send(true);
+        let _ = self.task.await;
+    }
+}
+
+/// Starts the core server for this Hearth home. `AlreadyRunning` when a live core answers there.
+pub async fn serve(paths: &HearthPaths, handler: Handler) -> Result<ServerHandle, CoreError> {
+    // One core per home: the lock is held for the server's lifetime, so two cores starting at the same
+    // moment, or a live core that is too busy to answer, are never taken over.
+    let lock_path = paths.run.join("hearth.lock");
+    let lock = std::fs::File::create(&lock_path).map_err(|e| CoreError::io(&lock_path, e))?;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(std::fs::TryLockError::WouldBlock) => return Err(CoreError::AlreadyRunning),
+        Err(std::fs::TryLockError::Error(e)) => return Err(CoreError::io(&lock_path, e)),
+    }
+    match client::call(paths, "core.ping", Value::Null).await {
+        // Nobody listens: the endpoint is free, or a crashed core left its socket file behind.
+        Err(CoreError::NotRunning) => {}
+        Err(CoreError::ForeignEndpoint) => return Err(CoreError::ForeignEndpoint),
+        // Something answers, or holds the endpoint without answering: never take it over.
+        _ => return Err(CoreError::AlreadyRunning),
+    }
+    let name = endpoint::name(paths).map_err(|e| CoreError::io(&paths.run, e))?;
+    // A socket file nobody answers on is left over from a crash: take its place.
+    let options = ListenerOptions::new().name(name).try_overwrite(true);
+    let options = restrict_to_current_user(options, paths)?;
+    // On Windows the first pipe instance is created exclusively, so a pre-created pipe of the same
+    // name makes this fail instead of sharing it.
+    let listener = options.create_tokio().map_err(|e| CoreError::io(&paths.run, e))?;
+    after_bind(paths)?;
+
+    let (stop, mut stopped) = watch::channel(false);
+    let task = tokio::spawn(async move {
+        let mut connections = Vec::new();
+        loop {
+            tokio::select! {
+                _ = stopped.changed() => break,
+                accepted = listener.accept() => match accepted {
+                    // Defence in depth next to the pipe ACL / private run dir: serve only the current user.
+                    Ok(stream) if peer::is_trusted(&stream).unwrap_or(false) => {
+                        connections.push(tokio::spawn(handle_connection(stream, handler.clone())))
+                    }
+                    Ok(_) => continue,
+                    Err(_) => continue,
+                },
+            }
+            connections.retain(|c: &JoinHandle<()>| !c.is_finished());
+        }
+        for connection in connections {
+            connection.abort();
+        }
+        // Dropping the listener releases the name (reclaim_name deletes the socket file on Unix).
+        drop(listener);
+    });
+    Ok(ServerHandle { stop, task, _lock: lock })
+}
+
+#[cfg(windows)]
+fn restrict_to_current_user<'n>(
+    options: ListenerOptions<'n>,
+    paths: &HearthPaths,
+) -> Result<ListenerOptions<'n>, CoreError> {
+    use interprocess::os::windows::local_socket::ListenerOptionsExt;
+    use interprocess::os::windows::security_descriptor::SecurityDescriptor;
+
+    let denied = |what: &str| CoreError::io(&paths.run, std::io::Error::other(what.to_string()));
+    let sddl = super::peer::pipe_sddl().ok_or_else(|| denied("the current user could not be determined"))?;
+    let sddl = widestring::U16CString::from_str(sddl).map_err(|_| denied("invalid security descriptor"))?;
+    let descriptor = SecurityDescriptor::deserialize(&sddl).map_err(|e| CoreError::io(&paths.run, e))?;
+    Ok(options.security_descriptor(descriptor))
+}
+
+#[cfg(unix)]
+fn restrict_to_current_user<'n>(
+    options: ListenerOptions<'n>,
+    paths: &HearthPaths,
+) -> Result<ListenerOptions<'n>, CoreError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // The private run dir is the real guard: other users cannot reach the socket inside it. (Setting
+    // the socket's mode before bind needs fchmod on a socket, which macOS refuses.)
+    std::fs::set_permissions(&paths.run, std::fs::Permissions::from_mode(0o700))
+        .map_err(|e| CoreError::io(&paths.run, e))?;
+    Ok(options)
+}
+
+/// After bind: the socket file itself is private too.
+#[cfg(unix)]
+fn after_bind(paths: &HearthPaths) -> Result<(), CoreError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let socket = endpoint::socket_path(paths);
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).map_err(|e| CoreError::io(socket, e))
+}
+
+#[cfg(windows)]
+fn after_bind(_paths: &HearthPaths) -> Result<(), CoreError> {
+    Ok(())
+}
+
+async fn handle_connection(stream: Stream, handler: Handler) {
+    let (read, mut write) = tokio::io::split(stream);
+    let mut reader = BufReader::new(read);
+    loop {
+        let line = match read_line(&mut reader).await {
+            Ok(Some(line)) => line,
+            Ok(None) => return,
+            Err(_) => {
+                let _ = send(&mut write, &Response::err(None, RpcError::new(PARSE_ERROR, "line too long"))).await;
+                return;
+            }
+        };
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let response = match serde_json::from_slice::<Request>(&line) {
+            Ok(request) => match handler(request.method, request.params).await {
+                Ok(result) => Response::ok(request.id, result),
+                Err(error) => Response::err(Some(request.id), error),
+            },
+            Err(e) => Response::err(None, RpcError::new(PARSE_ERROR, e.to_string())),
+        };
+        if send(&mut write, &response).await.is_err() {
+            return;
+        }
+    }
+}
+
+async fn send<W: AsyncWriteExt + Unpin>(write: &mut W, response: &Response) -> std::io::Result<()> {
+    let mut bytes = serde_json::to_vec(response).map_err(std::io::Error::other)?;
+    bytes.push(b'\n');
+    write.write_all(&bytes).await?;
+    write.flush().await
+}
