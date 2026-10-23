@@ -310,3 +310,35 @@ async fn two_versions_installed_at_once_are_both_fully_registered() {
     assert!(p.bin.join(shim("php84")).is_file() && p.bin.join(shim("php83")).is_file());
     assert!(p.config.join("php").join("8.3").join("php.ini").is_file());
 }
+
+/// Hearth's own PHP pool keeps php-cgi running from the install folder; Windows refuses to move a
+/// folder a running program came from, so removing or updating must stop that pool first.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_version_serving_sites_can_still_be_removed_and_updated() {
+    let f = fixture(false);
+    wait(&f.core, install(&f.core, "8.4")).await;
+    let p = paths(&f);
+    let deps = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let helper = deps.parent().unwrap().join("examples").join(if cfg!(windows) { "listen.exe" } else { "listen" });
+    let running = install_dir(p, "8.4").join(if cfg!(windows) { "php-cgi.exe" } else { "php-cgi" });
+    std::fs::copy(&helper, &running).unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let pool = |key: &str| crate::supervisor::ProcessSpec {
+        key: key.into(),
+        program: running.clone(),
+        args: vec![port.to_string().into()],
+        env: vec![],
+        cwd: None,
+        log: p.logs.join("pool.log"),
+        ready_port: Some(port),
+        ready_socket: None,
+    };
+    f.core.supervisor.ensure(pool("php-8.4-0")).unwrap();
+    // An update swaps the folder, too.
+    assert_eq!(wait(&f.core, install(&f.core, "8.4")).await.error, None);
+    std::fs::copy(&helper, &running).unwrap();
+    f.core.supervisor.ensure(pool("php-8.4-0")).unwrap();
+    assert_eq!(uninstall(&f.core, "8.4").unwrap(), None);
+    assert!(!install_dir(p, "8.4").exists());
+    assert!(f.core.supervisor.status().is_empty());
+}
