@@ -165,3 +165,12 @@ fn an_older_sites_file_loads_with_the_https_port() {
     assert_eq!((config.http_port, config.https_port), (8081, 8443));
     assert!(config.secured.is_empty());
 }
+
+#[test]
+fn folder_names_keep_their_dots_like_herd() {
+    assert_eq!(name_from_folder("api.omapi").as_deref(), Some("api.omapi"));
+    assert_eq!(name_from_folder("api.pushdocs-PDD-1999").as_deref(), Some("api.pushdocs-pdd-1999"));
+    assert_eq!(name_from_folder("My Shop").as_deref(), Some("my-shop"));
+    assert_eq!(name_from_folder("a..b").as_deref(), Some("a.b"));
+    assert_eq!(name_from_folder(".claude"), Some("claude".into()));
+}

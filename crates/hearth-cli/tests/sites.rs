@@ -103,3 +103,33 @@ async fn secure_secured_and_unsecure() {
     assert_eq!(outs[5].status.code(), Some(1));
     assert_eq!(String::from_utf8_lossy(&outs[5].stderr), "This Hearth home does not manage .test names\n");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn import_herd_shows_a_dry_run_first() {
+    let (d, paths) = home();
+    let valet = d.path().join("valet");
+    std::fs::create_dir_all(valet.join("Nginx")).unwrap();
+    std::fs::write(valet.join("config.json"), r#"{ "paths": [] }"#).unwrap();
+    std::fs::write(
+        valet.join("Nginx").join("vite.test.conf"),
+        "location / {\n    proxy_pass http://localhost:5173;\n}\n",
+    )
+    .unwrap();
+    let p = paths.clone();
+    let cwd = d.path().to_path_buf();
+    let from = valet.to_string_lossy().into_owned();
+    let (dry, applied, again) = with_core(&paths, move || {
+        (
+            hearth(&p, &cwd, &["import:herd", "--from", &from]),
+            hearth(&p, &cwd, &["import:herd", "--from", &from, "--apply"]),
+            hearth(&p, &cwd, &["import:herd", "--from", &from]),
+        )
+    })
+    .await;
+    assert_eq!(dry.status.code(), Some(0), "{}", text(&dry));
+    let dry_text = String::from_utf8_lossy(&dry.stdout);
+    assert!(dry_text.contains("proxy  vite.test -> http://localhost:5173"), "{dry_text}");
+    assert!(dry_text.ends_with("Run `hearth import:herd --apply` to import.\n"), "{dry_text}");
+    assert!(String::from_utf8_lossy(&applied.stdout).ends_with("Imported.\n"), "{}", text(&applied));
+    assert!(String::from_utf8_lossy(&again.stdout).contains("Nothing new to import"), "{}", text(&again));
+}

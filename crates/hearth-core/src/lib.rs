@@ -3,6 +3,7 @@
 pub mod atomic;
 pub mod dns;
 pub mod error;
+pub mod herd;
 pub mod ipc;
 pub mod jobs;
 pub mod path_env;
