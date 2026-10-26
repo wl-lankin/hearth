@@ -224,7 +224,7 @@ pub fn unlink(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
 
 /// `http(s)://host[:port]` and nothing else (a trailing `/` is dropped): Caddy's proxy upstreams take
 /// no path, and only host/port characters can reach the Caddyfile.
-fn valid_upstream(upstream: &str) -> bool {
+pub fn valid_upstream(upstream: &str) -> bool {
     let Some(rest) = upstream.strip_prefix("http://").or_else(|| upstream.strip_prefix("https://")) else {
         return false;
     };
