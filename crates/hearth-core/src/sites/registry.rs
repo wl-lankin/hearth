@@ -111,14 +111,16 @@ fn check_name(name: &str) -> Result<(), CoreError> {
     }
 }
 
-/// A folder name as a site name: lowercase, anything else becomes a dash ("blog site" -> "blog-site").
+/// A folder name as a site name: lowercase, dots kept like Herd does ("api.shop" ->
+/// "api.shop.test"), anything else becomes a dash ("blog site" -> "blog-site").
 pub fn name_from_folder(folder: &str) -> Option<String> {
     let mapped: String = folder
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() { c } else { '-' })
+        .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' { c } else { '-' })
         .collect();
-    let name = mapped.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    let label = |part: &str| part.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    let name = mapped.split('.').map(label).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(".");
     valid_name(&name).then_some(name)
 }
 
