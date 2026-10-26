@@ -10,6 +10,7 @@ pub mod php;
 pub mod settings;
 pub mod sites;
 pub mod supervisor;
+pub mod tls;
 #[cfg(test)]
 mod supervisor_tests;
 pub mod web;
