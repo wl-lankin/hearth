@@ -403,7 +403,7 @@ mod profile_tests {
         std::fs::write(&real, "export EDITOR=vim\n").unwrap();
         let link = d.path().join(".zprofile");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        apply_profiles(&[link.clone()], "export PATH=x", true).unwrap();
+        apply_profiles(std::slice::from_ref(&link), "export PATH=x", true).unwrap();
         assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
         assert!(std::fs::read_to_string(&real).unwrap().contains(START));
     }
