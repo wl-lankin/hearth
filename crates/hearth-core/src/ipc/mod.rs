@@ -19,6 +19,8 @@ pub use server::{serve, Handler, HandlerFuture, ServerHandle};
 
 use crate::jobs::Jobs;
 use crate::php::manifest::{CATALOG_PUBLIC_KEY, CATALOG_URL};
+use crate::supervisor::Supervisor;
+use crate::web::service::WebStatus;
 use crate::HearthPaths;
 
 /// Where the PHP catalog comes from and which key must have signed it.
@@ -45,10 +47,25 @@ pub struct CoreState {
     pub php_lock: Arc<std::sync::Mutex<()>>,
     /// One download at a time of the shared tools (Composer, the CA bundle).
     pub tools_lock: Arc<tokio::sync::Mutex<()>>,
+    /// One writer at a time for sites.json, and one web server sync at a time.
+    pub sites_lock: Arc<std::sync::Mutex<()>>,
+    /// Caddy and the PHP pools.
+    pub supervisor: Arc<Supervisor>,
+    /// The latest web server sync result, for `web.status`.
+    pub web_status: Arc<std::sync::Mutex<Option<WebStatus>>>,
+    /// Sync the web server after site and PHP changes. Off by default (tests, CLI-only setups);
+    /// the app turns it on.
+    pub web_sync: bool,
+    /// Set while Hearth quits: no new syncs (they could start Caddy or PHP again).
+    pub quitting: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl CoreState {
     pub fn new(paths: HearthPaths) -> CoreState {
+        let supervisor = Arc::new(
+            // Only fails when Windows refuses a Job Object, which leaves Hearth unable to run anything safely.
+            Supervisor::new_in(Some(paths.run.clone())).expect("Hearth could not set up its process supervisor"),
+        );
         CoreState {
             paths,
             started: Instant::now(),
@@ -56,6 +73,11 @@ impl CoreState {
             catalog: Catalog::default(),
             php_lock: Arc::default(),
             tools_lock: Arc::default(),
+            sites_lock: Arc::default(),
+            supervisor,
+            web_status: Arc::default(),
+            web_sync: false,
+            quitting: Arc::default(),
         }
     }
 }
@@ -81,7 +103,10 @@ pub fn router(state: CoreState) -> Handler {
                 "core.status" => Ok(status_of(&state)),
                 other => match crate::php::api::handle(&state, other, &params).await {
                     Some(result) => result,
-                    None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                    None => match crate::sites::api::handle(&state, other, &params).await {
+                        Some(result) => result,
+                        None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                    },
                 },
             }
         })

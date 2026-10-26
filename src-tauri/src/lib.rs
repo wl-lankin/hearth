@@ -29,7 +29,9 @@ pub fn run() {
     // Only an installed copy registers itself at login and updates itself: never a dev build or a
     // custom (test) home.
     let installed = !cfg!(debug_assertions) && default_home;
-    let state = CoreState::new(paths);
+    let mut state = CoreState::new(paths);
+    // The app runs the web server: sites and PHP changes are applied to it as they happen.
+    state.web_sync = true;
 
     let mut builder = tauri::Builder::default();
     if default_home {
@@ -57,6 +59,7 @@ pub fn run() {
             commands::update_check,
             commands::update_install_now,
             commands::core_call,
+            commands::open_url,
         ])
         .on_window_event(|window, event| {
             // Closing the window keeps Hearth running in the tray.
@@ -99,6 +102,7 @@ pub fn run() {
                 window::show(&handle);
             }
             updates::start(&handle);
+            start_web(&handle);
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -119,10 +123,25 @@ pub(crate) fn stop_core(app: &AppHandle) {
     if let Some(server) = server {
         tauri::async_runtime::block_on(server.shutdown());
     }
+    // Caddy and the PHP pools stop with the core (they would also die with the process).
+    app.state::<CoreState>().supervisor.stop_all();
+}
+
+/// Brings the web server up and re-checks it every 30 s (a crashed pool or a changed folder).
+fn start_web(app: &AppHandle) {
+    let core = app.state::<CoreState>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            hearth_core::web::service::schedule_sync(&core);
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        }
+    });
 }
 
 /// Quits Hearth; a downloaded update is installed on the way out.
 pub(crate) fn quit(app: &AppHandle) {
+    // No new web server syncs from here on: one could start Caddy or PHP again after stop_all.
+    app.state::<CoreState>().quitting.store(true, std::sync::atomic::Ordering::Relaxed);
     if updates::install(app, false) {
         return;
     }

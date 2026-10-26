@@ -4,8 +4,10 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use hearth_core::php::manifest::Os;
 use hearth_core::php::store::{self, install_dir};
+use hearth_core::sites::registry;
 use hearth_core::{ipc, CoreError, HearthPaths};
 use serde_json::{json, Value};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "hearth", version, about = "Hearth: a local PHP development environment")]
@@ -57,6 +59,37 @@ enum Command {
     /// Runs Composer with the default PHP.
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Composer { args: Vec<String> },
+    /// Serves every subfolder of a folder (default: the current one) as <name>.test.
+    Park { dir: Option<PathBuf> },
+    /// Stops serving the subfolders of a parked folder.
+    Unpark { dir: Option<PathBuf> },
+    /// Serves a folder (the current one) as <name>.test; the name defaults to the folder name.
+    Link { name: Option<String> },
+    /// Stops serving a linked site.
+    Unlink { name: Option<String> },
+    /// Lists the sites.
+    #[command(alias = "sites")]
+    Links {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Forwards <name>.test to a local server, e.g. `hearth proxy app http://localhost:5173`.
+    Proxy { name: String, upstream: String },
+    /// Removes a proxy.
+    Unproxy { name: String },
+    /// Runs a site (default: the current folder's) on a PHP version.
+    Isolate {
+        minor: String,
+        #[arg(long)]
+        site: Option<String>,
+    },
+    /// Runs a site on the default PHP version again.
+    Unisolate {
+        #[arg(long)]
+        site: Option<String>,
+    },
+    /// Opens a site (default: the current folder's) in the browser.
+    Open { name: Option<String> },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -87,6 +120,119 @@ async fn main() -> ExitCode {
         }
         Command::Php { args } => run_php(&paths, None, &args),
         Command::Composer { args } => run_php(&paths, Some(paths.bin.join("composer.phar")), &args),
+        Command::Park { dir } => {
+            let dir = folder(dir);
+            let done = format!("Every folder in {} is now a site", dir.display());
+            print_call(&paths, "sites.park", json!({ "dir": dir }), false, |_| println!("{done}")).await
+        }
+        Command::Unpark { dir } => {
+            let dir = folder(dir);
+            let done = format!("{} is no longer parked", dir.display());
+            print_call(&paths, "sites.unpark", json!({ "dir": dir }), false, |_| println!("{done}")).await
+        }
+        Command::Link { name } => match site_name(name) {
+            Ok(name) => {
+                let dir = folder(None);
+                match ipc::call(&paths, "sites.link", json!({ "name": name, "dir": dir })).await {
+                    Ok(_) => {
+                        let port = http_port(&paths).await;
+                        println!("{name} is now served at http://{name}.test:{port}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => fail(&message(e)),
+                }
+            }
+            Err(code) => code,
+        },
+        Command::Unlink { name } => match site_name(name) {
+            Ok(name) => {
+                print_call(&paths, "sites.unlink", json!({ "name": name }), false, |_| println!("{name} is unlinked"))
+                    .await
+            }
+            Err(code) => code,
+        },
+        Command::Links { json } => print_call(&paths, "sites.list", Value::Null, json, print_sites).await,
+        Command::Proxy { name, upstream } => {
+            let done = format!("{name}.test now forwards to {upstream}");
+            print_call(&paths, "sites.proxy", json!({ "name": name, "upstream": upstream }), false, |_| {
+                println!("{done}")
+            })
+            .await
+        }
+        Command::Unproxy { name } => {
+            print_call(&paths, "sites.unproxy", json!({ "name": name }), false, |_| println!("{name}.test is removed"))
+                .await
+        }
+        Command::Isolate { minor, site } => match site_name(site) {
+            Ok(site) => {
+                let params = json!({ "name": site, "minor": minor });
+                print_call(&paths, "sites.isolate", params, false, |_| println!("{site} now runs on PHP {minor}")).await
+            }
+            Err(code) => code,
+        },
+        Command::Unisolate { site } => match site_name(site) {
+            Ok(site) => {
+                let params = json!({ "name": site, "minor": null });
+                print_call(&paths, "sites.isolate", params, false, |_| println!("{site} now runs on the default PHP"))
+                    .await
+            }
+            Err(code) => code,
+        },
+        Command::Open { name } => match site_name(name) {
+            Ok(name) => {
+                let url = format!("http://{name}.test:{}", http_port(&paths).await);
+                open_url(&url)
+            }
+            Err(code) => code,
+        },
+    }
+}
+
+/// The given folder, or the current one, as an absolute path.
+fn folder(dir: Option<PathBuf>) -> PathBuf {
+    let dir = dir.unwrap_or_else(|| PathBuf::from("."));
+    std::path::absolute(&dir).unwrap_or(dir)
+}
+
+/// The given site name, or the one the current folder would get.
+fn site_name(name: Option<String>) -> Result<String, ExitCode> {
+    if let Some(name) = name {
+        return Ok(name);
+    }
+    let cwd = folder(None);
+    let base = cwd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    registry::name_from_folder(&base)
+        .ok_or_else(|| fail("This folder's name cannot be a site name; give one, e.g. `hearth link shop`"))
+}
+
+async fn http_port(paths: &HearthPaths) -> u64 {
+    ipc::call(paths, "sites.list", Value::Null).await.ok().and_then(|v| v["httpPort"].as_u64()).unwrap_or(8080)
+}
+
+fn print_sites(value: &Value) {
+    for site in value["sites"].as_array().into_iter().flatten() {
+        let target = site["path"].as_str().or(site["upstream"].as_str()).unwrap_or_default();
+        let php = site["php"].as_str().map(|m| format!("  PHP {m}")).unwrap_or_default();
+        let problem = site["problem"].as_str().map(|p| format!("  ({p})")).unwrap_or_default();
+        println!(
+            "{}.test  {}  {target}{php}{problem}",
+            site["name"].as_str().unwrap_or_default(),
+            site["kind"].as_str().unwrap_or_default()
+        );
+    }
+}
+
+fn open_url(url: &str) -> ExitCode {
+    #[cfg(windows)]
+    let status = std::process::Command::new("cmd").args(["/C", "start", "", url]).status();
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(url).status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("Opened {url}");
+            ExitCode::SUCCESS
+        }
+        _ => fail(&format!("Could not open {url}")),
     }
 }
 

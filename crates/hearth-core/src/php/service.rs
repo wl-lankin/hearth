@@ -103,10 +103,14 @@ async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), Cor
     let version = build.version.clone();
     let (format, root) = (build.format, build.root.clone());
     let names: Vec<String> = build.extensions.keys().cloned().collect();
-    let (php_lock, paths, minor) = (core.php_lock.clone(), paths.clone(), minor.to_string());
+    let (worker, paths, minor) = (core.clone(), paths.clone(), minor.to_string());
     tokio::task::spawn_blocking(move || {
-        // One writer at a time for installs, php.json, php.ini and the shims.
-        let _guard = php_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // No web server sync in between (it would restart the pool), then one writer at a time for
+        // installs, php.json, php.ini and the shims.
+        let _sites = worker.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = worker.php_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // Hearth's own pool runs php-cgi from this folder; Windows cannot swap it while it runs.
+        stop_pools(&worker, &minor);
         std::fs::create_dir_all(target.parent().unwrap()).map_err(|e| CoreError::io(&target, e))?;
         unpack_with(&archive, format, &root, &target, |new| {
             for (name, zip, file) in &extension_dlls {
@@ -122,7 +126,10 @@ async fn run_install(core: &CoreState, minor: &str, id: JobId) -> Result<(), Cor
         refresh_shims(&paths)
     })
     .await
-    .map_err(|e| CoreError::Php(e.to_string()))?
+    .map_err(|e| CoreError::Php(e.to_string()))??;
+    // Sites on this version (or the new default) are served by it now.
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 fn extension_of(build: &PhpBuild) -> &'static str {
@@ -212,6 +219,16 @@ fn locked(core: &CoreState) -> std::sync::MutexGuard<'_, ()> {
     core.php_lock.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Stops Hearth's own FastCGI pool of `minor` (the next web server sync starts what is needed).
+fn stop_pools(core: &CoreState, minor: &str) {
+    let (single, prefix) = (format!("php-{minor}"), format!("php-{minor}-"));
+    for key in core.supervisor.keys() {
+        if key == single || key.starts_with(&prefix) {
+            core.supervisor.stop(&key);
+        }
+    }
+}
+
 /// Removes PHP `minor`. Fails without changing anything while one of its programs runs or while it
 /// is being installed. Returns the default version afterwards. The user's user.ini is kept for a
 /// later reinstall.
@@ -220,12 +237,15 @@ pub fn uninstall(core: &CoreState, minor: &str) -> Result<Option<String>, CoreEr
     if core.jobs.list().iter().any(|j| j.key == installing && j.state == crate::jobs::JobState::Running) {
         return Err(CoreError::Php(format!("PHP {minor} is being installed; try again when it is done")));
     }
+    // No web server sync in between (it would restart the pool we stop below).
+    let _sites = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
     let _guard = locked(core);
     let paths = &core.paths;
     let target = install_dir(paths, minor);
     if !target.join(VERSION_FILE).is_file() {
         return Err(CoreError::Php(format!("PHP {minor} is not installed")));
     }
+    stop_pools(core, minor);
     let old = target.with_file_name(format!("{minor}.old"));
     let _ = std::fs::remove_dir_all(&old);
     std::fs::rename(&target, &old)
@@ -235,6 +255,7 @@ pub fn uninstall(core: &CoreState, minor: &str) -> Result<Option<String>, CoreEr
     let _ = std::fs::remove_file(generated);
     let default = store::forget(paths, minor)?;
     refresh_shims(paths)?;
+    crate::web::service::schedule_sync(core);
     Ok(default)
 }
 
@@ -242,13 +263,18 @@ pub fn uninstall(core: &CoreState, minor: &str) -> Result<Option<String>, CoreEr
 pub fn use_version(core: &CoreState, minor: &str) -> Result<(), CoreError> {
     let _guard = locked(core);
     store::set_default(&core.paths, minor)?;
-    refresh_shims(&core.paths)
+    refresh_shims(&core.paths)?;
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 pub fn set_extension(core: &CoreState, minor: &str, name: &str, on: bool) -> Result<(), CoreError> {
     let _guard = locked(core);
     store::set_extension(&core.paths, minor, name, on)?;
-    apply_config(&core.paths, minor)
+    apply_config(&core.paths, minor)?;
+    // Running pools read php.ini only at start: the sync restarts them with the new one.
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 /// The generated part of php.ini and the user's own part.
@@ -266,7 +292,9 @@ pub fn set_ini_user(core: &CoreState, minor: &str, user: &str) -> Result<(), Cor
     let dir = ini_dir(paths, minor);
     std::fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
     crate::atomic::write(&dir.join("user.ini"), user.as_bytes())?;
-    apply_config(paths, minor)
+    apply_config(paths, minor)?;
+    crate::web::service::schedule_sync(core);
+    Ok(())
 }
 
 /// Installs the Laravel installer (`laravel new`) with Composer into `<data>/composer`, as a job.

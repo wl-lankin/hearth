@@ -99,6 +99,25 @@ pub struct Artifact {
     pub version: Option<String>,
 }
 
+/// A program Hearth runs (Caddy), one entry per OS and architecture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tool {
+    pub os: Os,
+    pub arch: Arch,
+    pub version: String,
+    pub url: String,
+    pub sha256: String,
+    pub format: Format,
+    /// The program's path inside the archive.
+    pub binary: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tools {
+    #[serde(default)]
+    pub caddy: Vec<Tool>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub schema: u32,
@@ -106,6 +125,9 @@ pub struct Manifest {
     pub php: Vec<PhpBuild>,
     pub composer: Artifact,
     pub cacert: Artifact,
+    /// Added in M2; older catalogs have none.
+    #[serde(default)]
+    pub tools: Tools,
 }
 
 fn invalid(message: impl std::fmt::Display) -> CoreError {
