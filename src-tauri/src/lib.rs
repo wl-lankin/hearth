@@ -32,8 +32,9 @@ pub fn run() {
     let mut state = CoreState::new(paths);
     // The app runs the web server: sites and PHP changes are applied to it as they happen.
     state.web_sync = true;
-    // Only the real home manages the system's .test names; a test home never does.
-    if default_home {
+    // Only the real home manages the system's .test names; a test home only when asked to
+    // (HEARTH_MANAGE_DNS=1, for a hands-on check without the real home).
+    if default_home || std::env::var_os("HEARTH_MANAGE_DNS").is_some_and(|v| v == "1") {
         state.dns_pipe = Some(hearth_core::dns::protocol::PIPE.into());
     }
 
