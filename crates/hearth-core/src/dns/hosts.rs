@@ -30,11 +30,29 @@ fn is_marker(line: &[u8], marker: &str) -> bool {
     String::from_utf8_lossy(line).trim_start_matches('\u{feff}').trim() == marker
 }
 
-/// Where Hearth's block sits: from its start line to the end of its end line (or of the file).
+/// A line Hearth itself writes inside its block.
+fn is_hearth_line(line: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(line);
+    let mut parts = text.split_whitespace();
+    matches!((parts.next(), parts.next(), parts.next()), (Some("127.0.0.1"), Some(host), None) if valid_host(host))
+}
+
+/// Where Hearth's block sits: from its start line to the end of its end line. A block whose end
+/// marker is missing ends before the first line Hearth would not have written, so nothing of
+/// anyone else's is ever removed.
 fn block(hosts: &[u8]) -> Option<(usize, usize)> {
     let all = lines(hosts);
     let first = all.iter().position(|&(s, e)| is_marker(&hosts[s..e], START))?;
-    let last = all[first..].iter().find(|&&(s, e)| is_marker(&hosts[s..e], END)).map_or(hosts.len(), |&(_, e)| e);
+    let mut last = all[first].1;
+    for &(s, e) in &all[first + 1..] {
+        if is_marker(&hosts[s..e], END) {
+            return Some((all[first].0, e));
+        }
+        if !is_hearth_line(&hosts[s..e]) {
+            break;
+        }
+        last = e;
+    }
     Some((all[first].0, last))
 }
 
@@ -132,6 +150,14 @@ mod tests {
         let with = apply_block(HERD.as_bytes(), &names(&["a.test"]));
         assert_eq!(apply_block(&with, &BTreeSet::new()), HERD.as_bytes());
         assert_eq!(apply_block(HERD.as_bytes(), &BTreeSet::new()), HERD.as_bytes());
+    }
+
+    #[test]
+    fn a_block_without_its_end_stops_before_foreign_lines() {
+        let after = "# Added by Docker Desktop\r\n10.0.0.5 host.docker.internal\r\n";
+        let broken = format!("{START}\r\n127.0.0.1 half.test\r\n{after}");
+        let out = String::from_utf8(apply_block(broken.as_bytes(), &names(&["a.test"]))).unwrap();
+        assert_eq!(out, format!("{START}\r\n127.0.0.1 a.test\r\n{END}\r\n{after}"));
     }
 
     #[test]
