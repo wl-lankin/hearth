@@ -254,3 +254,25 @@ fn unsecuring_removes_the_certificate() {
     assert!(!caddyfile(&h).contains("https://"));
     h.core.supervisor.stop_all();
 }
+
+#[test]
+fn sites_serve_without_name_resolution_and_the_status_says_why() {
+    let mut h = home();
+    h.core.dns_pipe = Some(format!("{}-missing-{}", crate::dns::protocol::PIPE, std::process::id()));
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    assert!(status.running, "{status:?}");
+    assert!(!status.dns.ready);
+    let problem = status.dns.problem.unwrap_or_default();
+    assert!(problem.starts_with("The .test helper is not ") || problem.contains("/etc/resolver/test"), "{problem}");
+    h.core.supervisor.stop_all();
+}
+
+#[test]
+fn names_are_left_alone_without_a_target() {
+    let h = home();
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    assert_eq!(status.dns, crate::dns::DnsStatus { ready: false, problem: None });
+    h.core.supervisor.stop_all();
+}

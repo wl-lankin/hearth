@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::dns::{self, DnsStatus};
 use crate::ipc::CoreState;
 use crate::php::manifest::Os;
 use crate::php::store;
@@ -26,6 +27,8 @@ pub struct WebStatus {
     pub https_port: u16,
     /// Browsers trust Hearth's CA (false before the first secured site creates it).
     pub ca_trusted: bool,
+    /// Whether `<site>.test` names resolve.
+    pub dns: DnsStatus,
     /// Caddy is serving.
     pub running: bool,
     pub processes: Vec<ProcessStatus>,
@@ -102,6 +105,14 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
     }
     remove_stale_leaves(paths, &secured);
     let ca_trusted = trusted_ca(paths);
+    // Every site's name, served or not: a name that resolves shows the problem page, not "not found".
+    let dns = match &core.dns_pipe {
+        Some(pipe) => {
+            let names: BTreeSet<String> = routes.iter().map(|r| format!("{}.test", r.name)).collect();
+            dns::sync_names(pipe, &names)
+        }
+        None => DnsStatus::default(),
+    };
 
     // PHP pools: the versions some site uses, nothing else.
     let used: BTreeSet<String> = routes
@@ -197,6 +208,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
         http_port: config.http_port,
         https_port: config.https_port,
         ca_trusted,
+        dns,
         running,
         processes,
         error,
@@ -260,6 +272,7 @@ pub fn current_status(core: &CoreState) -> WebStatus {
         http_port: config.http_port,
         https_port: config.https_port,
         ca_trusted: false,
+        dns: DnsStatus::default(),
         running: false,
         processes: core.supervisor.status(),
         error: None,

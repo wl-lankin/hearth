@@ -32,6 +32,10 @@ pub fn run() {
     let mut state = CoreState::new(paths);
     // The app runs the web server: sites and PHP changes are applied to it as they happen.
     state.web_sync = true;
+    // Only the real home manages the system's .test names; a test home never does.
+    if default_home {
+        state.dns_pipe = Some(hearth_core::dns::protocol::PIPE.into());
+    }
 
     let mut builder = tauri::Builder::default();
     if default_home {
@@ -130,6 +134,13 @@ pub(crate) fn stop_core(app: &AppHandle) {
 /// Brings the web server up and re-checks it every 30 s (a crashed pool or a changed folder).
 fn start_web(app: &AppHandle) {
     let core = app.state::<CoreState>().inner().clone();
+    // macOS asks this responder for every .test name (see /etc/resolver/test).
+    #[cfg(target_os = "macos")]
+    if core.dns_pipe.is_some() {
+        tauri::async_runtime::spawn(hearth_core::dns::resolver::serve(
+            ([127, 0, 0, 1], hearth_core::dns::resolver::PORT).into(),
+        ));
+    }
     tauri::async_runtime::spawn(async move {
         loop {
             hearth_core::web::service::schedule_sync(&core);
