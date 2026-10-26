@@ -191,7 +191,18 @@ enum Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    let cli = Cli::parse_from(as_hearth(std::env::args_os().collect()));
+    let args = as_hearth(std::env::args_os().collect());
+    // `php`, `composer` and `laravel` pass every argument to PHP as typed, so they skip the parser
+    // (which would, for one, eat a leading `--`).
+    if let Some(command) = args.get(1).and_then(|a| a.to_str()).filter(|c| matches!(*c, "php" | "composer" | "laravel"))
+    {
+        let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        return match HearthPaths::from_env() {
+            Ok(paths) => run_named(&paths, command, &rest),
+            Err(e) => fail(&e.to_string()),
+        };
+    }
+    let cli = Cli::parse_from(args);
     let paths = match HearthPaths::from_env() {
         Ok(paths) => paths,
         Err(e) => return fail(&e.to_string()),
@@ -215,25 +226,10 @@ async fn main() -> ExitCode {
             let params = json!({ "minor": minor, "name": name, "on": state == "on" });
             print_call(&paths, "php.extension", params, false, |_| println!("{name} is {state} for PHP {minor}.")).await
         }
-        Command::Php { args } => {
-            let (site, args) = split_site(&args);
-            run_php(&paths, site.as_deref(), None, args, None)
-        }
-        Command::Composer { args } => {
-            let (site, args) = split_site(&args);
-            run_php(&paths, site.as_deref(), Some(paths.bin.join("composer.phar")), args, None)
-        }
-        Command::Laravel { args } => {
-            let installer = paths
-                .data
-                .join("composer")
-                .join("vendor")
-                .join("laravel")
-                .join("installer")
-                .join("bin")
-                .join("laravel");
-            run_php(&paths, None, Some(installer), &args, None)
-        }
+        // Handled before parsing (see above); listed in the enum for `hearth --help`.
+        Command::Php { args } => run_named(&paths, "php", &args),
+        Command::Composer { args } => run_named(&paths, "composer", &args),
+        Command::Laravel { args } => run_named(&paths, "laravel", &args),
         Command::Tinker { site } => tinker(&paths, site),
         Command::Park { dir } => {
             let dir = folder(dir);
@@ -766,6 +762,19 @@ fn as_hearth(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
     args
 }
 
+/// `php`, `composer` or `laravel` with the PHP of the project (or of a leading `--site=<name>`).
+fn run_named(paths: &HearthPaths, command: &str, args: &[String]) -> ExitCode {
+    let (site, args) = split_site(args);
+    let script = match command {
+        "composer" => Some(paths.bin.join("composer.phar")),
+        "laravel" => Some(
+            paths.data.join("composer").join("vendor").join("laravel").join("installer").join("bin").join("laravel"),
+        ),
+        _ => None,
+    };
+    run_php(paths, site.as_deref(), script, args, None)
+}
+
 /// A leading `--site=<name>` or `--site <name>` (Herd's way to pick a site's PHP), and the rest.
 fn split_site(args: &[String]) -> (Option<String>, &[String]) {
     match args {
@@ -822,7 +831,23 @@ fn run_php(
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    match command.args(args).status() {
+    command.args(args);
+    // On unix the CLI becomes PHP: signals (Ctrl+C) and the exit status are PHP's own.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = command.exec();
+        return fail(&format!("Could not start PHP {minor}: {e}"));
+    }
+    // On Windows Ctrl+C reaches every program in the console: this one lets PHP decide and
+    // waits for it, so the prompt only returns once PHP has finished.
+    #[cfg(windows)]
+    // SAFETY: removes no handler; only makes this process ignore Ctrl+C from now on.
+    unsafe {
+        windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1);
+    }
+    #[allow(unreachable_code)]
+    match command.status() {
         Ok(status) => ExitCode::from(exit_code(status.code())),
         Err(e) => fail(&format!("Could not start PHP {minor}: {e}")),
     }

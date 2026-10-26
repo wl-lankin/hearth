@@ -224,3 +224,36 @@ fn the_cli_answers_to_the_names_php_and_herd() {
         String::from_utf8_lossy(&composer.stderr)
     );
 }
+
+/// On unix the CLI becomes PHP (exec): Ctrl+C, other signals and the exit status are PHP's own,
+/// and no parent is left to die first.
+#[cfg(unix)]
+#[test]
+fn php_takes_over_the_cli_process_on_unix() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin("hearth"))
+        .env("HEARTH_HOME", &paths.root)
+        .current_dir(d.path())
+        .args(["php", "-v"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.lines().any(|l| l == format!("pid:{pid}")), "{text}");
+}
+
+#[test]
+fn a_leading_double_dash_reaches_php() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let out = hearth_in(&paths, d.path(), &["php", "--", "-r", "1"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    // After Hearth's own `-c <php.ini>`.
+    let args: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("arg:")).skip(2).collect();
+    assert_eq!(args, ["--", "-r", "1"], "{text}");
+}
