@@ -11,6 +11,8 @@ use crate::CoreError;
 const ERROR_FILE_NOT_FOUND: i32 = 2;
 const ERROR_PIPE_BUSY: i32 = 231;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+/// The helper answers in milliseconds; its own limit for a client is 2 s.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The helper program, once installed (only shown to the user, never run from here).
 fn installed_program() -> PathBuf {
@@ -44,11 +46,28 @@ pub fn request_on(pipe: &str, request: &Request) -> Result<Response, CoreError> 
     };
     let mut line = serde_json::to_vec(request).map_err(|e| CoreError::Protocol(e.to_string()))?;
     line.push(b'\n');
-    (&stream).write_all(&line).map_err(|e| CoreError::Php(format!("The .test helper did not answer: {e}")))?;
-    let mut answer = String::new();
-    BufReader::new(&stream)
-        .read_line(&mut answer)
-        .map_err(|e| CoreError::Php(format!("The .test helper did not answer: {e}")))?;
+    // The exchange runs on its own thread so a server that never answers (a stuck helper, or
+    // another program holding the pipe name) is given up on, and its blocked call cancelled.
+    let (done, answer) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let result = (&stream).write_all(&line).and_then(|()| {
+            let mut answer = String::new();
+            BufReader::new(&stream).read_line(&mut answer).map(|_| answer)
+        });
+        let _ = done.send(result);
+    });
+    let result = match answer.recv_timeout(REQUEST_TIMEOUT) {
+        Ok(result) => result,
+        Err(_) => {
+            use std::os::windows::io::AsRawHandle;
+            // SAFETY: the worker's own thread handle, valid until it is joined below.
+            unsafe { windows_sys::Win32::System::IO::CancelSynchronousIo(worker.as_raw_handle() as _) };
+            let _ = worker.join();
+            return Err(CoreError::Php("The .test helper did not answer in time".into()));
+        }
+    };
+    let _ = worker.join();
+    let answer = result.map_err(|e| CoreError::Php(format!("The .test helper did not answer: {e}")))?;
     serde_json::from_str(&answer).map_err(|e| CoreError::Protocol(e.to_string()))
 }
 
@@ -113,6 +132,24 @@ pub fn install() -> Result<(), CoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pipe_that_never_answers_gives_up_in_time() {
+        let pipe = format!(r"{}-silent-{}", crate::dns::protocol::PIPE, std::process::id());
+        let server =
+            tokio::net::windows::named_pipe::ServerOptions::new().first_pipe_instance(true).create(&pipe).unwrap();
+        let accept = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            // Holds the connection without ever answering.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(server);
+        });
+        let started = Instant::now();
+        let result = tokio::task::spawn_blocking(move || request_on(&pipe, &Request::Status)).await.unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
+        assert_eq!(result.unwrap_err().to_string(), "The .test helper did not answer in time");
+        accept.abort();
+    }
 
     #[test]
     fn without_a_helper_setting_names_fails_fast_and_says_why() {

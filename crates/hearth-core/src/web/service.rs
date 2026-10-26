@@ -51,7 +51,7 @@ pub async fn sync(core: &CoreState) -> Result<WebStatus, CoreError> {
 
 /// The sync itself, with a given Caddy program. Blocking (starts processes and waits for them).
 pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError> {
-    let _guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
     let paths = &core.paths;
     let config = registry::load(paths);
     let php_state = store::load(paths);
@@ -106,13 +106,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
     remove_stale_leaves(paths, &secured);
     let ca_trusted = trusted_ca(paths);
     // Every site's name, served or not: a name that resolves shows the problem page, not "not found".
-    let dns = match &core.dns_pipe {
-        Some(pipe) => {
-            let names: BTreeSet<String> = routes.iter().map(|r| format!("{}.test", r.name)).collect();
-            dns::sync_names(pipe, &names)
-        }
-        None => DnsStatus::default(),
-    };
+    let names: BTreeSet<String> = routes.iter().map(|r| format!("{}.test", r.name)).collect();
 
     // PHP pools: the versions some site uses, nothing else.
     let used: BTreeSet<String> = routes
@@ -204,6 +198,12 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
         }
     }
     let error = (!errors.is_empty()).then(|| errors.join("; "));
+    // Outside the sites lock: talking to the helper may take a few seconds, site changes may not.
+    drop(guard);
+    let dns = match &core.dns_pipe {
+        Some(pipe) => dns::sync_names(pipe, &names),
+        None => DnsStatus::default(),
+    };
     Ok(WebStatus {
         http_port: config.http_port,
         https_port: config.https_port,
