@@ -45,6 +45,11 @@ fn dir(paths: &HearthPaths) -> PathBuf {
     paths.data.join("tls")
 }
 
+/// The CA certificate file (public; what the OS is asked to trust).
+pub fn ca_cert_path(paths: &HearthPaths) -> PathBuf {
+    dir(paths).join("ca.crt")
+}
+
 /// The certificate and key files of a site (`name` without `.test`).
 pub fn leaf_paths(paths: &HearthPaths, name: &str) -> (PathBuf, PathBuf) {
     let sites = dir(paths).join("sites");
@@ -53,7 +58,7 @@ pub fn leaf_paths(paths: &HearthPaths, name: &str) -> (PathBuf, PathBuf) {
 
 /// Loads the CA, or creates it on first use.
 pub fn ensure_ca(paths: &HearthPaths) -> Result<Ca, CoreError> {
-    let crt = dir(paths).join("ca.crt");
+    let crt = ca_cert_path(paths);
     let key = dir(paths).join("ca.key");
     if let Some(ca) = load_ca(&crt, &key) {
         return Ok(ca);
