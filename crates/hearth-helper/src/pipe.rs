@@ -128,10 +128,13 @@ const REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 pub fn serve(name: &str, hosts: &Path, stop: &AtomicBool) {
     let (Some(pipe), Some(me)) = (create(name), Thread::current()) else { return };
     let me = Arc::new(me);
-    // The client being served; 0 between clients. A watchdog cancels only the exchange it was
-    // started for, again and again until it ends: a client that trickles bytes or never reads
-    // the answer (the flush waits for that) cannot outlast it.
-    let reading = Arc::new(Mutex::new(0u64));
+    // The client being served (0 between clients) and whether its exchange is in pipe I/O. A
+    // watchdog cancels only the exchange it was started for, again and again until it ends, so a
+    // client that trickles bytes or never reads the answer (the flush waits for that) cannot
+    // outlast it. It never cancels while the hosts file is handled: phases switch under the lock
+    // the watchdog cancels under.
+    let state = Arc::new(Mutex::new((0u64, false)));
+    let set = |client: u64, in_pipe_io: bool| *state.lock().unwrap_or_else(|e| e.into_inner()) = (client, in_pipe_io);
     let mut client = 0u64;
     while !stop.load(Ordering::SeqCst) {
         // SAFETY: a valid pipe handle; blocks until a client connects.
@@ -139,27 +142,31 @@ pub fn serve(name: &str, hosts: &Path, stop: &AtomicBool) {
             unsafe { ConnectNamedPipe(pipe.0, null_mut()) } != 0 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
         if connected && !stop.load(Ordering::SeqCst) {
             client += 1;
-            *reading.lock().unwrap_or_else(|e| e.into_inner()) = client;
-            let (watched, me, reading_ref) = (client, me.clone(), reading.clone());
+            set(client, true);
+            let (watched, me, state_ref) = (client, me.clone(), state.clone());
             let deadline = Instant::now() + REQUEST_DEADLINE;
             std::thread::spawn(move || {
                 std::thread::sleep(REQUEST_DEADLINE);
                 loop {
-                    let current = reading_ref.lock().unwrap_or_else(|e| e.into_inner());
-                    if *current != watched {
+                    let current = state_ref.lock().unwrap_or_else(|e| e.into_inner());
+                    if current.0 != watched {
                         break;
                     }
-                    // SAFETY: a thread handle with THREAD_TERMINATE access; its blocked call returns.
-                    unsafe { CancelSynchronousIo(me.0) };
+                    if current.1 {
+                        // SAFETY: a thread handle with THREAD_TERMINATE access; its blocked call returns.
+                        unsafe { CancelSynchronousIo(me.0) };
+                    }
                     drop(current);
                     std::thread::sleep(Duration::from_millis(50));
                 }
             });
             let request = read_request(&pipe, deadline);
+            set(client, false);
             let mut answer = serde_json::to_vec(&handle(&request, hosts)).unwrap_or_default();
             answer.push(b'\n');
+            set(client, true);
             write_answer(&pipe, &answer);
-            *reading.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+            set(0, false);
         }
         // SAFETY: a valid pipe handle.
         unsafe { DisconnectNamedPipe(pipe.0) };
