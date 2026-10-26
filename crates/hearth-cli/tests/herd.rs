@@ -133,3 +133,35 @@ async fn tld_loopback_restart_and_which_php() {
     assert!(php.contains("/versions/8.4/"), "{php}");
     assert_eq!(outs[4].status.code(), Some(1), "use is php:use");
 }
+
+#[test]
+fn commands_of_later_milestones_say_what_is_missing() {
+    let (d, paths) = home();
+    for (args, line) in [
+        (vec!["mail:list"], "Hearth has no mail catcher yet\n"),
+        (vec!["services:list", "--json"], "Hearth has no services (databases, Redis, ...) yet\n"),
+        (vec!["workspace", "feature"], "Hearth has no workspaces yet\n"),
+        (vec!["studio"], "Hearth has no Studio, and none is planned\n"),
+        (vec!["frobnicate"], "Hearth has no `frobnicate` command (see `hearth --help`)\n"),
+    ] {
+        let out = hearth(&paths, d.path(), &args);
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), line, "{args:?}");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn every_listing_speaks_json() {
+    let (d, paths) = home();
+    let p = paths.clone();
+    let cwd = d.path().to_path_buf();
+    let outs = with_core(&paths, move || {
+        ["status", "php:list", "links", "parked", "proxies", "isolated", "secured"]
+            .map(|cmd| (cmd, hearth(&p, &cwd, &[cmd, "--json"])))
+    })
+    .await;
+    for (cmd, out) in outs {
+        ok(&out);
+        assert!(serde_json::from_slice::<Value>(&out.stdout).is_ok(), "{cmd}: {}", stdout(&out));
+    }
+}

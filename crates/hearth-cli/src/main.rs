@@ -138,6 +138,9 @@ enum Command {
     Stop { service: Option<String> },
     /// Prints the top-level domain of the sites (always `test`).
     Tld,
+    /// Anything else, e.g. a Herd command for a feature Hearth does not have yet.
+    #[command(external_subcommand)]
+    Other(Vec<String>),
     /// Prints the address the sites are served on.
     Loopback,
     /// Runs a site (default: the current folder's) on a PHP version.
@@ -303,6 +306,7 @@ async fn main() -> ExitCode {
             println!("test");
             ExitCode::SUCCESS
         }
+        Command::Other(args) => fail(&missing(args.first().map(String::as_str).unwrap_or_default())),
         Command::Loopback => {
             println!("127.0.0.1");
             ExitCode::SUCCESS
@@ -500,6 +504,27 @@ fn site_url(list: &Value, name: &str) -> String {
 fn folder(dir: Option<PathBuf>) -> PathBuf {
     let dir = dir.unwrap_or_else(|| PathBuf::from("."));
     std::path::absolute(&dir).unwrap_or(dir)
+}
+
+/// What to say for a command Hearth does not have: Herd's command groups name the feature that is
+/// still to come, so an old script fails with a reason instead of doing nothing.
+fn missing(command: &str) -> String {
+    let group = command.split(':').next().unwrap_or_default();
+    let feature = match group {
+        "mail" => "mail catcher",
+        "services" | "start-service" => "services (databases, Redis, ...)",
+        "db" => "database tools",
+        "debug" | "coverage" => "one-click Xdebug",
+        "log" | "logs" | "insights" => "log and insights viewer",
+        "processes" => "process manager",
+        "workspace" | "workspaces" => "workspaces",
+        "node" => "Node version manager",
+        "mcp" => "MCP server",
+        "share" | "fetch-share-url" => "site sharing",
+        "studio" => return "Hearth has no Studio, and none is planned".into(),
+        _ => return format!("Hearth has no `{command}` command (see `hearth --help`)"),
+    };
+    format!("Hearth has no {feature} yet")
 }
 
 /// A site name from a Herd-style domain argument: `Shop.test` and `shop` are both `shop`.
