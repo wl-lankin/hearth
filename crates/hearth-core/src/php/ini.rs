@@ -159,6 +159,8 @@ mod tests {
         );
     }
 
+    // Path::join only writes Windows separators on Windows, where this ini is rendered.
+    #[cfg(windows)]
     #[test]
     fn paths_are_quoted_and_keep_non_ascii_names() {
         let ini = windows("8.4", vec![]);
