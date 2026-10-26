@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hearth_core::dns::protocol::{handle, CLIENT_ACCESS, MAX_REQUEST};
 use windows_sys::Win32::Foundation::{
@@ -93,10 +93,10 @@ fn create(name: &str) -> Option<Pipe> {
 }
 
 /// Reads up to one line (or one byte past the size limit, so `handle` can refuse it).
-fn read_request(pipe: &Pipe) -> Vec<u8> {
+fn read_request(pipe: &Pipe, deadline: Instant) -> Vec<u8> {
     let mut request = Vec::new();
     let mut buf = [0u8; 4096];
-    while request.len() <= MAX_REQUEST && !request.contains(&b'\n') {
+    while request.len() <= MAX_REQUEST && !request.contains(&b'\n') && Instant::now() < deadline {
         let mut read = 0u32;
         // SAFETY: `buf` is valid for `buf.len()` bytes.
         let ok = unsafe { ReadFile(pipe.0, buf.as_mut_ptr(), buf.len() as u32, &mut read, null_mut()) };
@@ -120,16 +120,17 @@ fn write_answer(pipe: &Pipe, answer: &[u8]) {
     }
 }
 
-/// How long a client may take to send its request before it is dropped (it would hold the only
-/// pipe instance otherwise).
+/// How long one exchange (request in, answer out and read) may take before the client is dropped:
+/// it would hold the only pipe instance otherwise.
 const REQUEST_DEADLINE: Duration = Duration::from_secs(2);
 
 /// Serves requests against `hosts` until `stop` is set.
 pub fn serve(name: &str, hosts: &Path, stop: &AtomicBool) {
     let (Some(pipe), Some(me)) = (create(name), Thread::current()) else { return };
     let me = Arc::new(me);
-    // The client whose request is being read; 0 between reads. A watchdog cancels only the read
-    // it was started for, and only while it is still going on.
+    // The client being served; 0 between clients. A watchdog cancels only the exchange it was
+    // started for, again and again until it ends: a client that trickles bytes or never reads
+    // the answer (the flush waits for that) cannot outlast it.
     let reading = Arc::new(Mutex::new(0u64));
     let mut client = 0u64;
     while !stop.load(Ordering::SeqCst) {
@@ -140,19 +141,25 @@ pub fn serve(name: &str, hosts: &Path, stop: &AtomicBool) {
             client += 1;
             *reading.lock().unwrap_or_else(|e| e.into_inner()) = client;
             let (watched, me, reading_ref) = (client, me.clone(), reading.clone());
+            let deadline = Instant::now() + REQUEST_DEADLINE;
             std::thread::spawn(move || {
                 std::thread::sleep(REQUEST_DEADLINE);
-                let current = reading_ref.lock().unwrap_or_else(|e| e.into_inner());
-                if *current == watched {
-                    // SAFETY: a thread handle with THREAD_TERMINATE access; its blocked read returns.
+                loop {
+                    let current = reading_ref.lock().unwrap_or_else(|e| e.into_inner());
+                    if *current != watched {
+                        break;
+                    }
+                    // SAFETY: a thread handle with THREAD_TERMINATE access; its blocked call returns.
                     unsafe { CancelSynchronousIo(me.0) };
+                    drop(current);
+                    std::thread::sleep(Duration::from_millis(50));
                 }
             });
-            let request = read_request(&pipe);
-            *reading.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+            let request = read_request(&pipe, deadline);
             let mut answer = serde_json::to_vec(&handle(&request, hosts)).unwrap_or_default();
             answer.push(b'\n');
             write_answer(&pipe, &answer);
+            *reading.lock().unwrap_or_else(|e| e.into_inner()) = 0;
         }
         // SAFETY: a valid pipe handle.
         unsafe { DisconnectNamedPipe(pipe.0) };
@@ -257,6 +264,39 @@ mod tests {
         });
         assert!(waited.recv_timeout(Duration::from_secs(5)).is_ok(), "the silent client is still connected");
         assert!(ask(&name, r#"{"op":"status"}"#).contains("protocol"));
+        stop.store(true, Ordering::SeqCst);
+        wake(&name);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_client_that_trickles_bytes_is_dropped_at_the_deadline() {
+        use std::io::Write;
+        let d = tempfile::tempdir().unwrap();
+        let hosts = d.path().join("hosts");
+        std::fs::write(&hosts, "127.0.0.1 localhost\r\n").unwrap();
+        let name = format!("{}-trickle", unique_pipe());
+        let (stop, server) = start(&name, &hosts);
+        let trickler = connect(&name);
+        std::thread::spawn(move || {
+            // One byte at a time, never a line end and never reading the answer.
+            while (&trickler).write_all(b" ").is_ok() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        std::thread::sleep(Duration::from_millis(100));
+        let started = std::time::Instant::now();
+        let next = loop {
+            match open(&name) {
+                Ok(file) => break file,
+                Err(_) if started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(20)),
+                Err(e) => panic!("the trickling client still holds the helper: {e}"),
+            }
+        };
+        (&next).write_all(b"{\"op\":\"status\"}\n").unwrap();
+        let mut answer = String::new();
+        BufReader::new(next).read_line(&mut answer).unwrap();
+        assert!(answer.contains("protocol"), "{answer}");
         stop.store(true, Ordering::SeqCst);
         wake(&name);
         server.join().unwrap();
