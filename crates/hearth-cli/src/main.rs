@@ -239,18 +239,20 @@ async fn main() -> ExitCode {
             }
             Err(e) => fail(&message(e)),
         },
-        Command::Trust => {
-            print_call(&paths, "tls.trust", Value::Null, false, |_| {
-                println!("This computer now trusts Hearth's certificates")
-            })
-            .await
+        Command::Trust => prompting(&paths, "tls.trust", "This computer now trusts Hearth's certificates").await,
+        Command::DnsSetup => prompting(&paths, "dns.setup", "<name>.test now resolves on this computer").await,
+    }
+}
+
+/// Calls a method that shows the user a system prompt, waiting until they have answered it.
+async fn prompting(paths: &HearthPaths, method: &str, done: &str) -> ExitCode {
+    println!("Confirm the prompt Windows or macOS shows now.");
+    match ipc::call_waiting(paths, method, Value::Null, Duration::from_secs(600)).await {
+        Ok(_) => {
+            println!("{done}");
+            ExitCode::SUCCESS
         }
-        Command::DnsSetup => {
-            print_call(&paths, "dns.setup", Value::Null, false, |_| {
-                println!("<name>.test now resolves on this computer")
-            })
-            .await
-        }
+        Err(e) => fail(&message(e)),
     }
 }
 

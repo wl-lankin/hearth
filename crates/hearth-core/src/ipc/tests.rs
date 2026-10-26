@@ -190,3 +190,20 @@ async fn stale_socket_is_replaced() {
     assert_eq!(call(&paths, "core.ping", Value::Null).await.unwrap(), json!("pong"));
     server.shutdown().await;
 }
+
+#[tokio::test]
+async fn a_call_can_wait_longer_for_a_slow_answer() {
+    let (_d, paths) = home();
+    let slow: Handler = std::sync::Arc::new(|_method, _params| {
+        Box::pin(async {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            Ok(json!("done"))
+        })
+    });
+    let server = serve(&paths, slow).await.unwrap();
+    let short = call_waiting(&paths, "user.prompt", Value::Null, Duration::from_millis(100)).await;
+    assert!(matches!(short, Err(CoreError::Protocol(_))), "{short:?}");
+    let long = call_waiting(&paths, "user.prompt", Value::Null, Duration::from_secs(5)).await.unwrap();
+    assert_eq!(long, json!("done"));
+    server.shutdown().await;
+}

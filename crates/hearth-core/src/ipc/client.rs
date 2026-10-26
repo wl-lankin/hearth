@@ -14,6 +14,17 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Calls `method` on the core of this Hearth home. `NotRunning` when nothing listens.
 pub async fn call(paths: &HearthPaths, method: &str, params: Value) -> Result<Value, CoreError> {
+    call_waiting(paths, method, params, RESPONSE_TIMEOUT).await
+}
+
+/// Like `call`, waiting up to `wait` for the answer: for methods that show the user a system
+/// prompt (UAC, a trust dialog) and answer only once it is clicked.
+pub async fn call_waiting(
+    paths: &HearthPaths,
+    method: &str,
+    params: Value,
+    wait: Duration,
+) -> Result<Value, CoreError> {
     let stream = match timeout(CONNECT_TIMEOUT, endpoint::connect(paths)).await {
         Ok(Ok(stream)) => stream,
         Ok(Err(_)) | Err(_) => return Err(CoreError::NotRunning),
@@ -37,9 +48,8 @@ pub async fn call(paths: &HearthPaths, method: &str, params: Value) -> Result<Va
             Err(e) => Err(CoreError::Protocol(e.to_string())),
         }
     };
-    let reply = timeout(RESPONSE_TIMEOUT, exchange)
-        .await
-        .map_err(|_| CoreError::Protocol("the core did not answer in time".into()))??;
+    let reply =
+        timeout(wait, exchange).await.map_err(|_| CoreError::Protocol("the core did not answer in time".into()))??;
 
     let response: Response = serde_json::from_slice(&reply).map_err(|e| CoreError::Protocol(e.to_string()))?;
     match (response.result, response.error) {

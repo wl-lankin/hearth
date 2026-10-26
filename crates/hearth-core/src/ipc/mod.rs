@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 
-pub use client::call;
+pub use client::{call, call_waiting};
 pub use endpoint::endpoint_name;
 pub use protocol::{RpcError, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, PARSE_ERROR};
 pub use server::{serve, Handler, HandlerFuture, ServerHandle};
