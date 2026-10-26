@@ -529,7 +529,7 @@ fn split_site(args: &[String]) -> (Option<String>, &[String]) {
 /// `php artisan tinker` in a site's folder, with that site's PHP.
 fn tinker(paths: &HearthPaths, site: Option<String>) -> ExitCode {
     let found = match &site {
-        Some(name) => registry::list(paths).into_iter().find(|s| &s.name == name.trim_end_matches(".test")),
+        Some(name) => registry::list(paths).into_iter().find(|s| s.name == name.trim_end_matches(".test")),
         None => std::env::current_dir().ok().and_then(|cwd| locate::site_for_dir(paths, &cwd)),
     };
     let Some(folder) = found.as_ref().and_then(|s| s.path.clone()) else {
