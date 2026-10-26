@@ -4,13 +4,15 @@
   import { createSettingsStore } from './settings.svelte';
   import { applyTheme, resolveTheme } from './theme';
   import Dashboard from './views/Dashboard.svelte';
+  import Php from './views/Php.svelte';
   import Settings from './views/Settings.svelte';
 
-  type View = 'dashboard' | 'settings';
+  type View = 'dashboard' | 'php' | 'settings';
 
   const settings = createSettingsStore(api);
   // `?view=settings` opens a section directly (used for screenshots in the browser demo).
-  let view = $state<View>(new URLSearchParams(location.search).get('view') === 'settings' ? 'settings' : 'dashboard');
+  const requested = new URLSearchParams(location.search).get('view');
+  let view = $state<View>(requested === 'settings' || requested === 'php' ? requested : 'dashboard');
   let prefersDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   settings.load();
@@ -26,6 +28,7 @@
 
   const nav: { id: View; label: string }[] = [
     { id: 'dashboard', label: 'Dashboard' },
+    { id: 'php', label: 'PHP' },
     { id: 'settings', label: 'Settings' },
   ];
 </script>
@@ -48,6 +51,8 @@
   <main>
     {#if view === 'dashboard'}
       <Dashboard />
+    {:else if view === 'php'}
+      <Php />
     {:else}
       <Settings {settings} />
     {/if}

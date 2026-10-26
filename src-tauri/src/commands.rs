@@ -43,3 +43,14 @@ pub fn settings_set(app: AppHandle, state: State<'_, CoreState>, settings: Setti
     settings::save(&state.paths, &settings).map_err(|e| format!("Could not save the settings: {e}"))?;
     Ok(settings)
 }
+
+/// The php.*, jobs.* and tools.* core methods for the UI, answered in-process by the same code the
+/// CLI reaches over IPC.
+#[tauri::command]
+pub async fn core_call(state: State<'_, CoreState>, method: String, params: Value) -> Result<Value, String> {
+    let core = state.inner().clone();
+    match hearth_core::php::api::handle(&core, &method, &params).await {
+        Some(result) => result.map_err(|e| e.message),
+        None => Err(format!("unknown method: {method}")),
+    }
+}

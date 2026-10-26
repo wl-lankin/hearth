@@ -3,7 +3,10 @@
 pub mod atomic;
 pub mod error;
 pub mod ipc;
+pub mod jobs;
+pub mod path_env;
 pub mod paths;
+pub mod php;
 pub mod settings;
 
 pub use error::CoreError;

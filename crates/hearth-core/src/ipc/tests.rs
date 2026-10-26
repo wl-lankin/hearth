@@ -18,7 +18,7 @@ fn home_named(name: &str) -> (tempfile::TempDir, HearthPaths) {
 }
 
 async fn start(paths: &HearthPaths) -> ServerHandle {
-    let state = CoreState { paths: paths.clone(), started: Instant::now() };
+    let state = CoreState::new(paths.clone());
     serve(paths, router(state)).await.unwrap()
 }
 
@@ -76,7 +76,7 @@ async fn malformed_line_gets_parse_error_and_connection_survives() {
 async fn second_server_same_home_is_already_running() {
     let (_d, paths) = home();
     let server = start(&paths).await;
-    let state = CoreState { paths: paths.clone(), started: Instant::now() };
+    let state = CoreState::new(paths.clone());
     assert!(matches!(serve(&paths, router(state)).await, Err(CoreError::AlreadyRunning)));
     server.shutdown().await;
 }
@@ -87,7 +87,7 @@ async fn held_lock_makes_serve_already_running() {
     let (_d, paths) = home();
     let lock = std::fs::File::create(paths.run.join("hearth.lock")).unwrap();
     lock.try_lock().unwrap();
-    let state = CoreState { paths: paths.clone(), started: Instant::now() };
+    let state = CoreState::new(paths.clone());
     assert!(matches!(serve(&paths, router(state)).await, Err(CoreError::AlreadyRunning)));
 }
 
