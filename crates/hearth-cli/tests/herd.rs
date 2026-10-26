@@ -165,3 +165,34 @@ async fn every_listing_speaks_json() {
         assert!(serde_json::from_slice::<Value>(&out.stdout).is_ok(), "{cmd}: {}", stdout(&out));
     }
 }
+
+#[test]
+fn unsecure_all_fails_when_the_app_is_not_running() {
+    let (d, paths) = home();
+    let out = hearth(&paths, d.path(), &["unsecure", "--all"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "Hearth core is not running. Start the Hearth app.\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn service_names_other_than_the_web_server_are_not_restarted() {
+    let (d, paths) = home();
+    let p = paths.clone();
+    let cwd = d.path().to_path_buf();
+    let outs = with_core(&paths, move || {
+        vec![
+            hearth(&p, &cwd, &["stop", "mysql"]),
+            hearth(&p, &cwd, &["restart", "redis"]),
+            hearth(&p, &cwd, &["restart", "nginx"]),
+            hearth(&p, &cwd, &["restart", "php"]),
+        ]
+    })
+    .await;
+    for out in &outs[..2] {
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "Hearth has no services (databases, Redis, ...) yet\n");
+    }
+    for out in &outs[2..] {
+        ok(out);
+    }
+}

@@ -289,6 +289,13 @@ async fn main() -> ExitCode {
         Command::Which { json } => site_info(&paths, None, json).await,
         Command::SiteInfo { path, json } => site_info(&paths, path, json).await,
         Command::WhichPhp { site } => which_php(&paths, site),
+        Command::Restart { service: Some(s) }
+        | Command::Start { service: Some(s) }
+        | Command::Stop { service: Some(s) }
+            if !is_web_service(&s) =>
+        {
+            fail(&missing("services"))
+        }
         Command::Restart { .. } => {
             print_call(&paths, "web.restart", Value::Null, false, |_| println!("The web server and PHP restart")).await
         }
@@ -366,7 +373,10 @@ async fn main() -> ExitCode {
             Err(code) => code,
         },
         Command::Unsecure { all: true, .. } => {
-            let list = sites(&paths).await;
+            let list = match ipc::call(&paths, "sites.list", Value::Null).await {
+                Ok(list) => list,
+                Err(e) => return fail(&message(e)),
+            };
             let secured: Vec<String> = list["sites"]
                 .as_array()
                 .into_iter()
@@ -500,6 +510,11 @@ fn site_url(list: &Value, name: &str) -> String {
 fn folder(dir: Option<PathBuf>) -> PathBuf {
     let dir = dir.unwrap_or_else(|| PathBuf::from("."));
     std::path::absolute(&dir).unwrap_or(dir)
+}
+
+/// Herd's names for what Hearth's web server covers: Caddy (in place of nginx) and the PHP pools.
+fn is_web_service(name: &str) -> bool {
+    matches!(name.to_lowercase().as_str(), "nginx" | "caddy" | "php" | "web" | "dnsmasq")
 }
 
 /// What to say for a command Hearth does not have: Herd's command groups name the feature that is
