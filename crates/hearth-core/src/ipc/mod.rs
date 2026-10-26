@@ -60,6 +60,8 @@ pub struct CoreState {
     /// any value checks the resolver file). `None`, the default, leaves the system alone (tests);
     /// the app sets it.
     pub dns_pipe: Option<String>,
+    /// Set by `web.stop`: no syncs (Caddy and PHP stay stopped) until `web.start` or a restart.
+    pub web_paused: Arc<std::sync::atomic::AtomicBool>,
     /// Set while Hearth quits: no new syncs (they could start Caddy or PHP again).
     pub quitting: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -82,6 +84,7 @@ impl CoreState {
             web_status: Arc::default(),
             web_sync: false,
             dns_pipe: None,
+            web_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             quitting: Arc::default(),
         }
     }

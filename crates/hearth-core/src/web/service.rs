@@ -282,7 +282,8 @@ pub fn current_status(core: &CoreState) -> WebStatus {
 /// Syncs in the background (when the host turned syncing on) and keeps the result for `web.status`.
 /// Returns whether a sync was scheduled (not when syncing is off or Hearth is quitting).
 pub fn schedule_sync(core: &CoreState) -> bool {
-    if !core.web_sync || core.quitting.load(std::sync::atomic::Ordering::Relaxed) {
+    let paused = core.web_paused.load(std::sync::atomic::Ordering::Relaxed);
+    if !core.web_sync || paused || core.quitting.load(std::sync::atomic::Ordering::Relaxed) {
         return false;
     }
     let core = core.clone();

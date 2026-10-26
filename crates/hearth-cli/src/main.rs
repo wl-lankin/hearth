@@ -37,13 +37,13 @@ enum Command {
         json: bool,
     },
     /// Installs or updates a PHP version, e.g. `hearth php:install 8.4`.
-    #[command(name = "php:install")]
+    #[command(name = "php:install", alias = "php:update")]
     PhpInstall { minor: String },
     /// Removes a PHP version.
     #[command(name = "php:uninstall")]
     PhpUninstall { minor: String },
     /// Makes a PHP version the one behind `php`, `composer` and `laravel`.
-    #[command(name = "php:use")]
+    #[command(name = "php:use", alias = "use")]
     PhpUse { minor: String },
     /// Switches an extension of a PHP version on or off, e.g. `hearth php:ext 8.4 xdebug on`.
     #[command(name = "php:ext")]
@@ -70,9 +70,24 @@ enum Command {
     /// Serves every subfolder of a folder (default: the current one) as <name>.test.
     Park { dir: Option<PathBuf> },
     /// Stops serving the subfolders of a parked folder.
+    #[command(alias = "forget")]
     Unpark { dir: Option<PathBuf> },
+    /// Lists the parked folders.
+    #[command(alias = "paths")]
+    Parked {
+        #[arg(long)]
+        json: bool,
+    },
     /// Serves a folder (the current one) as <name>.test; the name defaults to the folder name.
-    Link { name: Option<String> },
+    Link {
+        name: Option<String>,
+        /// Serve it over HTTPS right away.
+        #[arg(long)]
+        secure: bool,
+        /// Run it on this PHP version, e.g. 8.3.
+        #[arg(long)]
+        isolate: Option<String>,
+    },
     /// Stops serving a linked site.
     Unlink { name: Option<String> },
     /// Lists the sites.
@@ -82,9 +97,49 @@ enum Command {
         json: bool,
     },
     /// Forwards <name>.test to a local server, e.g. `hearth proxy app http://localhost:5173`.
-    Proxy { name: String, upstream: String },
+    Proxy {
+        name: String,
+        upstream: String,
+        #[arg(long)]
+        secure: bool,
+    },
     /// Removes a proxy.
     Unproxy { name: String },
+    /// Lists the proxies.
+    Proxies {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the sites that run on their own PHP version.
+    Isolated {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Shows the site of the current folder.
+    Which {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prints the PHP program a site (default: the current folder's) runs.
+    #[command(name = "which-php")]
+    WhichPhp { site: Option<String> },
+    /// Shows a site's details: the site of a folder (default: the current one).
+    #[command(name = "site:info", alias = "site-information")]
+    SiteInfo {
+        path: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restarts the web server and the PHP pools.
+    Restart { service: Option<String> },
+    /// Starts the web server and the PHP pools again after `stop`.
+    Start { service: Option<String> },
+    /// Stops the web server and the PHP pools until `start` (or the next app start).
+    Stop { service: Option<String> },
+    /// Prints the top-level domain of the sites (always `test`).
+    Tld,
+    /// Prints the address the sites are served on.
+    Loopback,
     /// Runs a site (default: the current folder's) on a PHP version.
     Isolate {
         minor: String,
@@ -101,7 +156,12 @@ enum Command {
     /// Serves a site (default: the current folder's) over HTTPS with Hearth's certificate.
     Secure { name: Option<String> },
     /// Serves a site (default: the current folder's) over plain HTTP again.
-    Unsecure { name: Option<String> },
+    Unsecure {
+        name: Option<String>,
+        /// Every secured site.
+        #[arg(long)]
+        all: bool,
+    },
     /// Lists the sites served over HTTPS.
     Secured {
         #[arg(long)]
@@ -182,20 +242,71 @@ async fn main() -> ExitCode {
             let done = format!("{} is no longer parked", dir.display());
             print_call(&paths, "sites.unpark", json!({ "dir": dir }), false, |_| println!("{done}")).await
         }
-        Command::Link { name } => match site_name(name) {
+        Command::Link { name, secure, isolate } => match site_name(name) {
             Ok(name) => {
                 let dir = folder(None);
-                match ipc::call(&paths, "sites.link", json!({ "name": name, "dir": dir })).await {
-                    Ok(_) => {
-                        let port = http_port(&paths).await;
-                        println!("{name} is now served at http://{name}.test:{port}");
-                        ExitCode::SUCCESS
-                    }
-                    Err(e) => fail(&message(e)),
+                let mut steps = vec![("sites.link", json!({ "name": name, "dir": dir }))];
+                if let Some(minor) = &isolate {
+                    steps.push(("sites.isolate", json!({ "name": name, "minor": minor })));
                 }
+                if secure {
+                    steps.push(("sites.secure", json!({ "name": name })));
+                }
+                for (method, params) in steps {
+                    if let Err(e) = ipc::call(&paths, method, params).await {
+                        return fail(&message(e));
+                    }
+                }
+                println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
+                ExitCode::SUCCESS
             }
             Err(code) => code,
         },
+        Command::Parked { json } => match ipc::call(&paths, "sites.list", Value::Null).await {
+            Ok(list) if json => {
+                println!("{}", list["parked"]);
+                ExitCode::SUCCESS
+            }
+            Ok(list) => {
+                for dir in list["parked"].as_array().into_iter().flatten() {
+                    println!("{}", dir.as_str().unwrap_or_default());
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(&message(e)),
+        },
+        Command::Proxies { json } => {
+            list_sites(
+                &paths,
+                json,
+                |s| s["kind"] == "proxy",
+                |s| json!({ "name": s["name"], "upstream": s["upstream"], "secured": s["secured"] }),
+            )
+            .await
+        }
+        Command::Isolated { json } => {
+            list_sites(&paths, json, |s| s["php"].is_string(), |s| json!({ "name": s["name"], "php": s["php"] })).await
+        }
+        Command::Which { json } => site_info(&paths, None, json).await,
+        Command::SiteInfo { path, json } => site_info(&paths, path, json).await,
+        Command::WhichPhp { site } => which_php(&paths, site),
+        Command::Restart { .. } => {
+            print_call(&paths, "web.restart", Value::Null, false, |_| println!("The web server and PHP restart")).await
+        }
+        Command::Start { .. } => {
+            print_call(&paths, "web.start", Value::Null, false, |_| println!("The web server and PHP start")).await
+        }
+        Command::Stop { .. } => {
+            print_call(&paths, "web.stop", Value::Null, false, |_| println!("The web server and PHP are stopped")).await
+        }
+        Command::Tld => {
+            println!("test");
+            ExitCode::SUCCESS
+        }
+        Command::Loopback => {
+            println!("127.0.0.1");
+            ExitCode::SUCCESS
+        }
         Command::Unlink { name } => match site_name(name) {
             Ok(name) => {
                 print_call(&paths, "sites.unlink", json!({ "name": name }), false, |_| println!("{name} is unlinked"))
@@ -204,14 +315,21 @@ async fn main() -> ExitCode {
             Err(code) => code,
         },
         Command::Links { json } => print_call(&paths, "sites.list", Value::Null, json, print_sites).await,
-        Command::Proxy { name, upstream } => {
-            let done = format!("{name}.test now forwards to {upstream}");
-            print_call(&paths, "sites.proxy", json!({ "name": name, "upstream": upstream }), false, |_| {
-                println!("{done}")
-            })
-            .await
+        Command::Proxy { name, upstream, secure } => {
+            let name = domain(&name);
+            if let Err(e) = ipc::call(&paths, "sites.proxy", json!({ "name": name, "upstream": upstream })).await {
+                return fail(&message(e));
+            }
+            if secure {
+                if let Err(e) = ipc::call(&paths, "sites.secure", json!({ "name": name })).await {
+                    return fail(&message(e));
+                }
+            }
+            println!("{} now forwards to {upstream}", site_url(&sites(&paths).await, &name));
+            ExitCode::SUCCESS
         }
         Command::Unproxy { name } => {
+            let name = domain(&name);
             print_call(&paths, "sites.unproxy", json!({ "name": name }), false, |_| println!("{name}.test is removed"))
                 .await
         }
@@ -247,7 +365,24 @@ async fn main() -> ExitCode {
             },
             Err(code) => code,
         },
-        Command::Unsecure { name } => match site_name(name) {
+        Command::Unsecure { all: true, .. } => {
+            let list = sites(&paths).await;
+            let secured: Vec<String> = list["sites"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|s| s["secured"] == true)
+                .filter_map(|s| s["name"].as_str().map(str::to_string))
+                .collect();
+            for name in &secured {
+                if let Err(e) = ipc::call(&paths, "sites.unsecure", json!({ "name": name })).await {
+                    return fail(&message(e));
+                }
+            }
+            println!("{} sites are served over plain HTTP again", secured.len());
+            ExitCode::SUCCESS
+        }
+        Command::Unsecure { name, .. } => match site_name(name) {
             Ok(name) => match ipc::call(&paths, "sites.unsecure", json!({ "name": name })).await {
                 Ok(_) => {
                     println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
@@ -367,19 +502,94 @@ fn folder(dir: Option<PathBuf>) -> PathBuf {
     std::path::absolute(&dir).unwrap_or(dir)
 }
 
+/// A site name from a Herd-style domain argument: `Shop.test` and `shop` are both `shop`.
+fn domain(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    lower.strip_suffix(".test").map(str::to_string).unwrap_or(lower)
+}
+
+/// Lists the sites matching `keep`, each as `shape`; as JSON or one per line.
+async fn list_sites(
+    paths: &HearthPaths,
+    as_json: bool,
+    keep: impl Fn(&Value) -> bool,
+    shape: impl Fn(&Value) -> Value,
+) -> ExitCode {
+    match ipc::call(paths, "sites.list", Value::Null).await {
+        Ok(list) => {
+            let rows: Vec<Value> =
+                list["sites"].as_array().into_iter().flatten().filter(|s| keep(s)).map(&shape).collect();
+            if as_json {
+                println!("{}", Value::from(rows));
+            } else {
+                for row in rows {
+                    let rest: Vec<String> = row
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .filter(|(k, _)| *k != "name")
+                        .map(|(_, v)| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()))
+                        .collect();
+                    println!("{}.test  {}", row["name"].as_str().unwrap_or_default(), rest.join("  "));
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// The site of `path` (default: the current folder) with its address and PHP.
+async fn site_info(paths: &HearthPaths, path: Option<PathBuf>, as_json: bool) -> ExitCode {
+    let dir = folder(path);
+    let Some(site) = locate::site_for_dir(paths, &dir) else {
+        return fail(&format!("{} is not in a site", dir.display()));
+    };
+    // The version the site is set to, else the one it gets (the default).
+    let php = site.php.clone().or_else(|| locate::php_for_site(paths, &site.name).ok().flatten());
+    let url = site_url(&sites(paths).await, &site.name);
+    let mut info = serde_json::to_value(&site).unwrap_or(Value::Null);
+    info["url"] = json!(url);
+    info["php"] = json!(php);
+    if as_json {
+        println!("{info}");
+    } else {
+        let folder = site.path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
+        let php = php.map(|m| format!("PHP {m}")).unwrap_or_else(|| "no PHP installed".into());
+        println!("{}.test  {url}  {folder}  {php}", site.name);
+    }
+    ExitCode::SUCCESS
+}
+
+/// The PHP program a site (or the current folder) runs.
+fn which_php(paths: &HearthPaths, site: Option<String>) -> ExitCode {
+    let minor = match site {
+        Some(name) => match locate::php_for_site(paths, &domain(&name)) {
+            Ok(minor) => minor,
+            Err(e) => return fail(&e.to_string()),
+        },
+        None => locate::php_for_dir(paths, &folder(None)),
+    };
+    let Some(minor) = minor else {
+        return fail("No PHP version is installed. Install one with: hearth php:install 8.4");
+    };
+    let program = match Os::current() {
+        Os::Windows => install_dir(paths, &minor).join("php.exe"),
+        Os::Macos => install_dir(paths, &minor).join("bin").join("php"),
+    };
+    println!("{}", program.display());
+    ExitCode::SUCCESS
+}
+
 /// The given site name, or the one the current folder would get.
 fn site_name(name: Option<String>) -> Result<String, ExitCode> {
     if let Some(name) = name {
-        return Ok(name);
+        return Ok(domain(&name));
     }
     let cwd = folder(None);
     let base = cwd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     registry::name_from_folder(&base)
         .ok_or_else(|| fail("This folder's name cannot be a site name; give one, e.g. `hearth link shop`"))
-}
-
-async fn http_port(paths: &HearthPaths) -> u64 {
-    ipc::call(paths, "sites.list", Value::Null).await.ok().and_then(|v| v["httpPort"].as_u64()).unwrap_or(8080)
 }
 
 fn print_sites(value: &Value) {
