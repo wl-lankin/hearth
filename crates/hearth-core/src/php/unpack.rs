@@ -118,7 +118,7 @@ pub fn unpack_with(
         let minor = target.file_name().unwrap_or_default().to_string_lossy();
         return Err(CoreError::Php(format!("Close the programs using PHP {minor} and try again")));
     }
-    if let Err(e) = std::fs::rename(&new, target) {
+    if let Err(e) = crate::atomic::rename_dir(&new, target) {
         let _ = std::fs::rename(&old, target);
         let _ = std::fs::remove_dir_all(&new);
         return Err(CoreError::io(target, e));
