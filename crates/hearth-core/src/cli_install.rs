@@ -34,6 +34,7 @@ pub fn install_cli(paths: &HearthPaths, app_dir: &Path) -> Result<bool, CoreErro
     let Some(source) = source(app_dir) else { return Ok(false) };
     let bytes = std::fs::read(&source).map_err(|e| CoreError::io(&source, e))?;
     let mut changed = false;
+    let mut failed = Vec::new();
     for name in names() {
         let target = paths.bin.join(name);
         let aside = paths.bin.join(format!("{name}.old"));
@@ -42,8 +43,14 @@ pub fn install_cli(paths: &HearthPaths, app_dir: &Path) -> Result<bool, CoreErro
         if std::fs::read(&target).is_ok_and(|current| current == bytes) {
             continue;
         }
-        place(&bytes, &target, &aside)?;
-        changed = true;
+        // One busy name must not keep the others on an old version.
+        match place(&bytes, &target, &aside) {
+            Ok(()) => changed = true,
+            Err(e) => failed.push(e.to_string()),
+        }
+    }
+    if !failed.is_empty() {
+        return Err(CoreError::Php(failed.join("; ")));
     }
     Ok(changed)
 }
@@ -101,6 +108,23 @@ mod tests {
         paths.ensure().unwrap();
         assert!(!install_cli(&paths, d.path()).unwrap());
         assert_eq!(std::fs::read_dir(&paths.bin).unwrap().count(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn one_name_that_cannot_be_replaced_does_not_hold_back_the_others() {
+        let (_d, paths, app) = setup(b"cli v1");
+        install_cli(&paths, &app).unwrap();
+        std::fs::write(app.join("hearth-cli.exe"), b"cli v2").unwrap();
+        // php.exe cannot be replaced and its earlier copy cannot be moved out of the way.
+        std::fs::remove_file(paths.bin.join("php.exe")).unwrap();
+        std::fs::create_dir_all(paths.bin.join("php.exe").join("busy")).unwrap();
+        std::fs::create_dir_all(paths.bin.join("php.exe.old").join("busy")).unwrap();
+        let err = install_cli(&paths, &app).unwrap_err().to_string();
+        assert!(err.contains("php.exe"), "{err}");
+        for name in ["hearth.exe", "composer.exe", "laravel.exe", "herd.exe"] {
+            assert_eq!(std::fs::read(paths.bin.join(name)).unwrap(), b"cli v2", "{name}");
+        }
     }
 
     #[cfg(windows)]
