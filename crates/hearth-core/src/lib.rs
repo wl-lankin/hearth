@@ -1,6 +1,7 @@
 //! The Hearth core: paths, settings and the local IPC server every frontend talks to.
 
 pub mod atomic;
+pub mod dns;
 pub mod error;
 pub mod ipc;
 pub mod jobs;
