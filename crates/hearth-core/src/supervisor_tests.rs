@@ -128,7 +128,8 @@ fn a_clean_exit_is_restarted_at_once() {
     let dir = tempfile::tempdir().unwrap();
     let sup = Supervisor::new().unwrap();
     let port = free_port();
-    let mut s = spec(&dir, "php", port, Some(150));
+    // Long enough for a slow CI machine to see it ready before it exits.
+    let mut s = spec(&dir, "php", port, Some(400));
     s.args.push("0".into());
     sup.ensure(s).unwrap();
     let started = Instant::now();
