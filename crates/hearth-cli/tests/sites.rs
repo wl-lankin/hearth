@@ -110,7 +110,11 @@ async fn import_herd_shows_a_dry_run_first() {
     let valet = d.path().join("valet");
     std::fs::create_dir_all(valet.join("Nginx")).unwrap();
     std::fs::write(valet.join("config.json"), r#"{ "paths": [] }"#).unwrap();
-    std::fs::write(valet.join("Nginx").join("vite.test.conf"), "proxy_pass http://localhost:5173;\n").unwrap();
+    std::fs::write(
+        valet.join("Nginx").join("vite.test.conf"),
+        "location / {\n    proxy_pass http://localhost:5173;\n}\n",
+    )
+    .unwrap();
     let p = paths.clone();
     let cwd = d.path().to_path_buf();
     let from = valet.to_string_lossy().into_owned();
