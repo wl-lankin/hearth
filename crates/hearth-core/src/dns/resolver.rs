@@ -51,6 +51,9 @@ pub fn setup_script(prepared: &std::path::Path) -> String {
 
 /// Whether macOS sends `.test` questions to the responder.
 pub fn check() -> Result<(), crate::CoreError> {
+    if let Some(problem) = responder_problem() {
+        return Err(crate::CoreError::Php(problem));
+    }
     match std::fs::read_to_string(RESOLVER_FILE) {
         Ok(text) if text == resolver_file_text(PORT) => Ok(()),
         _ => Err(crate::CoreError::Php(format!("{RESOLVER_FILE} is not set up"))),
@@ -107,11 +110,35 @@ pub fn answer(query: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Serves `answer` over UDP and TCP on `addr` until the runtime stops.
+/// Why the responder is not answering, when it could not start.
+static PROBLEM: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn responder_problem() -> Option<String> {
+    PROBLEM.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Serves `answer` over UDP and TCP on `addr` until the runtime stops. A failure to listen is
+/// kept for `check`, so the status never says ready while nothing answers.
 pub async fn serve(addr: SocketAddr) -> std::io::Result<()> {
+    let bound = async {
+        Ok::<_, std::io::Error>((tokio::net::UdpSocket::bind(addr).await?, tokio::net::TcpListener::bind(addr).await?))
+    };
+    let (udp, tcp) = match bound.await {
+        Ok(sockets) => {
+            *PROBLEM.lock().unwrap_or_else(|e| e.into_inner()) = None;
+            sockets
+        }
+        Err(e) => {
+            *PROBLEM.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some(format!("The .test responder could not listen on port {}: {e}", addr.port()));
+            return Err(e);
+        }
+    };
+    serve_on(udp, tcp).await
+}
+
+async fn serve_on(udp: tokio::net::UdpSocket, tcp: tokio::net::TcpListener) -> std::io::Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let udp = tokio::net::UdpSocket::bind(addr).await?;
-    let tcp = tokio::net::TcpListener::bind(addr).await?;
     tokio::spawn(async move {
         while let Ok((mut stream, _)) = tcp.accept().await {
             tokio::spawn(async move {
@@ -144,6 +171,9 @@ pub async fn serve(addr: SocketAddr) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The responder tests share its problem slot; one at a time.
+    static SERVE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn query(name: &str, qtype: u16) -> Vec<u8> {
         let mut q = vec![0x12, 0x34, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0];
@@ -201,6 +231,20 @@ mod tests {
         assert_eq!(resolver_file_text(10053), "# Hearth: .test names\nnameserver 127.0.0.1\nport 10053\n");
     }
 
+    #[tokio::test]
+    async fn a_responder_that_cannot_listen_is_reported() {
+        let _one = SERVE.lock().await;
+        let taken = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let addr = taken.local_addr().unwrap();
+        assert!(serve(addr).await.is_err());
+        let problem = responder_problem().unwrap_or_default();
+        assert!(
+            problem.starts_with(&format!("The .test responder could not listen on port {}", addr.port())),
+            "{problem}"
+        );
+        assert_eq!(check().unwrap_err().to_string(), problem);
+    }
+
     #[test]
     fn the_setup_script_copies_the_prepared_file_as_admin() {
         assert_eq!(
@@ -211,6 +255,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_responder_answers_over_udp_and_tcp_and_survives_garbage() {
+        let _one = SERVE.lock().await;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let addr: SocketAddr = ([127, 0, 0, 1], port).into();
