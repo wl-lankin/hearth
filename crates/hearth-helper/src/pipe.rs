@@ -4,6 +4,8 @@
 use std::path::{Path, PathBuf};
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use hearth_core::dns::protocol::{handle, CLIENT_ACCESS, MAX_REQUEST};
 use windows_sys::Win32::Foundation::{
@@ -20,6 +22,8 @@ use windows_sys::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
     PIPE_TYPE_BYTE, PIPE_WAIT,
 };
+use windows_sys::Win32::System::Threading::{GetCurrentThreadId, OpenThread, THREAD_TERMINATE};
+use windows_sys::Win32::System::IO::CancelSynchronousIo;
 
 /// SYSTEM: full control. Authenticated users: read data, write data, read attributes, synchronize
 /// (0x100083), deliberately not FILE_CREATE_PIPE_INSTANCE, so no user process can pose as the helper.
@@ -116,15 +120,36 @@ fn write_answer(pipe: &Pipe, answer: &[u8]) {
     }
 }
 
+/// How long a client may take to send its request before it is dropped (it would hold the only
+/// pipe instance otherwise).
+const REQUEST_DEADLINE: Duration = Duration::from_secs(2);
+
 /// Serves requests against `hosts` until `stop` is set.
 pub fn serve(name: &str, hosts: &Path, stop: &AtomicBool) {
-    let Some(pipe) = create(name) else { return };
+    let (Some(pipe), Some(me)) = (create(name), Thread::current()) else { return };
+    let me = Arc::new(me);
+    // The client whose request is being read; 0 between reads. A watchdog cancels only the read
+    // it was started for, and only while it is still going on.
+    let reading = Arc::new(Mutex::new(0u64));
+    let mut client = 0u64;
     while !stop.load(Ordering::SeqCst) {
         // SAFETY: a valid pipe handle; blocks until a client connects.
         let connected =
             unsafe { ConnectNamedPipe(pipe.0, null_mut()) } != 0 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
         if connected && !stop.load(Ordering::SeqCst) {
+            client += 1;
+            *reading.lock().unwrap_or_else(|e| e.into_inner()) = client;
+            let (watched, me, reading_ref) = (client, me.clone(), reading.clone());
+            std::thread::spawn(move || {
+                std::thread::sleep(REQUEST_DEADLINE);
+                let current = reading_ref.lock().unwrap_or_else(|e| e.into_inner());
+                if *current == watched {
+                    // SAFETY: a thread handle with THREAD_TERMINATE access; its blocked read returns.
+                    unsafe { CancelSynchronousIo(me.0) };
+                }
+            });
             let request = read_request(&pipe);
+            *reading.lock().unwrap_or_else(|e| e.into_inner()) = 0;
             let mut answer = serde_json::to_vec(&handle(&request, hosts)).unwrap_or_default();
             answer.push(b'\n');
             write_answer(&pipe, &answer);
@@ -134,11 +159,32 @@ pub fn serve(name: &str, hosts: &Path, stop: &AtomicBool) {
     }
 }
 
+/// The serving thread, for the watchdog to cancel its read.
+struct Thread(HANDLE);
+
+// SAFETY: a kernel handle may be used from any thread.
+unsafe impl Send for Thread {}
+// SAFETY: as above.
+unsafe impl Sync for Thread {}
+
+impl Thread {
+    fn current() -> Option<Thread> {
+        // SAFETY: opens this thread by its id; closed on drop.
+        let handle = unsafe { OpenThread(THREAD_TERMINATE, 0, GetCurrentThreadId()) };
+        (!handle.is_null()).then_some(Thread(handle))
+    }
+}
+
+impl Drop for Thread {
+    fn drop(&mut self) {
+        // SAFETY: a handle from OpenThread, closed once.
+        unsafe { CloseHandle(self.0) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{BufRead, BufReader, Write};
-    use std::sync::Arc;
-    use std::time::Duration;
 
     use super::*;
     use hearth_core::dns::protocol::PIPE;
@@ -147,18 +193,27 @@ mod tests {
         format!("{PIPE}-test-{}", std::process::id())
     }
 
-    fn ask(name: &str, line: &str) -> String {
-        let mut client = None;
+    fn connect(name: &str) -> std::fs::File {
         for _ in 0..50 {
             match open(name) {
-                Ok(file) => {
-                    client = Some(file);
-                    break;
-                }
+                Ok(file) => return file,
                 Err(_) => std::thread::sleep(Duration::from_millis(20)),
             }
         }
-        let mut client = client.expect("the pipe opens");
+        panic!("the pipe does not open");
+    }
+
+    fn start(name: &str, hosts: &Path) -> (Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let stop = Arc::new(AtomicBool::new(false));
+        let server = {
+            let (name, hosts, stop) = (name.to_string(), hosts.to_path_buf(), stop.clone());
+            std::thread::spawn(move || serve(&name, &hosts, &stop))
+        };
+        (stop, server)
+    }
+
+    fn ask(name: &str, line: &str) -> String {
+        let mut client = connect(name);
         client.write_all(format!("{line}\n").as_bytes()).unwrap();
         let mut answer = String::new();
         BufReader::new(client).read_line(&mut answer).unwrap();
@@ -180,6 +235,28 @@ mod tests {
         assert!(std::fs::read_to_string(&hosts).unwrap().contains("127.0.0.1 a.test\r\n"));
         assert!(ask(&name, r#"{"op":"status"}"#).contains(r#""names":["a.test"]"#));
         assert!(create(&name).is_none(), "nobody may open a second server end of the pipe");
+        stop.store(true, Ordering::SeqCst);
+        wake(&name);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn a_client_that_sends_nothing_is_dropped_and_the_next_one_is_served() {
+        use std::io::Read;
+        let d = tempfile::tempdir().unwrap();
+        let hosts = d.path().join("hosts");
+        std::fs::write(&hosts, "127.0.0.1 localhost\r\n").unwrap();
+        let name = format!("{}-silent", unique_pipe());
+        let (stop, server) = start(&name, &hosts);
+        let silent = connect(&name);
+        let (done, waited) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 1];
+            let _ = (&silent).read(&mut buf);
+            let _ = done.send(());
+        });
+        assert!(waited.recv_timeout(Duration::from_secs(5)).is_ok(), "the silent client is still connected");
+        assert!(ask(&name, r#"{"op":"status"}"#).contains("protocol"));
         stop.store(true, Ordering::SeqCst);
         wake(&name);
         server.join().unwrap();
