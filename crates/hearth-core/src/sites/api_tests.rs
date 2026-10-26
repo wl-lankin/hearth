@@ -88,3 +88,30 @@ async fn a_test_home_never_sets_up_system_names() {
     let err = call(&core, "dns.setup", Value::Null).await.unwrap_err();
     assert_eq!(err.message, "This Hearth home does not manage .test names");
 }
+
+/// A minimal Herd folder: no parked paths, one proxy.
+fn herd_folder(dir: &std::path::Path) -> std::path::PathBuf {
+    let valet = dir.join("valet");
+    std::fs::create_dir_all(valet.join("Nginx")).unwrap();
+    std::fs::write(valet.join("config.json"), r#"{ "paths": [] }"#).unwrap();
+    std::fs::write(
+        valet.join("Nginx").join("vite.test.conf"),
+        "location / {\n    proxy_pass http://localhost:5173;\n}\n",
+    )
+    .unwrap();
+    valet
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_herd_import_is_planned_first_and_applied_on_request() {
+    let (d, core, _projects) = home();
+    let valet = herd_folder(d.path());
+    let planned = call(&core, "herd.import", json!({ "from": valet, "apply": false })).await.unwrap();
+    assert_eq!(planned["plan"]["proxy"], json!([["vite", "http://localhost:5173"]]));
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"], json!([]));
+    let applied = call(&core, "herd.import", json!({ "from": valet, "apply": true })).await.unwrap();
+    assert_eq!(applied["failed"], json!([]));
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"][0]["upstream"], "http://localhost:5173");
+    let err = call(&core, "herd.import", json!({ "from": d.path().join("nope"), "apply": false })).await.unwrap_err();
+    assert!(err.message.ends_with("is not a Herd folder"), "{}", err.message);
+}

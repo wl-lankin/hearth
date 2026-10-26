@@ -104,6 +104,18 @@ enum Command {
     /// Makes <name>.test resolve on this computer (once; the system asks for admin rights).
     #[command(name = "dns:setup")]
     DnsSetup,
+    /// Shows what Herd's parked folders, links, proxies, PHP versions and HTTPS choices would add;
+    /// imports them with --apply. Herd itself is never changed.
+    #[command(name = "import:herd")]
+    ImportHerd {
+        /// Herd's Valet folder (default: Herd's usual place).
+        #[arg(long)]
+        from: Option<PathBuf>,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -241,6 +253,58 @@ async fn main() -> ExitCode {
         },
         Command::Trust => prompting(&paths, "tls.trust", "This computer now trusts Hearth's certificates").await,
         Command::DnsSetup => prompting(&paths, "dns.setup", "<name>.test now resolves on this computer").await,
+        Command::ImportHerd { from, apply, json } => {
+            let mut params = json!({ "apply": apply });
+            if let Some(from) = from {
+                params["from"] = json!(folder(Some(from)));
+            }
+            print_call(&paths, "herd.import", params, json, |v| print_import(v, apply)).await
+        }
+    }
+}
+
+fn print_import(value: &Value, applied: bool) {
+    let plan = &value["plan"];
+    let list = |key: &str| plan[key].as_array().cloned().unwrap_or_default();
+    let pair =
+        |v: &Value| (v[0].as_str().unwrap_or_default().to_string(), v[1].as_str().unwrap_or_default().to_string());
+    println!("From {}", value["from"].as_str().unwrap_or_default());
+    for dir in list("park") {
+        println!("park   {}", dir.as_str().unwrap_or_default());
+    }
+    for (name, dir) in list("link").iter().map(pair) {
+        println!("link   {name}.test -> {dir}");
+    }
+    for (name, upstream) in list("proxy").iter().map(pair) {
+        println!("proxy  {name}.test -> {upstream}");
+    }
+    for (name, minor) in list("isolate").iter().map(pair) {
+        println!("php    {name}.test -> PHP {minor}");
+    }
+    for name in list("secure") {
+        println!("https  {}.test", name.as_str().unwrap_or_default());
+    }
+    for skip in list("skipped") {
+        println!(
+            "skip   {}: {}",
+            skip["name"].as_str().unwrap_or_default(),
+            skip["reason"].as_str().unwrap_or_default()
+        );
+    }
+    for fail in value["failed"].as_array().into_iter().flatten() {
+        println!(
+            "failed {}: {}",
+            fail["name"].as_str().unwrap_or_default(),
+            fail["reason"].as_str().unwrap_or_default()
+        );
+    }
+    let nothing = ["park", "link", "proxy", "isolate", "secure"].iter().all(|k| list(k).is_empty());
+    if nothing {
+        println!("Nothing new to import.");
+    } else if applied {
+        println!("Imported.");
+    } else {
+        println!("Run `hearth import:herd --apply` to import.");
     }
 }
 

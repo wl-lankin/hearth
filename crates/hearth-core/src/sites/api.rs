@@ -59,6 +59,27 @@ async fn prompting(
     Ok(Value::Null)
 }
 
+/// Reads Herd's sites (from `from`, or Herd's usual folder) and returns what importing them
+/// would change; with `apply`, also does it.
+fn herd_import(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
+    let valet = match params.get("from").and_then(Value::as_str) {
+        Some(dir) => PathBuf::from(dir),
+        None => crate::herd::default_valet_dir().ok_or_else(|| invalid("Herd's folder could not be found"))?,
+    };
+    let apply = params.get("apply").and_then(Value::as_bool).unwrap_or(false);
+    let setup = crate::herd::read(&valet).map_err(|e| invalid(e.to_string()))?;
+    let (plan, failed) = {
+        let _guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let plan = crate::herd::import::plan(&core.paths, &setup);
+        let failed = if apply { crate::herd::import::apply(&core.paths, &plan) } else { vec![] };
+        (plan, failed)
+    };
+    if apply {
+        schedule_sync(core);
+    }
+    Ok(json!({ "from": valet, "plan": plan, "failed": failed }))
+}
+
 /// Asks the OS to trust Hearth's CA (creating it first if needed).
 fn trust_ca(paths: crate::HearthPaths) -> Result<(), CoreError> {
     let ca = tls::ensure_ca(&paths)?;
@@ -89,6 +110,7 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             (Ok(_), Some(_)) => Err(invalid("minor must be a string like \"8.4\" or null")),
             (Err(e), _) => Err(e),
         },
+        "herd.import" => herd_import(core, params),
         "sites.secure" => text(params, "name").and_then(|n| change(core, || registry::secure(paths, n))),
         "sites.unsecure" => text(params, "name").and_then(|n| change(core, || registry::unsecure(paths, n))),
         "tls.trust" => {
