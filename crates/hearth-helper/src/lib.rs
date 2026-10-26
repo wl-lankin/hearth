@@ -7,6 +7,8 @@
 pub const ARG: &str = "--hearth-helper";
 
 #[cfg(windows)]
+mod folders;
+#[cfg(windows)]
 mod install;
 #[cfg(windows)]
 mod pipe;

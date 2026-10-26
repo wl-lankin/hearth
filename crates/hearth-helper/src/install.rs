@@ -14,9 +14,7 @@ use crate::service::NAME;
 
 /// An admin-only folder, so no user process can replace the program the service runs as SYSTEM.
 fn target() -> PathBuf {
-    let programs =
-        std::env::var_os("ProgramFiles").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
-    programs.join("Hearth").join("hearth-helper.exe")
+    crate::folders::program_files().join("Hearth").join("hearth-helper.exe")
 }
 
 fn wait_for(service: &Service, state: ServiceState) -> Result<(), String> {

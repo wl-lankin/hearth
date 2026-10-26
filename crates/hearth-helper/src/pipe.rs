@@ -26,8 +26,7 @@ use windows_sys::Win32::System::Pipes::{
 const SDDL: &str = "D:P(A;;GA;;;SY)(A;;0x100083;;;AU)";
 
 pub fn hosts_path() -> PathBuf {
-    let root = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
-    root.join("System32").join("drivers").join("etc").join("hosts")
+    crate::folders::system32().join("drivers").join("etc").join("hosts")
 }
 
 /// A client end of the pipe, with exactly the rights the pipe grants.
