@@ -56,11 +56,19 @@ pub fn leaf_paths(paths: &HearthPaths, name: &str) -> (PathBuf, PathBuf) {
     (sites.join(format!("{name}.crt")), sites.join(format!("{name}.key")))
 }
 
-/// Loads the CA, or creates it on first use.
+/// The CA if there is a usable one; never creates it.
+pub fn load_ca(paths: &HearthPaths) -> Option<Ca> {
+    read_ca(&ca_cert_path(paths), &dir(paths).join("ca.key"))
+}
+
+/// Loads the CA, or creates it on first use. One caller at a time: two racing creators could
+/// leave a certificate and a key from different CAs (and orphan the root the user trusted).
 pub fn ensure_ca(paths: &HearthPaths) -> Result<Ca, CoreError> {
+    static CREATING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one = CREATING.lock().unwrap_or_else(|e| e.into_inner());
     let crt = ca_cert_path(paths);
     let key = dir(paths).join("ca.key");
-    if let Some(ca) = load_ca(&crt, &key) {
+    if let Some(ca) = read_ca(&crt, &key) {
         return Ok(ca);
     }
     let key_pair = KeyPair::generate().map_err(failed)?;
@@ -93,7 +101,7 @@ fn failed(e: rcgen::Error) -> CoreError {
     CoreError::Tls(format!("Could not create a certificate: {e}"))
 }
 
-fn load_ca(crt: &Path, key: &Path) -> Option<Ca> {
+fn read_ca(crt: &Path, key: &Path) -> Option<Ca> {
     let cert_pem = std::fs::read_to_string(crt).ok()?;
     let key = KeyPair::from_pem(&std::fs::read_to_string(key).ok()?).ok()?;
     let der = parse_x509_pem(cert_pem.as_bytes()).ok()?.1.contents;
@@ -159,6 +167,29 @@ mod tests {
         let pem = std::fs::read(leaf_paths(paths, name).0).unwrap();
         let (_, pem) = parse_x509_pem(&pem).unwrap();
         pem.parse_x509().unwrap().validity().not_after.to_datetime()
+    }
+
+    #[test]
+    fn callers_racing_for_the_first_ca_all_get_the_same_one() {
+        for _ in 0..5 {
+            let (_d, p) = home();
+            let threads: Vec<_> = (0..8)
+                .map(|_| {
+                    let p = p.clone();
+                    std::thread::spawn(move || ensure_ca(&p).unwrap().fingerprint())
+                })
+                .collect();
+            let prints: std::collections::BTreeSet<String> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+            assert_eq!(prints.len(), 1, "{prints:?}");
+            assert_eq!(load_ca(&p).map(|ca| ca.fingerprint()), prints.into_iter().next());
+        }
+    }
+
+    #[test]
+    fn loading_never_creates_a_ca() {
+        let (_d, p) = home();
+        assert!(load_ca(&p).is_none());
+        assert!(!ca_cert_path(&p).exists());
     }
 
     #[test]

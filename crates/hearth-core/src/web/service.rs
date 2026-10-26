@@ -231,8 +231,7 @@ fn remove_stale_leaves(paths: &crate::HearthPaths, secured: &BTreeSet<String>) {
 
 /// Whether the OS trusts Hearth's CA; false while there is none yet (it is created on first use).
 fn trusted_ca(paths: &crate::HearthPaths) -> bool {
-    let crt = tls::ca_cert_path(paths);
-    crt.is_file() && tls::ensure_ca(paths).is_ok_and(|ca| tls::trust::is_trusted(&ca, &crt))
+    tls::load_ca(paths).is_some_and(|ca| tls::trust::is_trusted(&ca, &tls::ca_cert_path(paths)))
 }
 
 /// Writes `rendered` as the new Caddyfile only when Caddy accepts it; otherwise the last good one stays.
