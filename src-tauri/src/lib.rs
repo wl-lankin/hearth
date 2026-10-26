@@ -36,6 +36,10 @@ pub fn run() {
             eprintln!("Hearth could not update its command line tools: {e}");
         }
     }
+    // Shims from an older Hearth are rewritten in the current form (they forward to the CLI).
+    if let Err(e) = hearth_core::php::service::refresh_shims(&paths) {
+        eprintln!("Hearth could not update its php and composer commands: {e}");
+    }
     let mut state = CoreState::new(paths);
     // The app runs the web server: sites and PHP changes are applied to it as they happen.
     state.web_sync = true;
