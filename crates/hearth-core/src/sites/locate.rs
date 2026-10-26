@@ -29,6 +29,17 @@ pub fn php_for_dir(paths: &HearthPaths, dir: &Path) -> Option<String> {
     effective_php(isolated.as_deref(), &installed, state.default.as_deref()).0
 }
 
+/// The PHP minor of the site `name`: its isolation when installed, else the default.
+pub fn php_for_site(paths: &HearthPaths, name: &str) -> Result<Option<String>, crate::CoreError> {
+    let site = registry::list(paths)
+        .into_iter()
+        .find(|s| s.name == name)
+        .ok_or_else(|| crate::CoreError::Php(format!("No site named {name}.test")))?;
+    let state = store::load(paths);
+    let installed: Vec<String> = store::installed(paths).into_iter().map(|i| i.minor).collect();
+    Ok(effective_php(site.php.as_deref(), &installed, state.default.as_deref()).0)
+}
+
 /// Whether `inner` is `outer` or below it, comparing names without case on Windows.
 fn contains(outer: &Path, inner: &Path) -> bool {
     let key = |c: Component| {

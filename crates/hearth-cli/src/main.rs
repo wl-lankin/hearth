@@ -4,7 +4,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use hearth_core::php::manifest::Os;
 use hearth_core::php::store::{self, install_dir};
-use hearth_core::sites::registry;
+use hearth_core::sites::{locate, registry};
 use hearth_core::{ipc, CoreError, HearthPaths};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -53,12 +53,20 @@ enum Command {
         #[arg(value_parser = ["on", "off"])]
         state: String,
     },
-    /// Runs the default PHP with Hearth's php.ini.
+    /// Runs the PHP of the project you are in (or `--site=<name>`'s) with Hearth's php.ini.
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Php { args: Vec<String> },
-    /// Runs Composer with the default PHP.
+    /// Runs Composer with the project's PHP (or `--site=<name>`'s).
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Composer { args: Vec<String> },
+    /// Runs the Laravel installer with the project's PHP.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Laravel { args: Vec<String> },
+    /// Opens `php artisan tinker` in a site (default: the current folder's).
+    Tinker {
+        #[arg(long)]
+        site: Option<String>,
+    },
     /// Serves every subfolder of a folder (default: the current one) as <name>.test.
     Park { dir: Option<PathBuf> },
     /// Stops serving the subfolders of a parked folder.
@@ -144,8 +152,26 @@ async fn main() -> ExitCode {
             let params = json!({ "minor": minor, "name": name, "on": state == "on" });
             print_call(&paths, "php.extension", params, false, |_| println!("{name} is {state} for PHP {minor}.")).await
         }
-        Command::Php { args } => run_php(&paths, None, &args),
-        Command::Composer { args } => run_php(&paths, Some(paths.bin.join("composer.phar")), &args),
+        Command::Php { args } => {
+            let (site, args) = split_site(&args);
+            run_php(&paths, site.as_deref(), None, args, None)
+        }
+        Command::Composer { args } => {
+            let (site, args) = split_site(&args);
+            run_php(&paths, site.as_deref(), Some(paths.bin.join("composer.phar")), args, None)
+        }
+        Command::Laravel { args } => {
+            let installer = paths
+                .data
+                .join("composer")
+                .join("vendor")
+                .join("laravel")
+                .join("installer")
+                .join("bin")
+                .join("laravel");
+            run_php(&paths, None, Some(installer), &args, None)
+        }
+        Command::Tinker { site } => tinker(&paths, site),
         Command::Park { dir } => {
             let dir = folder(dir);
             let done = format!("Every folder in {} is now a site", dir.display());
@@ -491,9 +517,46 @@ fn exit_code(code: Option<i32>) -> u8 {
 }
 
 /// Runs the default PHP directly (no core needed), passing the exit code through.
-fn run_php(paths: &HearthPaths, script: Option<std::path::PathBuf>, args: &[String]) -> ExitCode {
-    let Some(minor) = store::load(paths).default.filter(|m| install_dir(paths, m).join(store::VERSION_FILE).is_file())
-    else {
+/// A leading `--site=<name>` or `--site <name>` (Herd's way to pick a site's PHP), and the rest.
+fn split_site(args: &[String]) -> (Option<String>, &[String]) {
+    match args {
+        [first, rest @ ..] if first.starts_with("--site=") => (Some(first["--site=".len()..].to_string()), rest),
+        [first, name, rest @ ..] if first == "--site" => (Some(name.clone()), rest),
+        _ => (None, args),
+    }
+}
+
+/// `php artisan tinker` in a site's folder, with that site's PHP.
+fn tinker(paths: &HearthPaths, site: Option<String>) -> ExitCode {
+    let found = match &site {
+        Some(name) => registry::list(paths).into_iter().find(|s| &s.name == name.trim_end_matches(".test")),
+        None => std::env::current_dir().ok().and_then(|cwd| locate::site_for_dir(paths, &cwd)),
+    };
+    let Some(folder) = found.as_ref().and_then(|s| s.path.clone()) else {
+        return fail("Run tinker inside a site's folder, or name one with --site");
+    };
+    let name = found.map(|s| s.name);
+    run_php(paths, name.as_deref(), Some(folder.join("artisan")), &["tinker".to_string()], Some(&folder))
+}
+
+fn run_php(
+    paths: &HearthPaths,
+    site: Option<&str>,
+    script: Option<std::path::PathBuf>,
+    args: &[String],
+    cwd: Option<&std::path::Path>,
+) -> ExitCode {
+    let minor = match site {
+        Some(name) => {
+            let name = name.trim_end_matches(".test");
+            match locate::php_for_site(paths, name) {
+                Ok(minor) => minor,
+                Err(e) => return fail(&e.to_string()),
+            }
+        }
+        None => std::env::current_dir().ok().and_then(|cwd| locate::php_for_dir(paths, &cwd)),
+    };
+    let Some(minor) = minor.filter(|m| install_dir(paths, m).join(store::VERSION_FILE).is_file()) else {
         return fail("No PHP version is installed. Install one with: hearth php:install 8.4");
     };
     let php = match Os::current() {
@@ -506,6 +569,9 @@ fn run_php(paths: &HearthPaths, script: Option<std::path::PathBuf>, args: &[Stri
     command.arg("-c").arg(&ini).env("PHPRC", ini.parent().unwrap_or(&ini));
     if let Some(script) = script {
         command.arg(script);
+    }
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
     }
     match command.args(args).status() {
         Ok(status) => ExitCode::from(exit_code(status.code())),
