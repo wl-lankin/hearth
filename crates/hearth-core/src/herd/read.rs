@@ -54,7 +54,7 @@ pub fn read(valet: &Path) -> Result<HerdSetup, CoreError> {
     }
 
     for entry in std::fs::read_dir(&sites_dir).into_iter().flatten().filter_map(|e| e.ok()) {
-        let Ok(target) = std::fs::read_link(entry.path()) else { continue };
+        let Ok(target) = std::fs::read_link(entry.path()).map(|t| link_target(&sites_dir, t)) else { continue };
         if let Some(name) = site_name(&entry.file_name().to_string_lossy(), &mut setup.skipped) {
             setup.links.insert(name, target);
         }
@@ -68,6 +68,17 @@ pub fn read(valet: &Path) -> Result<HerdSetup, CoreError> {
         read_conf(&name, &text, &mut setup);
     }
     Ok(setup)
+}
+
+/// A link's target as a plain absolute path: relative targets count from the `Sites` folder, and
+/// Windows' `\\?\` prefix (from junctions) is dropped, since PHP and Laravel stumble over it.
+fn link_target(sites_dir: &Path, target: PathBuf) -> PathBuf {
+    let target = if target.is_absolute() { target } else { sites_dir.join(target) };
+    let text = target.to_string_lossy();
+    match text.strip_prefix(r"\\?\").filter(|rest| !rest.starts_with("UNC")) {
+        Some(rest) => PathBuf::from(rest),
+        None => target,
+    }
 }
 
 /// A Herd site name as a Hearth one (lowercase), or a skip line when it cannot be one.
@@ -84,7 +95,17 @@ fn site_name(raw: &str, skipped: &mut Vec<Skipped>) -> Option<String> {
 
 /// What one site's nginx conf says: a proxy target, a PHP isolation, HTTPS.
 fn read_conf(name: &str, text: &str, setup: &mut HerdSetup) {
+    // A proxy only counts when it serves the whole site (`location /`); one for a sub-path (a
+    // websocket server next to PHP, say) leaves the site a PHP site.
+    let mut location = String::new();
     for line in text.lines().map(str::trim) {
+        if let Some(rest) = line.strip_prefix("location ") {
+            location = rest.trim_end_matches('{').trim().to_string();
+            continue;
+        }
+        if line.starts_with("proxy_pass ") && location != "/" {
+            continue;
+        }
         if let Some(version) = line.strip_prefix("# ISOLATED_PHP_VERSION=") {
             match php_minor(version.trim()) {
                 Some(minor) => {
@@ -106,6 +127,8 @@ fn read_conf(name: &str, text: &str, setup: &mut HerdSetup) {
 
 /// `8.3` stays, Herd's older `83` becomes `8.3`; anything else is not a version.
 fn php_minor(version: &str) -> Option<String> {
+    // Valet on macOS writes `php@8.1` or `php81`.
+    let version = version.strip_prefix("php@").or_else(|| version.strip_prefix("php")).unwrap_or(version);
     if crate::php::store::is_minor(version) {
         return Some(version.into());
     }
@@ -195,6 +218,49 @@ mod tests {
             .contains(&Skipped { name: "passify".into(), reason: "PHP version x is not like 8.4".into() }));
         let secured: Vec<&str> = setup.secured.iter().map(String::as_str).collect();
         assert_eq!(secured, ["admin.shop", "passify", "shop"]);
+    }
+
+    #[test]
+    fn link_targets_are_plain_absolute_paths() {
+        let (_d, valet, projects) = valet();
+        let setup = read(&valet).unwrap();
+        let stored = setup.links["shop"].to_string_lossy().into_owned();
+        assert!(!stored.starts_with(r"\\?\"), "{stored}");
+        assert!(setup.links["shop"].is_absolute());
+        assert_eq!(
+            std::fs::canonicalize(&setup.links["shop"]).unwrap(),
+            std::fs::canonicalize(projects.join("shop")).unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_relative_link_is_resolved_from_the_sites_folder() {
+        let (_d, valet, projects) = valet();
+        std::os::unix::fs::symlink("../../Projects/shop", valet.join("Sites").join("rel")).unwrap();
+        let setup = read(&valet).unwrap();
+        assert!(setup.links["rel"].is_absolute(), "{:?}", setup.links["rel"]);
+        assert_eq!(
+            std::fs::canonicalize(&setup.links["rel"]).unwrap(),
+            std::fs::canonicalize(projects.join("shop")).unwrap()
+        );
+    }
+
+    #[test]
+    fn only_a_proxy_of_the_whole_site_makes_it_a_proxy() {
+        let (_d, valet, _projects) = valet();
+        conf(&valet, "shop", &format!("{SECURE}location /app {{\n    proxy_pass http://127.0.0.1:8080;\n}}\nlocation ~ \\.php$ {{\n    fastcgi_pass 127.0.0.1:9083;\n}}\n"));
+        let setup = read(&valet).unwrap();
+        assert!(!setup.proxies.contains_key("shop"), "{:?}", setup.proxies);
+        assert!(setup.proxies.contains_key("vite.shop"));
+    }
+
+    #[test]
+    fn macos_style_isolations_are_understood() {
+        assert_eq!(php_minor("php@8.1").as_deref(), Some("8.1"));
+        assert_eq!(php_minor("php82").as_deref(), Some("8.2"));
+        assert_eq!(php_minor("8.4").as_deref(), Some("8.4"));
+        assert_eq!(php_minor("x"), None);
     }
 
     #[test]
