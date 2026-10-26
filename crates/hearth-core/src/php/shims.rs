@@ -29,8 +29,34 @@ fn sh_shim(minor: &str, script: Option<&str>) -> String {
     )
 }
 
+/// A shim that hands `command` to the `hearth` CLI next to it (which picks the project's PHP), and
+/// runs `fallback` when the CLI is not there.
+fn forwarding(os: Os, command: &str, fallback: String) -> String {
+    match os {
+        Os::Windows => {
+            let direct = fallback.split_once("setlocal\r\n").map(|(_, rest)| rest).unwrap_or(&fallback);
+            format!(
+                "@echo off\r\nrem {MARKER}\r\nsetlocal\r\nif not exist \"%~dp0hearth.exe\" goto direct\r\n\"%~dp0hearth.exe\" {command} %*\r\nexit /b %errorlevel%\r\n:direct\r\n{direct}"
+            )
+        }
+        Os::Macos => fallback.replacen(
+            "pwd)\"\n",
+            &format!("pwd)\"\nif [ -x \"$HERE/hearth\" ]; then exec \"$HERE/hearth\" {command} \"$@\"; fi\n"),
+            1,
+        ),
+    }
+}
+
+/// `herd ...` runs `hearth ...`, so scripts written for Herd keep working.
+fn herd_shim(os: Os) -> String {
+    match os {
+        Os::Windows => format!("@echo off\r\nrem {MARKER}\r\n\"%~dp0hearth.exe\" %*\r\n"),
+        Os::Macos => format!("#!/bin/sh\n# {MARKER}\nexec \"$(cd \"$(dirname \"$0\")\" && pwd)/hearth\" \"$@\"\n"),
+    }
+}
+
 /// The shims as (file name, contents): `php`, `composer`, `laravel` for the default version (none
-/// without one), and `php<major><minor>` for every installed version.
+/// without one), `herd`, and `php<major><minor>` for every installed version.
 pub fn render_shims(os: Os, default: Option<&str>, installed: &[String]) -> Vec<(String, String)> {
     let (ext, shim): (&str, ShimFn) = match os {
         Os::Windows => (".bat", windows_shim),
@@ -42,10 +68,11 @@ pub fn render_shims(os: Os, default: Option<&str>, installed: &[String]) -> Vec<
     };
     let mut shims = Vec::new();
     if let Some(minor) = default {
-        shims.push((format!("php{ext}"), shim(minor, None)));
-        shims.push((format!("composer{ext}"), shim(minor, Some(composer))));
-        shims.push((format!("laravel{ext}"), shim(minor, Some(laravel))));
+        shims.push((format!("php{ext}"), forwarding(os, "php", shim(minor, None))));
+        shims.push((format!("composer{ext}"), forwarding(os, "composer", shim(minor, Some(composer)))));
+        shims.push((format!("laravel{ext}"), forwarding(os, "laravel", shim(minor, Some(laravel)))));
     }
+    shims.push((format!("herd{ext}"), herd_shim(os)));
     for minor in installed {
         shims.push((format!("php{}{ext}", minor.replace('.', "")), shim(minor, None)));
     }
@@ -91,28 +118,36 @@ mod tests {
     #[test]
     fn windows_shims_for_two_versions() {
         let shims = render_shims(Os::Windows, Some("8.4"), &["8.4".into(), "8.3".into()]);
-        assert_eq!(names(&shims), ["php.bat", "composer.bat", "laravel.bat", "php84.bat", "php83.bat"]);
+        assert_eq!(names(&shims), ["php.bat", "composer.bat", "laravel.bat", "herd.bat", "php84.bat", "php83.bat"]);
+        // With the CLI next to it, the project's PHP runs; without it, the default.
         assert_eq!(
             shims[0].1,
-            "@echo off\r\nrem hearth-shim\r\nsetlocal\r\nset \"PHPRC=%~dp0..\\config\\php\\8.4\"\r\n\"%~dp0..\\data\\php\\versions\\8.4\\php.exe\" -c \"%~dp0..\\config\\php\\8.4\\php.ini\" %*\r\n"
+            "@echo off\r\nrem hearth-shim\r\nsetlocal\r\nif not exist \"%~dp0hearth.exe\" goto direct\r\n\"%~dp0hearth.exe\" php %*\r\nexit /b %errorlevel%\r\n:direct\r\nset \"PHPRC=%~dp0..\\config\\php\\8.4\"\r\n\"%~dp0..\\data\\php\\versions\\8.4\\php.exe\" -c \"%~dp0..\\config\\php\\8.4\\php.ini\" %*\r\n"
         );
+        assert!(shims[1].1.contains("\"%~dp0hearth.exe\" composer %*"), "{}", shims[1].1);
         assert!(shims[1].1.contains("\"%~dp0composer.phar\" %*"), "{}", shims[1].1);
-        assert!(shims[4].1.contains("versions\\8.3\\php.exe"), "{}", shims[4].1);
+        assert_eq!(shims[3].1, "@echo off\r\nrem hearth-shim\r\n\"%~dp0hearth.exe\" %*\r\n");
+        assert_eq!(
+            shims[5].1,
+            "@echo off\r\nrem hearth-shim\r\nsetlocal\r\nset \"PHPRC=%~dp0..\\config\\php\\8.3\"\r\n\"%~dp0..\\data\\php\\versions\\8.3\\php.exe\" -c \"%~dp0..\\config\\php\\8.3\\php.ini\" %*\r\n",
+            "a versioned shim always runs its own version"
+        );
     }
 
     #[test]
     fn macos_shims_are_sh_scripts() {
         let shims = render_shims(Os::Macos, Some("8.4"), &["8.4".into()]);
-        assert_eq!(names(&shims), ["php", "composer", "laravel", "php84"]);
+        assert_eq!(names(&shims), ["php", "composer", "laravel", "herd", "php84"]);
         assert_eq!(
             shims[0].1,
-            "#!/bin/sh\n# hearth-shim\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nexport PHPRC=\"$HERE/../config/php/8.4\"\nexec \"$HERE/../data/php/versions/8.4/bin/php\" -c \"$HERE/../config/php/8.4/php.ini\" \"$@\"\n"
+            "#!/bin/sh\n# hearth-shim\nHERE=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nif [ -x \"$HERE/hearth\" ]; then exec \"$HERE/hearth\" php \"$@\"; fi\nexport PHPRC=\"$HERE/../config/php/8.4\"\nexec \"$HERE/../data/php/versions/8.4/bin/php\" -c \"$HERE/../config/php/8.4/php.ini\" \"$@\"\n"
         );
+        assert_eq!(shims[3].1, "#!/bin/sh\n# hearth-shim\nexec \"$(cd \"$(dirname \"$0\")\" && pwd)/hearth\" \"$@\"\n");
     }
 
     #[test]
-    fn without_a_default_only_versioned_shims_exist() {
-        assert_eq!(names(&render_shims(Os::Windows, None, &[])), Vec::<&str>::new());
+    fn without_a_default_only_herd_and_versioned_shims_exist() {
+        assert_eq!(names(&render_shims(Os::Windows, None, &[])), ["herd.bat"]);
     }
 
     #[test]

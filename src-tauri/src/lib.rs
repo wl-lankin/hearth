@@ -4,6 +4,7 @@ mod tray;
 mod updates;
 mod window;
 
+use std::path::Path;
 use std::sync::Mutex;
 
 use hearth_core::ipc::{self, CoreState, ServerHandle};
@@ -29,6 +30,12 @@ pub fn run() {
     // Only an installed copy registers itself at login and updates itself: never a dev build or a
     // custom (test) home.
     let installed = !cfg!(debug_assertions) && default_home;
+    // The `hearth` CLI (also as php, composer, herd) goes next to the shims in <home>/bin.
+    if let Some(app_dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+        if let Err(e) = hearth_core::cli_install::install_cli(&paths, &app_dir) {
+            eprintln!("Hearth could not update its command line tools: {e}");
+        }
+    }
     let mut state = CoreState::new(paths);
     // The app runs the web server: sites and PHP changes are applied to it as they happen.
     state.web_sync = true;

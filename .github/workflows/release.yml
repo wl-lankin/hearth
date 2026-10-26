@@ -47,10 +47,10 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            args: '--bundles nsis'
+            args: '--bundles nsis --config src-tauri/tauri.release.conf.json'
             targets: ''
           - os: macos-latest
-            args: '--target universal-apple-darwin --bundles app,dmg'
+            args: '--target universal-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json'
             targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
     runs-on: ${{ matrix.os }}
     steps:
@@ -70,6 +70,22 @@ jobs:
         run: |
           echo "::error::The draft job passed no release id; nothing would be uploaded."
           exit 1
+      # The `hearth` CLI ships inside the app (tauri.release.conf.json bundles it as hearth-cli,
+      # since the app itself is Hearth); the app copies it into <home>/bin on start.
+      - name: Build the CLI for the bundle
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cargo build --release -p hearth-cli
+            cp target/release/hearth.exe src-tauri/binaries/hearth-cli-x86_64-pc-windows-msvc.exe
+          else
+            cargo build --release -p hearth-cli --target aarch64-apple-darwin
+            cargo build --release -p hearth-cli --target x86_64-apple-darwin
+            lipo -create -output src-tauri/binaries/hearth-cli-universal-apple-darwin \
+              target/aarch64-apple-darwin/release/hearth target/x86_64-apple-darwin/release/hearth
+          fi
+          ls -l src-tauri/binaries
       # Code signing (Azure Trusted Signing, Apple notarization) is added in M14, once the
       # certificates exist. Until then only the update packages are signed.
       - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0

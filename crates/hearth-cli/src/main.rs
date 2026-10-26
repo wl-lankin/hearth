@@ -128,7 +128,7 @@ enum Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(as_hearth(std::env::args_os().collect()));
     let paths = match HearthPaths::from_env() {
         Ok(paths) => paths,
         Err(e) => return fail(&e.to_string()),
@@ -517,6 +517,20 @@ fn exit_code(code: Option<i32>) -> u8 {
 }
 
 /// Runs the default PHP directly (no core needed), passing the exit code through.
+/// The arguments as `hearth` would get them. The CLI is also installed as `php`, `composer`,
+/// `laravel` (run that with the project's PHP) and `herd` (Herd's commands are Hearth's).
+fn as_hearth(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let name = args
+        .first()
+        .and_then(|a| std::path::Path::new(a).file_stem().map(|s| s.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+    match name.as_str() {
+        "php" | "composer" | "laravel" => args.insert(1, name.into()),
+        _ => {}
+    }
+    args
+}
+
 /// A leading `--site=<name>` or `--site <name>` (Herd's way to pick a site's PHP), and the rest.
 fn split_site(args: &[String]) -> (Option<String>, &[String]) {
     match args {

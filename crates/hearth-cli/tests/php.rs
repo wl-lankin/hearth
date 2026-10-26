@@ -181,3 +181,46 @@ fn composer_uses_the_projects_php_too() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.lines().any(|l| l == "arg:psr/log:^3.0"), "{text}");
 }
+
+/// The CLI copied under another name, as the app installs it into `<home>/bin`.
+fn renamed_cli(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let target = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(assert_cmd::cargo::cargo_bin("hearth"), &target).unwrap();
+    target
+}
+
+#[test]
+fn the_cli_answers_to_the_names_php_and_herd() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let bin = d.path().join("named");
+    std::fs::create_dir_all(&bin).unwrap();
+    let run = |program: &std::path::Path, args: &[&str]| {
+        std::process::Command::new(program)
+            .env("HEARTH_HOME", &paths.root)
+            .current_dir(d.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let php = run(&renamed_cli(&bin, "php"), &["-v", "--exit=3"]);
+    assert_eq!(php.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&php.stdout).lines().any(|l| l == "arg:-v"),
+        "{}",
+        String::from_utf8_lossy(&php.stdout)
+    );
+    let herd = run(&renamed_cli(&bin, "herd"), &["php", "-r", "1"]);
+    assert!(
+        String::from_utf8_lossy(&herd.stdout).lines().any(|l| l == "arg:-r"),
+        "{}",
+        String::from_utf8_lossy(&herd.stderr)
+    );
+    let composer = run(&renamed_cli(&bin, "Composer"), &["install"]);
+    assert!(
+        String::from_utf8_lossy(&composer.stdout).contains("composer.phar"),
+        "{}",
+        String::from_utf8_lossy(&composer.stderr)
+    );
+}
