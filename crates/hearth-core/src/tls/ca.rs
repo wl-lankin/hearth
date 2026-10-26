@@ -4,8 +4,8 @@
 use std::path::{Path, PathBuf};
 
 use rcgen::{
-    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose,
-    PublicKeyData,
+    BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, GeneralSubtree, IsCa, Issuer, KeyPair,
+    KeyUsagePurpose, NameConstraints, PublicKeyData,
 };
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
@@ -69,6 +69,11 @@ pub fn ensure_ca(paths: &HearthPaths) -> Result<Ca, CoreError> {
     params.distinguished_name.push(DnType::OrganizationName, "Hearth");
     params.distinguished_name.push(DnType::CommonName, format!("Hearth Local CA ({}@{host})", whoami::username()));
     params.is_ca = IsCa::Ca(BasicConstraints::Constrained(0));
+    // Only `.test` names: even a stolen CA key cannot vouch for real sites.
+    params.name_constraints = Some(NameConstraints {
+        permitted_subtrees: vec![GeneralSubtree::DnsName("test".into())],
+        excluded_subtrees: vec![],
+    });
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign, KeyUsagePurpose::DigitalSignature];
     let now = OffsetDateTime::now_utc();
     params.not_before = now - Duration::days(1);
@@ -162,6 +167,18 @@ mod tests {
         let first = ensure_ca(&p).unwrap().fingerprint();
         assert_eq!(first.len(), 64);
         assert_eq!(ensure_ca(&p).unwrap().fingerprint(), first);
+    }
+
+    #[test]
+    fn the_ca_can_only_vouch_for_test_names() {
+        let (_d, p) = home();
+        let ca = ensure_ca(&p).unwrap();
+        let (_, cert) = X509Certificate::from_der(ca.der()).unwrap();
+        let constraints = cert.name_constraints().unwrap().expect("a name constraint");
+        assert!(constraints.critical);
+        let permitted: Vec<String> =
+            constraints.value.permitted_subtrees.as_ref().unwrap().iter().map(|s| s.base.to_string()).collect();
+        assert_eq!(permitted, ["DNSName(test)"]);
     }
 
     #[test]
