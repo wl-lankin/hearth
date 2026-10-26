@@ -1,7 +1,7 @@
 //! The sites Hearth serves, kept in `<config>/sites.json`: parked folders (every subfolder is a
 //! site), linked folders, proxies, PHP versions per site and the HTTP port.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,6 +13,7 @@ use crate::{atomic, CoreError, HearthPaths};
 
 /// Hearth stays off ports 80/443 while Herd may still use them.
 pub const DEFAULT_HTTP_PORT: u16 = 8080;
+pub const DEFAULT_HTTPS_PORT: u16 = 8443;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -22,7 +23,10 @@ pub struct SitesConfig {
     pub proxies: BTreeMap<String, String>,
     /// Site name -> PHP minor.
     pub isolated: BTreeMap<String, String>,
+    /// Sites served over HTTPS.
+    pub secured: BTreeSet<String>,
     pub http_port: u16,
+    pub https_port: u16,
 }
 
 impl Default for SitesConfig {
@@ -32,7 +36,9 @@ impl Default for SitesConfig {
             links: BTreeMap::new(),
             proxies: BTreeMap::new(),
             isolated: BTreeMap::new(),
+            secured: BTreeSet::new(),
             http_port: DEFAULT_HTTP_PORT,
+            https_port: DEFAULT_HTTPS_PORT,
         }
     }
 }
@@ -56,6 +62,7 @@ pub struct Site {
     pub docroot: Option<PathBuf>,
     /// The PHP minor this site is isolated to, if any.
     pub php: Option<String>,
+    pub secured: bool,
     pub problem: Option<String>,
 }
 
@@ -125,7 +132,8 @@ fn site_for_folder(name: String, kind: SiteKind, path: PathBuf, config: &SitesCo
         }
     };
     let php = config.isolated.get(&name).cloned();
-    Site { name, kind, path: Some(path), upstream: None, docroot, php, problem }
+    let secured = config.secured.contains(&name);
+    Site { name, kind, path: Some(path), upstream: None, docroot, php, secured, problem }
 }
 
 /// Every site, sorted by name. A link wins over a parked folder of the same name.
@@ -157,6 +165,7 @@ pub fn list(paths: &HearthPaths) -> Vec<Site> {
                 upstream: Some(upstream.clone()),
                 docroot: None,
                 php: None,
+                secured: config.secured.contains(name),
                 problem: None,
             },
         );
@@ -209,6 +218,7 @@ pub fn unlink(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
         return Err(CoreError::Php(format!("{name} is not a linked site")));
     }
     config.isolated.remove(name);
+    config.secured.remove(name);
     save(paths, &config)
 }
 
@@ -259,6 +269,7 @@ pub fn unproxy(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
     if config.proxies.remove(name).is_none() {
         return Err(CoreError::Php(format!("{name} is not a proxy")));
     }
+    config.secured.remove(name);
     save(paths, &config)
 }
 
@@ -286,5 +297,21 @@ pub fn set_http_port(paths: &HearthPaths, port: u16) -> Result<(), CoreError> {
     }
     let mut config = load(paths);
     config.http_port = port;
+    save(paths, &config)
+}
+
+/// Serves site `name` over HTTPS.
+pub fn secure(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
+    if !list(paths).iter().any(|s| s.name == name) {
+        return Err(CoreError::Php(format!("No site named {name}.test")));
+    }
+    let mut config = load(paths);
+    config.secured.insert(name.into());
+    save(paths, &config)
+}
+
+pub fn unsecure(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
+    let mut config = load(paths);
+    config.secured.remove(name);
     save(paths, &config)
 }

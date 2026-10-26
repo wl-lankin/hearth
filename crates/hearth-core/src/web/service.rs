@@ -72,7 +72,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
             }
             (_, None, None) => Route::Skip { reason: "No web root".into() },
         };
-        routes.push(SiteRoute { name: site.name, target });
+        routes.push(SiteRoute { name: site.name, target, tls: None });
     }
 
     // PHP pools: the versions some site uses, nothing else.
@@ -111,6 +111,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
     } else {
         let rendered = render(&CaddyContext {
             http_port: config.http_port,
+            https_port: config.https_port,
             routes,
             php_upstreams: upstreams,
             log: paths.logs.join("caddy.log"),

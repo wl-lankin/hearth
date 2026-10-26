@@ -25,10 +25,13 @@ pub enum Route {
 pub struct SiteRoute {
     pub name: String,
     pub target: Route,
+    /// Certificate and key files when the site is secured.
+    pub tls: Option<(PathBuf, PathBuf)>,
 }
 
 pub struct CaddyContext {
     pub http_port: u16,
+    pub https_port: u16,
     pub routes: Vec<SiteRoute>,
     /// PHP minor -> FastCGI addresses of its running pool ("127.0.0.1:19840", "unix//.../php-8.4.sock").
     pub php_upstreams: BTreeMap<String, Vec<String>>,
@@ -73,13 +76,22 @@ pub fn render(ctx: &CaddyContext) -> String {
     let _ = write!(
         out,
         // Loopback only: local sites are never reachable from the network.
-        "{{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port {}\n\tlog {{\n\t\toutput file {}\n\t}}\n}}\n",
+        "{{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port {}\n\thttps_port {}\n\tlog {{\n\t\toutput file {}\n\t}}\n}}\n",
         ctx.http_port,
+        ctx.https_port,
         quoted(&ctx.log, ctx.windows_paths)
     );
     for route in &ctx.routes {
         out.push('\n');
-        let address = format!("http://{}.test:{}", route.name, ctx.http_port);
+        let host = format!("{}.test", route.name);
+        // A secured site answers on HTTPS with Hearth's certificate; its HTTP address only redirects.
+        let (address, tls) = match &route.tls {
+            Some((crt, key)) => (
+                format!("https://{host}:{}", ctx.https_port),
+                format!("\ttls {} {}\n", quoted(crt, ctx.windows_paths), quoted(key, ctx.windows_paths)),
+            ),
+            None => (format!("http://{host}:{}", ctx.http_port), String::new()),
+        };
         match &route.target {
             Route::Php { docroot, minor } => {
                 let Some(upstreams) = ctx.php_upstreams.get(minor).filter(|p| !p.is_empty()) else {
@@ -88,7 +100,7 @@ pub fn render(ctx: &CaddyContext) -> String {
                 };
                 let _ = write!(
                     out,
-                    "{address} {{\n\troot * {}\n\tphp_fastcgi {} {{\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
+                    "{address} {{\n{tls}\troot * {}\n\tphp_fastcgi {} {{\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
                     quoted(docroot, ctx.windows_paths),
                     upstreams.join(" ")
                 );
@@ -97,12 +109,20 @@ pub fn render(ctx: &CaddyContext) -> String {
                 // Dev servers (Vite 6) only accept their own host; `{upstream_hostport}` is Caddy's placeholder.
                 let _ = write!(
                     out,
-                    "{address} {{\n\treverse_proxy {upstream} {{\n\t\theader_up Host {{upstream_hostport}}\n\t}}\n}}\n"
+                    "{address} {{\n{tls}\treverse_proxy {upstream} {{\n\t\theader_up Host {{upstream_hostport}}\n\t}}\n}}\n"
                 );
             }
             Route::Skip { reason } => {
                 let _ = writeln!(out, "# {}: {reason}", route.name);
+                continue;
             }
+        }
+        if route.tls.is_some() {
+            let _ = write!(
+                out,
+                "\nhttp://{host}:{} {{\n\tredir https://{host}:{}{{uri}}\n}}\n",
+                ctx.http_port, ctx.https_port
+            );
         }
     }
     out

@@ -10,9 +10,9 @@ pub mod php;
 pub mod settings;
 pub mod sites;
 pub mod supervisor;
-pub mod tls;
 #[cfg(test)]
 mod supervisor_tests;
+pub mod tls;
 pub mod web;
 
 pub use error::CoreError;
