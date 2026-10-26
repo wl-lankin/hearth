@@ -172,6 +172,7 @@ export interface Site {
   upstream: string | null;
   docroot: string | null;
   php: string | null;
+  secured: boolean;
   problem: string | null;
 }
 
@@ -179,10 +180,16 @@ export interface SitesList {
   sites: Site[];
   parked: string[];
   httpPort: number;
+  httpsPort: number;
 }
 
 export interface WebStatus {
   httpPort: number;
+  httpsPort: number;
+  /** Browsers trust Hearth's certificates. */
+  caTrusted: boolean;
+  /** Whether <site>.test resolves; no problem and not ready means this home leaves names alone. */
+  dns: { ready: boolean; problem: string | null };
   running: boolean;
   processes: { key: string; running: boolean; pid: number | null; restarts: number; lastError: string | null }[];
   error: string | null;
@@ -191,18 +198,21 @@ export interface WebStatus {
 
 const demoSites: SitesList = {
   httpPort: 8080,
+  httpsPort: 8443,
   parked: [String.raw`C:\Users\you\Projects`],
   sites: [
-    { name: 'blog', kind: 'parked', path: String.raw`C:\Users\you\Projects\blog`, upstream: null, docroot: String.raw`C:\Users\you\Projects\blog\public`, php: null, problem: null },
-    { name: 'shop', kind: 'linked', path: String.raw`C:\Users\you\Code\shop`, upstream: null, docroot: String.raw`C:\Users\you\Code\shop\public`, php: '8.3', problem: null },
-    { name: 'app.shop', kind: 'proxy', path: null, upstream: 'http://localhost:5173', docroot: null, php: null, problem: null },
-    { name: 'notes', kind: 'parked', path: String.raw`C:\Users\you\Projects\notes`, upstream: null, docroot: null, php: null, problem: 'No index.php or index.html found' },
+    { name: 'blog', kind: 'parked', path: String.raw`C:\Users\you\Projects\blog`, upstream: null, docroot: String.raw`C:\Users\you\Projects\blog\public`, php: null, secured: false, problem: null },
+    { name: 'shop', kind: 'linked', path: String.raw`C:\Users\you\Code\shop`, upstream: null, docroot: String.raw`C:\Users\you\Code\shop\public`, php: '8.3', secured: true, problem: null },
+    { name: 'app.shop', kind: 'proxy', path: null, upstream: 'http://localhost:5173', docroot: null, php: null, secured: false, problem: null },
+    { name: 'notes', kind: 'parked', path: String.raw`C:\Users\you\Projects\notes`, upstream: null, docroot: null, php: null, secured: false, problem: 'No index.php or index.html found' },
   ],
 };
 
 export const sitesList = (): Promise<SitesList> => (demo ? Promise.resolve(structuredClone(demoSites)) : core('sites.list'));
 export const webStatus = (): Promise<WebStatus> =>
-  demo ? Promise.resolve({ httpPort: 8080, running: true, processes: [], error: null, notes: {} }) : core('web.status');
+  demo
+    ? Promise.resolve({ httpPort: 8080, httpsPort: 8443, caTrusted: true, dns: { ready: true, problem: null }, running: true, processes: [], error: null, notes: {} })
+    : core('web.status');
 const change = (method: string, params: Record<string, unknown>) => async (): Promise<void> => {
   if (!demo) await core(method, params);
 };
@@ -214,6 +224,10 @@ export const sitesProxy = (name: string, upstream: string) => change('sites.prox
 export const sitesUnproxy = (name: string) => change('sites.unproxy', { name })();
 export const sitesIsolate = (name: string, minor: string | null) => change('sites.isolate', { name, minor })();
 export const sitesPort = (port: number) => change('sites.port', { port })();
+export const sitesSecure = (name: string) => change('sites.secure', { name })();
+export const sitesUnsecure = (name: string) => change('sites.unsecure', { name })();
+export const tlsTrust = () => change('tls.trust', {})();
+export const dnsSetup = () => change('dns.setup', {})();
 
 /** A folder picked in the system dialog, or null when cancelled. */
 export async function pickFolder(): Promise<string | null> {

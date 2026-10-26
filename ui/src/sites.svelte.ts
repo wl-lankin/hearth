@@ -12,12 +12,16 @@ export type SitesApi = {
   sitesUnproxy(name: string): Promise<void>;
   sitesIsolate(name: string, minor: string | null): Promise<void>;
   sitesPort(port: number): Promise<void>;
+  sitesSecure(name: string): Promise<void>;
+  sitesUnsecure(name: string): Promise<void>;
+  tlsTrust(): Promise<void>;
+  dnsSetup(): Promise<void>;
 };
 
 const asMessage = (e: unknown): string => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e));
 
 export function createSitesStore(api: SitesApi) {
-  let list = $state<SitesList>({ sites: [], parked: [], httpPort: 8080 });
+  let list = $state<SitesList>({ sites: [], parked: [], httpPort: 8080, httpsPort: 8443 });
   let status = $state<WebStatus | null>(null);
   let php = $state<PhpList>({ default: null, installed: [] });
   let errors = $state<Record<string, string | null>>({});
@@ -78,7 +82,30 @@ export function createSitesStore(api: SitesApi) {
       return taken ? Number(taken[1]) + 1 : null;
     },
     url(site: Site) {
-      return `http://${site.name}.test:${list.httpPort}`;
+      return site.secured ? `https://${site.name}.test:${list.httpsPort}` : `http://${site.name}.test:${list.httpPort}`;
+    },
+    /** The one setup step to offer: .test names first, then trust once a site uses HTTPS. */
+    get setup(): 'dns' | 'trust' | null {
+      if (!status) return null;
+      if (!status.dns.ready && status.dns.problem) return 'dns';
+      if (!status.caTrusted && list.sites.some((s) => s.secured)) return 'trust';
+      return null;
+    },
+    setupDns: () => act(null, () => api.dnsSetup()),
+    trust: () => act(null, () => api.tlsTrust()),
+    async secure(name: string, on: boolean) {
+      const site = list.sites.find((s) => s.name === name);
+      if (!site) return;
+      const before = site.secured;
+      site.secured = on;
+      errors[name] = null;
+      try {
+        await (on ? api.sitesSecure(name) : api.sitesUnsecure(name));
+        await reload();
+      } catch (e) {
+        site.secured = before;
+        errors[name] = asMessage(e);
+      }
     },
     note(name: string) {
       return status?.notes[name] ?? null;
