@@ -198,3 +198,59 @@ fn nothing_is_synced_while_hearth_quits() {
     h.core.quitting.store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(!super::service::schedule_sync(&h.core), "a sync while quitting could start Caddy again");
 }
+
+fn caddy_pid(h: &Home) -> Option<u32> {
+    h.core.supervisor.status().into_iter().find(|p| p.key == "caddy").and_then(|p| p.pid)
+}
+
+#[test]
+fn securing_a_site_writes_its_certificate_and_an_https_block() {
+    let h = home();
+    let https = free_port();
+    registry::set_https_port(&h.core.paths, https).unwrap();
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    registry::secure(&h.core.paths, "shop").unwrap();
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    assert_eq!(status.error, None, "{status:?}");
+    assert_eq!(status.https_port, https);
+    assert!(!status.ca_trusted, "a test CA is never in the OS store");
+    let (crt, key) = crate::tls::leaf_paths(&h.core.paths, "shop");
+    assert!(crt.is_file() && key.is_file());
+    let file = caddyfile(&h);
+    assert!(file.contains(&format!("https://shop.test:{https} {{\n\ttls \"")), "{file}");
+    h.core.supervisor.stop_all();
+}
+
+#[test]
+fn a_deleted_certificate_is_issued_again_and_caddy_restarts_with_the_same_upstream() {
+    let h = home();
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    registry::proxy(&h.core.paths, "vite", "http://localhost:5173").unwrap();
+    registry::secure(&h.core.paths, "vite").unwrap();
+    sync_with(&h.core, &example("fake_server")).unwrap();
+    let first = caddy_pid(&h).unwrap();
+    let before = caddyfile(&h);
+    let (crt, _) = crate::tls::leaf_paths(&h.core.paths, "vite");
+    std::fs::remove_file(&crt).unwrap();
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    assert!(status.running, "{status:?}");
+    assert!(crt.is_file());
+    assert_ne!(caddy_pid(&h).unwrap(), first, "Caddy reads certificates only when it starts");
+    assert_eq!(caddyfile(&h), before);
+    assert!(before.contains("reverse_proxy http://localhost:5173 {"));
+    h.core.supervisor.stop_all();
+}
+
+#[test]
+fn unsecuring_removes_the_certificate() {
+    let h = home();
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    registry::secure(&h.core.paths, "shop").unwrap();
+    sync_with(&h.core, &example("fake_server")).unwrap();
+    registry::unsecure(&h.core.paths, "shop").unwrap();
+    sync_with(&h.core, &example("fake_server")).unwrap();
+    let (crt, key) = crate::tls::leaf_paths(&h.core.paths, "shop");
+    assert!(!crt.exists() && !key.exists());
+    assert!(!caddyfile(&h).contains("https://"));
+    h.core.supervisor.stop_all();
+}

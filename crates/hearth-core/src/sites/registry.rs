@@ -315,3 +315,12 @@ pub fn unsecure(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
     config.secured.remove(name);
     save(paths, &config)
 }
+
+pub fn set_https_port(paths: &HearthPaths, port: u16) -> Result<(), CoreError> {
+    if port == 0 {
+        return Err(problem("Use a port between 1 and 65535"));
+    }
+    let mut config = load(paths);
+    config.https_port = port;
+    save(paths, &config)
+}
