@@ -10,10 +10,14 @@ use crate::HearthPaths;
 
 /// The site whose folder contains `dir` (the deepest one when sites are nested).
 pub fn site_for_dir(paths: &HearthPaths, dir: &Path) -> Option<Site> {
-    let dir = std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf());
+    // Both sides with symlinks resolved: the shell's folder and a site's stored path can name the
+    // same place differently (macOS `/var` -> `/private/var`, a symlinked `~/Sites`).
+    let real =
+        |p: &Path| std::fs::canonicalize(p).or_else(|_| std::path::absolute(p)).unwrap_or_else(|_| p.to_path_buf());
+    let dir = real(dir);
     registry::list(paths)
         .into_iter()
-        .filter(|s| s.path.as_deref().is_some_and(|p| contains(p, &dir)))
+        .filter(|s| s.path.as_deref().is_some_and(|p| contains(&real(p), &dir)))
         // The deepest folder wins; for the same folder a link (a deliberate choice) beats parking.
         .max_by_key(|s| {
             let depth = s.path.as_deref().map_or(0, |p| p.components().count());
@@ -117,6 +121,19 @@ mod tests {
         assert_eq!(php_for_dir(&paths, &projects.join("shop").join("app")).as_deref(), Some("8.3"));
         assert_eq!(php_for_dir(&paths, &projects.join("blog")).as_deref(), Some("8.4"), "8.1 is not installed");
         assert_eq!(php_for_dir(&paths, &projects).as_deref(), Some("8.4"), "no site: the default");
+    }
+
+    /// macOS reports the current folder with symlinks resolved (`/private/var/...` for `/var/...`,
+    /// or a real path for a symlinked `~/Sites`), while sites keep the path they were added with.
+    #[cfg(unix)]
+    #[test]
+    fn a_site_added_through_a_symlink_is_found_from_the_real_folder() {
+        let (d, paths, projects) = home();
+        let alias = d.path().join("Sites");
+        std::os::unix::fs::symlink(&projects, &alias).unwrap();
+        registry::park(&paths, &alias).unwrap();
+        let real = std::fs::canonicalize(projects.join("shop").join("app")).unwrap();
+        assert_eq!(site_for_dir(&paths, &real).map(|s| s.name).as_deref(), Some("shop"));
     }
 
     #[cfg(windows)]
