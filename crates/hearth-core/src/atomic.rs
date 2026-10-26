@@ -35,11 +35,30 @@ fn rename_retrying(from: &Path, to: &Path, attempts: u32, pause: Duration) -> st
 /// Writes `bytes` to a temp file next to `path` (unique per writer, so concurrent writers never
 /// share one), syncs it and renames it over `path`: a crash never leaves a half-written file.
 pub fn write(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
+    write_with(path, bytes, false)
+}
+
+/// Like `write`, for secrets: on unix the file is readable by the user only from its creation on.
+/// (On Windows the profile folder is already private to the user.)
+pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
+    write_with(path, bytes, true)
+}
+
+fn write_with(path: &Path, bytes: &[u8], private: bool) -> Result<(), CoreError> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     let tmp = Path::new(&tmp);
     let result = (|| {
-        let mut file = std::fs::File::create(tmp)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        if private {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        let mut file = options.open(tmp)?;
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);

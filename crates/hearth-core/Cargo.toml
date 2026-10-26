@@ -21,6 +21,9 @@ futures-util = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 flate2 = "1"
 tar = "0.4"
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
+time = "0.3"
+x509-parser = { version = "0.18", features = ["verify"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -28,7 +31,7 @@ tiny_http = "0.12"
 minisign = "0.7"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_IO", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 widestring = "1"
 
 [target.'cfg(unix)'.dependencies]

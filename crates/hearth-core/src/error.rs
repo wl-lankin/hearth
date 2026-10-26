@@ -18,6 +18,9 @@ pub enum CoreError {
     /// A PHP install, catalog or configuration problem, worded for the user.
     #[error("{0}")]
     Php(String),
+    /// A certificate or trust problem, worded for the user.
+    #[error("{0}")]
+    Tls(String),
     #[error("{message} (code {code})")]
     Rpc { code: i64, message: String },
 }

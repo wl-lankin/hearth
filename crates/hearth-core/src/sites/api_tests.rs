@@ -62,3 +62,29 @@ async fn bad_params_and_site_errors() {
     let err = call(&core, "sites.unlink", json!({ "name": "nope" })).await.unwrap_err();
     assert_eq!(err.message, "nope is not a linked site");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sites_can_be_secured_and_the_status_shows_https() {
+    let (_d, core, projects) = home();
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    call(&core, "sites.secure", json!({ "name": "shop" })).await.unwrap();
+    let list = call(&core, "sites.list", Value::Null).await.unwrap();
+    assert_eq!(list["sites"][0]["secured"], true);
+    assert_eq!(list["httpsPort"], 8443);
+    call(&core, "sites.unsecure", json!({ "name": "shop" })).await.unwrap();
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"][0]["secured"], false);
+    let status = call(&core, "web.status", Value::Null).await.unwrap();
+    assert_eq!(status["httpsPort"], 8443);
+    assert_eq!(status["caTrusted"], false);
+    assert_eq!(status["dns"], json!({ "ready": false, "problem": null }));
+    assert_eq!(call(&core, "sites.secure", json!({})).await.unwrap_err().code, INVALID_PARAMS);
+    let err = call(&core, "sites.secure", json!({ "name": "nope" })).await.unwrap_err();
+    assert_eq!(err.message, "No site named nope.test");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_test_home_never_sets_up_system_names() {
+    let (_d, core, _projects) = home();
+    let err = call(&core, "dns.setup", Value::Null).await.unwrap_err();
+    assert_eq!(err.message, "This Hearth home does not manage .test names");
+}

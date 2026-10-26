@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 
-pub use client::call;
+pub use client::{call, call_waiting};
 pub use endpoint::endpoint_name;
 pub use protocol::{RpcError, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, PARSE_ERROR};
 pub use server::{serve, Handler, HandlerFuture, ServerHandle};
@@ -56,6 +56,10 @@ pub struct CoreState {
     /// Sync the web server after site and PHP changes. Off by default (tests, CLI-only setups);
     /// the app turns it on.
     pub web_sync: bool,
+    /// Where site names are pushed so `<name>.test` resolves: the Windows helper's pipe (on macOS
+    /// any value checks the resolver file). `None`, the default, leaves the system alone (tests);
+    /// the app sets it.
+    pub dns_pipe: Option<String>,
     /// Set while Hearth quits: no new syncs (they could start Caddy or PHP again).
     pub quitting: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -77,6 +81,7 @@ impl CoreState {
             supervisor,
             web_status: Arc::default(),
             web_sync: false,
+            dns_pipe: None,
             quitting: Arc::default(),
         }
     }

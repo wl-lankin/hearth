@@ -60,6 +60,24 @@
   </span>
 </section>
 
+{#if store.setup === 'dns'}
+  <section class="card setup" aria-live="polite">
+    <div class="setup-text">
+      <strong>Set up .test names</strong>
+      <span class="muted">So site names like shop.test open in the browser. The system asks for admin rights once.</span>
+    </div>
+    <button class="primary" onclick={() => store.setupDns()}>Set up</button>
+  </section>
+{:else if store.setup === 'trust'}
+  <section class="card setup" aria-live="polite">
+    <div class="setup-text">
+      <strong>Browsers do not trust Hearth yet</strong>
+      <span class="muted">Trust Hearth's certificates once, then HTTPS sites open without warnings.</span>
+    </div>
+    <button class="primary" onclick={() => store.trust()}>Trust</button>
+  </section>
+{/if}
+
 {#if adding}
   <form class="card add" onsubmit={submit}>
     <label for="site-name">Name</label>
@@ -116,6 +134,13 @@
         {/if}
       </div>
       <div class="more">
+        <button
+          class="secure"
+          class:on={site.secured}
+          aria-pressed={site.secured}
+          title={site.secured ? 'Served over HTTPS; click to use plain HTTP' : 'Click to serve over HTTPS'}
+          onclick={() => store.secure(site.name, !site.secured)}>HTTPS</button
+        >
         {#if site.kind === 'linked'}
           <button onclick={() => store.unlink(site.name)}>Unlink</button>
         {:else if site.kind === 'proxy'}
@@ -240,9 +265,41 @@
     padding: 4px 0;
   }
 
+  .setup {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 14px 20px;
+  }
+
+  .setup-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .more {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  button.secure {
+    color: var(--muted);
+  }
+
+  button.secure.on {
+    border-color: var(--ok);
+    background: var(--ok);
+    color: var(--accent-text);
+    font-weight: 600;
+  }
+
   .row {
     display: grid;
-    grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 190px auto;
+    grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 190px 150px;
     gap: 6px 16px;
     align-items: center;
     padding: 10px 20px;
@@ -360,6 +417,10 @@
     .where {
       grid-column: 1 / -1;
       grid-row: 2;
+    }
+
+    .more {
+      grid-column: 1 / -1;
     }
   }
 </style>

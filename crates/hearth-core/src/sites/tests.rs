@@ -130,3 +130,38 @@ fn the_http_port_defaults_to_8080() {
     set_http_port(&p, 8081).unwrap();
     assert_eq!(load(&p).http_port, 8081);
 }
+
+#[test]
+fn a_site_can_be_secured_and_unsecured() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    assert!(!list(&p)[0].secured);
+    secure(&p, "shop").unwrap();
+    assert!(list(&p)[0].secured);
+    unsecure(&p, "shop").unwrap();
+    assert!(!list(&p)[0].secured);
+    assert_eq!(secure(&p, "nope").unwrap_err().to_string(), "No site named nope.test");
+}
+
+#[test]
+fn removing_a_site_drops_its_security() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    proxy(&p, "vite", "http://localhost:5173").unwrap();
+    secure(&p, "shop").unwrap();
+    secure(&p, "vite").unwrap();
+    unlink(&p, "shop").unwrap();
+    unproxy(&p, "vite").unwrap();
+    assert!(load(&p).secured.is_empty());
+}
+
+#[test]
+fn an_older_sites_file_loads_with_the_https_port() {
+    let (_d, p) = home();
+    std::fs::write(p.config.join("sites.json"), r#"{ "parked": [], "httpPort": 8081 }"#).unwrap();
+    let config = load(&p);
+    assert_eq!((config.http_port, config.https_port), (8081, 8443));
+    assert!(config.secured.is_empty());
+}

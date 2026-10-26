@@ -90,6 +90,20 @@ enum Command {
     },
     /// Opens a site (default: the current folder's) in the browser.
     Open { name: Option<String> },
+    /// Serves a site (default: the current folder's) over HTTPS with Hearth's certificate.
+    Secure { name: Option<String> },
+    /// Serves a site (default: the current folder's) over plain HTTP again.
+    Unsecure { name: Option<String> },
+    /// Lists the sites served over HTTPS.
+    Secured {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Makes this computer trust Hearth's certificates (once; the system asks to confirm).
+    Trust,
+    /// Makes <name>.test resolve on this computer (once; the system asks for admin rights).
+    #[command(name = "dns:setup")]
+    DnsSetup,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -180,11 +194,80 @@ async fn main() -> ExitCode {
         },
         Command::Open { name } => match site_name(name) {
             Ok(name) => {
-                let url = format!("http://{name}.test:{}", http_port(&paths).await);
+                let url = site_url(&sites(&paths).await, &name);
                 open_url(&url)
             }
             Err(code) => code,
         },
+        Command::Secure { name } => match site_name(name) {
+            Ok(name) => match ipc::call(&paths, "sites.secure", json!({ "name": name })).await {
+                Ok(_) => {
+                    println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => fail(&message(e)),
+            },
+            Err(code) => code,
+        },
+        Command::Unsecure { name } => match site_name(name) {
+            Ok(name) => match ipc::call(&paths, "sites.unsecure", json!({ "name": name })).await {
+                Ok(_) => {
+                    println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => fail(&message(e)),
+            },
+            Err(code) => code,
+        },
+        Command::Secured { json } => match ipc::call(&paths, "sites.list", Value::Null).await {
+            Ok(list) => {
+                let names: Vec<&str> = list["sites"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| s["secured"] == true)
+                    .filter_map(|s| s["name"].as_str())
+                    .collect();
+                if json {
+                    println!("{}", Value::from(names));
+                } else {
+                    for name in names {
+                        println!("{}", site_url(&list, name));
+                    }
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(&message(e)),
+        },
+        Command::Trust => prompting(&paths, "tls.trust", "This computer now trusts Hearth's certificates").await,
+        Command::DnsSetup => prompting(&paths, "dns.setup", "<name>.test now resolves on this computer").await,
+    }
+}
+
+/// Calls a method that shows the user a system prompt, waiting until they have answered it.
+async fn prompting(paths: &HearthPaths, method: &str, done: &str) -> ExitCode {
+    println!("Confirm the prompt Windows or macOS shows now.");
+    match ipc::call_waiting(paths, method, Value::Null, Duration::from_secs(600)).await {
+        Ok(_) => {
+            println!("{done}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// The sites list, or an empty one when the core does not answer.
+async fn sites(paths: &HearthPaths) -> Value {
+    ipc::call(paths, "sites.list", Value::Null).await.unwrap_or(Value::Null)
+}
+
+/// A site's address: HTTPS when it is secured.
+fn site_url(list: &Value, name: &str) -> String {
+    let secured = list["sites"].as_array().into_iter().flatten().any(|s| s["name"] == name && s["secured"] == true);
+    if secured {
+        format!("https://{name}.test:{}", list["httpsPort"].as_u64().unwrap_or(8443))
+    } else {
+        format!("http://{name}.test:{}", list["httpPort"].as_u64().unwrap_or(8080))
     }
 }
 

@@ -6,12 +6,14 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+use crate::dns::{self, DnsStatus};
 use crate::ipc::CoreState;
 use crate::php::manifest::Os;
 use crate::php::store;
 use crate::sites::caddyfile::{render, servable, CaddyContext, Route, SiteRoute};
 use crate::sites::registry::{self, SiteKind};
 use crate::supervisor::{ProcessSpec, ProcessStatus};
+use crate::tls::{self, LeafState};
 use crate::web::caddy_install::ensure_caddy;
 use crate::web::pools::{effective_php, pool_specs, pool_upstreams, write_pool_config};
 use crate::CoreError;
@@ -22,6 +24,11 @@ const CADDY: &str = "caddy";
 #[serde(rename_all = "camelCase")]
 pub struct WebStatus {
     pub http_port: u16,
+    pub https_port: u16,
+    /// Browsers trust Hearth's CA (false before the first secured site creates it).
+    pub ca_trusted: bool,
+    /// Whether `<site>.test` names resolve.
+    pub dns: DnsStatus,
     /// Caddy is serving.
     pub running: bool,
     pub processes: Vec<ProcessStatus>,
@@ -44,7 +51,7 @@ pub async fn sync(core: &CoreState) -> Result<WebStatus, CoreError> {
 
 /// The sync itself, with a given Caddy program. Blocking (starts processes and waits for them).
 pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError> {
-    let _guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
+    let guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
     let paths = &core.paths;
     let config = registry::load(paths);
     let php_state = store::load(paths);
@@ -72,8 +79,34 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
             }
             (_, None, None) => Route::Skip { reason: "No web root".into() },
         };
-        routes.push(SiteRoute { name: site.name, target });
+        routes.push(SiteRoute { name: site.name, target, tls: None });
     }
+
+    // Certificates for secured sites; a new one needs a Caddy restart (Caddy reads them at start).
+    let mut reissued = false;
+    let secured: BTreeSet<String> =
+        routes.iter().filter(|r| config.secured.contains(&r.name)).map(|r| r.name.clone()).collect();
+    if !secured.is_empty() {
+        match tls::ensure_ca(paths) {
+            Ok(ca) => {
+                let now = time::OffsetDateTime::now_utc();
+                for route in routes.iter_mut().filter(|r| secured.contains(&r.name)) {
+                    match tls::ensure_leaf(paths, &ca, &route.name, now) {
+                        Ok(state) => {
+                            reissued |= state == LeafState::Issued;
+                            route.tls = Some(tls::leaf_paths(paths, &route.name));
+                        }
+                        Err(e) => errors.push(format!("{}.test: {e}", route.name)),
+                    }
+                }
+            }
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    remove_stale_leaves(paths, &secured);
+    let ca_trusted = trusted_ca(paths);
+    // Every site's name, served or not: a name that resolves shows the problem page, not "not found".
+    let names: BTreeSet<String> = routes.iter().map(|r| format!("{}.test", r.name)).collect();
 
     // PHP pools: the versions some site uses, nothing else.
     let used: BTreeSet<String> = routes
@@ -111,6 +144,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
     } else {
         let rendered = render(&CaddyContext {
             http_port: config.http_port,
+            https_port: config.https_port,
             routes,
             php_upstreams: upstreams,
             log: paths.logs.join("caddy.log"),
@@ -126,7 +160,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
             }
         }
         if path.is_file() {
-            if changed {
+            if changed || reissued {
                 core.supervisor.stop(CADDY);
             }
             let spec = ProcessSpec {
@@ -164,7 +198,40 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
         }
     }
     let error = (!errors.is_empty()).then(|| errors.join("; "));
-    Ok(WebStatus { http_port: config.http_port, running, processes, error, notes })
+    // Outside the sites lock: talking to the helper may take a few seconds, site changes may not.
+    drop(guard);
+    let dns = match &core.dns_pipe {
+        Some(pipe) => dns::sync_names(pipe, &names),
+        None => DnsStatus::default(),
+    };
+    Ok(WebStatus {
+        http_port: config.http_port,
+        https_port: config.https_port,
+        ca_trusted,
+        dns,
+        running,
+        processes,
+        error,
+        notes,
+    })
+}
+
+/// Deletes the certificates of sites that are no longer secured.
+fn remove_stale_leaves(paths: &crate::HearthPaths, secured: &BTreeSet<String>) {
+    let dir = tls::leaf_paths(paths, "x").0.parent().map(Path::to_path_buf).unwrap_or_default();
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        if !secured.contains(&stem) {
+            tls::remove_leaf(paths, &stem);
+        }
+    }
+}
+
+/// Whether the OS trusts Hearth's CA; false while there is none yet (it is created on first use).
+fn trusted_ca(paths: &crate::HearthPaths) -> bool {
+    tls::load_ca(paths).is_some_and(|ca| tls::trust::is_trusted(&ca, &tls::ca_cert_path(paths)))
 }
 
 /// Writes `rendered` as the new Caddyfile only when Caddy accepts it; otherwise the last good one stays.
@@ -199,8 +266,12 @@ pub fn current_status(core: &CoreState) -> WebStatus {
     if let Some(status) = core.web_status.lock().unwrap_or_else(|e| e.into_inner()).clone() {
         return status;
     }
+    let config = registry::load(&core.paths);
     WebStatus {
-        http_port: registry::load(&core.paths).http_port,
+        http_port: config.http_port,
+        https_port: config.https_port,
+        ca_trusted: false,
+        dns: DnsStatus::default(),
         running: false,
         processes: core.supervisor.status(),
         error: None,

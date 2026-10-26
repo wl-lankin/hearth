@@ -74,3 +74,32 @@ async fn park_proxy_isolate_and_their_undo() {
     assert_eq!(outs[7].status.code(), Some(1));
     assert_eq!(String::from_utf8_lossy(&outs[7].stderr), "nope is not a linked site\n");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn secure_secured_and_unsecure() {
+    let (d, paths) = home();
+    let shop = d.path().join("shop");
+    project(&shop);
+    let p = paths.clone();
+    let outs = with_core(&paths, move || {
+        vec![
+            hearth(&p, &shop, &["link"]),
+            hearth(&p, &shop, &["secure"]),
+            hearth(&p, &shop, &["secured"]),
+            hearth(&p, &shop, &["secured", "--json"]),
+            hearth(&p, &shop, &["unsecure", "shop"]),
+            hearth(&p, &shop, &["dns:setup"]),
+        ]
+    })
+    .await;
+    for out in &outs[..5] {
+        assert_eq!(out.status.code(), Some(0), "{}", text(out));
+    }
+    assert_eq!(String::from_utf8_lossy(&outs[1].stdout), "shop is now served at https://shop.test:8443\n");
+    assert_eq!(String::from_utf8_lossy(&outs[2].stdout), "https://shop.test:8443\n");
+    let json: serde_json::Value = serde_json::from_slice(&outs[3].stdout).unwrap();
+    assert_eq!(json, serde_json::json!(["shop"]));
+    assert_eq!(String::from_utf8_lossy(&outs[4].stdout), "shop is now served at http://shop.test:8080\n");
+    assert_eq!(outs[5].status.code(), Some(1));
+    assert_eq!(String::from_utf8_lossy(&outs[5].stderr), "This Hearth home does not manage .test names\n");
+}

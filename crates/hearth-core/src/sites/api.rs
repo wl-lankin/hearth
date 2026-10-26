@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 
 use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR, INVALID_PARAMS};
 use crate::sites::registry;
+use crate::tls;
 use crate::web::service::{current_status, schedule_sync};
 use crate::CoreError;
 
@@ -43,7 +44,25 @@ pub fn list(core: &CoreState) -> Value {
         "sites": registry::list(&core.paths),
         "parked": config.parked,
         "httpPort": config.http_port,
+        "httpsPort": config.https_port,
     })
+}
+
+/// Runs a blocking call that may show an OS prompt (UAC, a trust dialog), then lets the web
+/// server pick up the result.
+async fn prompting(
+    core: &CoreState,
+    f: impl FnOnce() -> Result<(), CoreError> + Send + 'static,
+) -> Result<Value, RpcError> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?.map_err(failed)?;
+    schedule_sync(core);
+    Ok(Value::Null)
+}
+
+/// Asks the OS to trust Hearth's CA (creating it first if needed).
+fn trust_ca(paths: crate::HearthPaths) -> Result<(), CoreError> {
+    let ca = tls::ensure_ca(&paths)?;
+    tls::trust::trust(&ca, &tls::ca_cert_path(&paths))
 }
 
 /// Answers a sites.* / web.* method, or `None` when `method` is not one of them.
@@ -69,6 +88,16 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             (Ok(name), Some(Value::String(minor))) => change(core, || registry::isolate(paths, name, Some(minor))),
             (Ok(_), Some(_)) => Err(invalid("minor must be a string like \"8.4\" or null")),
             (Err(e), _) => Err(e),
+        },
+        "sites.secure" => text(params, "name").and_then(|n| change(core, || registry::secure(paths, n))),
+        "sites.unsecure" => text(params, "name").and_then(|n| change(core, || registry::unsecure(paths, n))),
+        "tls.trust" => {
+            let paths = paths.clone();
+            prompting(core, move || trust_ca(paths)).await
+        }
+        "dns.setup" => match core.dns_pipe {
+            Some(_) => prompting(core, crate::dns::setup).await,
+            None => Err(RpcError::new(INVALID_PARAMS, "This Hearth home does not manage .test names")),
         },
         "sites.port" => match params.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()) {
             Some(port) => change(core, || registry::set_http_port(paths, port)),

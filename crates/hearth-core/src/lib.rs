@@ -1,6 +1,7 @@
 //! The Hearth core: paths, settings and the local IPC server every frontend talks to.
 
 pub mod atomic;
+pub mod dns;
 pub mod error;
 pub mod ipc;
 pub mod jobs;
@@ -12,6 +13,7 @@ pub mod sites;
 pub mod supervisor;
 #[cfg(test)]
 mod supervisor_tests;
+pub mod tls;
 pub mod web;
 
 pub use error::CoreError;

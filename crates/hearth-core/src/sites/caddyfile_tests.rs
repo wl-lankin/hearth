@@ -9,6 +9,7 @@ fn ctx(routes: Vec<SiteRoute>) -> CaddyContext {
     upstreams.insert("8.3".to_string(), vec!["unix//Users/j/.config/hearth/run/php-8.3.sock".to_string()]);
     CaddyContext {
         http_port: 8080,
+        https_port: 8443,
         routes,
         php_upstreams: upstreams,
         log: PathBuf::from(r"C:\h\logs\caddy.log"),
@@ -20,7 +21,7 @@ fn ctx(routes: Vec<SiteRoute>) -> CaddyContext {
 fn the_global_block_turns_off_admin_and_https() {
     let file = render(&ctx(vec![]));
     assert!(file.starts_with(
-        "{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port 8080\n\tlog {\n\t\toutput file \"C:/h/logs/caddy.log\"\n\t}\n}\n"
+        "{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port 8080\n\thttps_port 8443\n\tlog {\n\t\toutput file \"C:/h/logs/caddy.log\"\n\t}\n}\n"
     ), "{file}");
 }
 
@@ -28,6 +29,7 @@ fn the_global_block_turns_off_admin_and_https() {
 fn a_php_site_is_served_through_its_pool() {
     let file = render(&ctx(vec![SiteRoute {
         name: "shop".into(),
+        tls: None,
         target: Route::Php { docroot: PathBuf::from(r"C:\x\shop\public"), minor: "8.4".into() },
     }]));
     assert!(file.contains(
@@ -39,6 +41,7 @@ fn a_php_site_is_served_through_its_pool() {
 fn a_site_isolated_to_another_version_uses_that_pool() {
     let file = render(&ctx(vec![SiteRoute {
         name: "old".into(),
+        tls: None,
         target: Route::Php { docroot: PathBuf::from("/srv/old"), minor: "8.3".into() },
     }]));
     assert!(file.contains("\tphp_fastcgi unix//Users/j/.config/hearth/run/php-8.3.sock {"), "{file}");
@@ -48,6 +51,7 @@ fn a_site_isolated_to_another_version_uses_that_pool() {
 fn a_proxy_forwards_to_its_upstream() {
     let file = render(&ctx(vec![SiteRoute {
         name: "app.shop".into(),
+        tls: None,
         target: Route::Proxy { upstream: "http://localhost:5173".into() },
     }]));
     // Dev servers like Vite 6 refuse unknown Host headers: send the upstream's own host.
@@ -63,6 +67,7 @@ fn a_proxy_forwards_to_its_upstream() {
 fn awkward_folder_names_stay_inside_one_quoted_string() {
     let file = render(&ctx(vec![SiteRoute {
         name: "odd".into(),
+        tls: None,
         target: Route::Php { docroot: PathBuf::from(r#"C:\Projects\Jörg {old} "x"\public"#), minor: "8.4".into() },
     }]));
     // Quotes keep it one token; `\{` `\}` stop Caddy from reading `{old}` as a placeholder.
@@ -93,13 +98,45 @@ fn folders_caddy_cannot_serve_are_named() {
 #[test]
 fn a_site_that_cannot_be_served_becomes_a_comment() {
     let file = render(&ctx(vec![
-        SiteRoute { name: "gone".into(), target: Route::Skip { reason: "Folder missing".into() } },
+        SiteRoute { name: "gone".into(), target: Route::Skip { reason: "Folder missing".into() }, tls: None },
         SiteRoute {
             name: "new".into(),
+            tls: None,
             target: Route::Php { docroot: PathBuf::from("/srv/new"), minor: "8.5".into() },
         },
     ]));
     assert!(file.contains("\n# gone: Folder missing\n"), "{file}");
     assert!(file.contains("\n# new: PHP 8.5 is not running\n"), "{file}");
     assert!(!file.contains("http://gone.test") && !file.contains("http://new.test"), "{file}");
+}
+
+fn secured(name: &str, target: Route) -> SiteRoute {
+    SiteRoute {
+        name: name.into(),
+        target,
+        tls: Some((
+            PathBuf::from(format!(r"C:\h\tls\{{x}}\{name}.crt")),
+            PathBuf::from(format!(r"C:\h\tls\{{x}}\{name}.key")),
+        )),
+    }
+}
+
+#[test]
+fn a_secured_php_site_is_served_over_https_and_http_redirects() {
+    let file = render(&ctx(vec![secured(
+        "shop",
+        Route::Php { docroot: PathBuf::from(r"C:\x\shop\public"), minor: "8.4".into() },
+    )]));
+    assert!(file.contains(
+        "\nhttps://shop.test:8443 {\n\ttls \"C:/h/tls/\\{x\\}/shop.crt\" \"C:/h/tls/\\{x\\}/shop.key\"\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
+    ), "{file}");
+    assert!(file.contains("\nhttp://shop.test:8080 {\n\tredir https://shop.test:8443{uri}\n}\n"), "{file}");
+}
+
+#[test]
+fn a_secured_proxy_keeps_its_upstream() {
+    let file = render(&ctx(vec![secured("vite", Route::Proxy { upstream: "http://localhost:5173".into() })]));
+    assert!(file.contains(
+        "\nhttps://vite.test:8443 {\n\ttls \"C:/h/tls/\\{x\\}/vite.crt\" \"C:/h/tls/\\{x\\}/vite.key\"\n\treverse_proxy http://localhost:5173 {\n\t\theader_up Host {upstream_hostport}\n\t}\n}\n"
+    ), "{file}");
 }
