@@ -85,13 +85,20 @@ pub fn plan(paths: &HearthPaths, herd: &HerdSetup) -> ImportPlan {
     all_sites.extend(config.proxies.keys().cloned());
     all_sites.extend(plan.proxy.iter().map(|(n, _)| n.clone()));
 
+    // Hearth's own choices win: a site Hearth already links or proxies keeps its settings, and a
+    // PHP version already chosen in Hearth is kept.
     for (name, minor) in &herd.isolated {
-        if php_sites.contains(name) && config.isolated.get(name) != Some(minor) {
-            plan.isolate.push((name.clone(), minor.clone()));
+        if !php_sites.contains(name) || taken(name) {
+            continue;
+        }
+        match config.isolated.get(name) {
+            Some(current) if current != minor => skip(&mut plan, name, &format!("PHP {current} kept")),
+            Some(_) => {}
+            None => plan.isolate.push((name.clone(), minor.clone())),
         }
     }
     for name in &herd.secured {
-        if all_sites.contains(name) && !config.secured.contains(name) {
+        if all_sites.contains(name) && !taken(name) && !config.secured.contains(name) {
             plan.secure.push(name.clone());
         }
     }
@@ -201,6 +208,20 @@ mod tests {
         let skipped = reasons(&again);
         assert!(skipped.contains(&("api.shop".into(), "already in Hearth".into())));
         assert!(skipped.contains(&(projects.display().to_string(), "already parked".into())));
+    }
+
+    #[test]
+    fn hearths_own_php_and_https_choices_are_kept() {
+        let (_d, paths, projects) = hearth();
+        registry::link(&paths, "api.shop", &projects.join("blog")).unwrap();
+        registry::isolate(&paths, "api.shop", Some("8.2")).unwrap();
+        registry::park(&paths, &projects).unwrap();
+        registry::isolate(&paths, "blog", Some("8.4")).unwrap();
+        let plan = plan(&paths, &herd(&projects));
+        assert!(!plan.isolate.iter().any(|(n, _)| n == "api.shop" || n == "blog"), "{:?}", plan.isolate);
+        assert!(!plan.secure.contains(&"api.shop".to_string()), "a site Hearth already has keeps its HTTPS choice");
+        let skipped = reasons(&plan);
+        assert!(skipped.contains(&("blog".into(), "PHP 8.4 kept".into())), "{skipped:?}");
     }
 
     #[test]
