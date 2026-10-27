@@ -111,6 +111,21 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             (Err(e), _) => Err(e),
         },
         "herd.import" => herd_import(core, params),
+        "web.restart" | "web.start" => {
+            core.web_paused.store(false, std::sync::atomic::Ordering::Relaxed);
+            if method == "web.restart" {
+                let supervisor = core.supervisor.clone();
+                let _ = tokio::task::spawn_blocking(move || supervisor.stop_all()).await;
+            }
+            schedule_sync(core);
+            Ok(Value::Null)
+        }
+        "web.stop" => {
+            core.web_paused.store(true, std::sync::atomic::Ordering::Relaxed);
+            let supervisor = core.supervisor.clone();
+            let _ = tokio::task::spawn_blocking(move || supervisor.stop_all()).await;
+            Ok(Value::Null)
+        }
         "sites.secure" => text(params, "name").and_then(|n| change(core, || registry::secure(paths, n))),
         "sites.unsecure" => text(params, "name").and_then(|n| change(core, || registry::unsecure(paths, n))),
         "tls.trust" => {

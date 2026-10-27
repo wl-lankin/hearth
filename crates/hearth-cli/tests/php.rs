@@ -101,3 +101,159 @@ fn running_php_without_any_install_explains_what_to_do() {
         "No PHP version is installed. Install one with: hearth php:install 8.4\n"
     );
 }
+
+/// The fake PHP from the examples, put where an installed version's PHP lives.
+fn fake_php(paths: &HearthPaths, minor: &str) {
+    fake_install(paths, minor, &format!("{minor}.0"));
+    let deps = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let name = if cfg!(windows) { "fake_php.exe" } else { "fake_php" };
+    let target = if cfg!(windows) {
+        install_dir(paths, minor).join("php.exe")
+    } else {
+        std::fs::create_dir_all(install_dir(paths, minor).join("bin")).unwrap();
+        install_dir(paths, minor).join("bin").join("php")
+    };
+    std::fs::copy(deps.parent().unwrap().join("examples").join(name), target).unwrap();
+}
+
+fn hearth_in(paths: &HearthPaths, cwd: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("hearth").unwrap().env("HEARTH_HOME", &paths.root).current_dir(cwd).args(args).output().unwrap()
+}
+
+fn projects(dir: &std::path::Path) -> std::path::PathBuf {
+    let projects = dir.join("Projects");
+    for name in ["shop", "blog"] {
+        std::fs::create_dir_all(projects.join(name).join("public")).unwrap();
+        std::fs::write(projects.join(name).join("public").join("index.php"), "<?php").unwrap();
+        std::fs::create_dir_all(projects.join(name).join("app")).unwrap();
+    }
+    projects
+}
+
+fn ran_version(out: &std::process::Output) -> String {
+    let text = String::from_utf8_lossy(&out.stdout);
+    let exe = text.lines().find_map(|l| l.strip_prefix("exe:")).unwrap_or_default().replace('\\', "/");
+    exe.split("/versions/").nth(1).and_then(|r| r.split('/').next()).unwrap_or_default().to_string()
+}
+
+#[test]
+fn php_runs_the_version_of_the_project_you_are_in() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.3");
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let projects = projects(d.path());
+    hearth_core::sites::registry::park(&paths, &projects).unwrap();
+    hearth_core::sites::registry::isolate(&paths, "shop", Some("8.3")).unwrap();
+    assert_eq!(ran_version(&hearth_in(&paths, &projects.join("shop").join("app"), &["php", "-v"])), "8.3");
+    assert_eq!(ran_version(&hearth_in(&paths, &projects.join("blog"), &["php", "-v"])), "8.4");
+    assert_eq!(ran_version(&hearth_in(&paths, &projects.join("blog"), &["php", "--site=shop", "-v"])), "8.3");
+}
+
+#[test]
+fn arguments_and_the_exit_code_pass_through_untouched() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let out = hearth_in(&paths, d.path(), &["php", "pkg:^1.2", "--filter=A|B", "two words", "say \"hi\"", "--exit=7"]);
+    assert_eq!(out.status.code(), Some(7));
+    let text = String::from_utf8_lossy(&out.stdout);
+    for expected in ["arg:pkg:^1.2", "arg:--filter=A|B", "arg:two words", "arg:say \"hi\""] {
+        assert!(text.lines().any(|l| l == expected), "{expected} missing in:\n{text}");
+    }
+    assert!(
+        text.lines().any(|l| l.starts_with("phprc:") && l.replace('\\', "/").ends_with("config/php/8.4")),
+        "{text}"
+    );
+}
+
+#[test]
+fn composer_uses_the_projects_php_too() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.3");
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let projects = projects(d.path());
+    hearth_core::sites::registry::link(&paths, "shop", &projects.join("shop")).unwrap();
+    hearth_core::sites::registry::isolate(&paths, "shop", Some("8.3")).unwrap();
+    let out = hearth_in(&paths, &projects.join("shop"), &["composer", "require", "psr/log:^3.0"]);
+    assert_eq!(ran_version(&out), "8.3");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.lines().any(|l| l == "arg:psr/log:^3.0"), "{text}");
+}
+
+/// The CLI copied under another name, as the app installs it into `<home>/bin`.
+fn renamed_cli(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let target = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(assert_cmd::cargo::cargo_bin("hearth"), &target).unwrap();
+    target
+}
+
+#[test]
+fn the_cli_answers_to_the_names_php_and_herd() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let bin = d.path().join("named");
+    std::fs::create_dir_all(&bin).unwrap();
+    let run = |program: &std::path::Path, args: &[&str]| {
+        std::process::Command::new(program)
+            .env("HEARTH_HOME", &paths.root)
+            .current_dir(d.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let php = run(&renamed_cli(&bin, "php"), &["-v", "--exit=3"]);
+    assert_eq!(php.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&php.stdout).lines().any(|l| l == "arg:-v"),
+        "{}",
+        String::from_utf8_lossy(&php.stdout)
+    );
+    let herd = run(&renamed_cli(&bin, "herd"), &["php", "-r", "1"]);
+    assert!(
+        String::from_utf8_lossy(&herd.stdout).lines().any(|l| l == "arg:-r"),
+        "{}",
+        String::from_utf8_lossy(&herd.stderr)
+    );
+    let composer = run(&renamed_cli(&bin, "Composer"), &["install"]);
+    assert!(
+        String::from_utf8_lossy(&composer.stdout).contains("composer.phar"),
+        "{}",
+        String::from_utf8_lossy(&composer.stderr)
+    );
+}
+
+/// On unix the CLI becomes PHP (exec): Ctrl+C, other signals and the exit status are PHP's own,
+/// and no parent is left to die first.
+#[cfg(unix)]
+#[test]
+fn php_takes_over_the_cli_process_on_unix() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let child = std::process::Command::new(assert_cmd::cargo::cargo_bin("hearth"))
+        .env("HEARTH_HOME", &paths.root)
+        .current_dir(d.path())
+        .args(["php", "-v"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.lines().any(|l| l == format!("pid:{pid}")), "{text}");
+}
+
+#[test]
+fn a_leading_double_dash_reaches_php() {
+    let (d, paths) = home();
+    fake_php(&paths, "8.4");
+    store::set_default(&paths, "8.4").unwrap();
+    let out = hearth_in(&paths, d.path(), &["php", "--", "-r", "1"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    // After Hearth's own `-c <php.ini>`.
+    let args: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("arg:")).skip(2).collect();
+    assert_eq!(args, ["--", "-r", "1"], "{text}");
+}

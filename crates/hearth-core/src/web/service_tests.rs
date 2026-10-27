@@ -276,3 +276,11 @@ fn names_are_left_alone_without_a_target() {
     assert_eq!(status.dns, crate::dns::DnsStatus { ready: false, problem: None });
     h.core.supervisor.stop_all();
 }
+
+#[test]
+fn a_stopped_web_server_stays_stopped_until_started() {
+    let mut h = home();
+    h.core.web_sync = true;
+    h.core.web_paused.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(!super::service::schedule_sync(&h.core), "the 30 s loop must not start Caddy again after `stop`");
+}

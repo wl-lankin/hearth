@@ -4,7 +4,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use hearth_core::php::manifest::Os;
 use hearth_core::php::store::{self, install_dir};
-use hearth_core::sites::registry;
+use hearth_core::sites::{locate, registry};
 use hearth_core::{ipc, CoreError, HearthPaths};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -37,13 +37,13 @@ enum Command {
         json: bool,
     },
     /// Installs or updates a PHP version, e.g. `hearth php:install 8.4`.
-    #[command(name = "php:install")]
+    #[command(name = "php:install", alias = "php:update")]
     PhpInstall { minor: String },
     /// Removes a PHP version.
     #[command(name = "php:uninstall")]
     PhpUninstall { minor: String },
     /// Makes a PHP version the one behind `php`, `composer` and `laravel`.
-    #[command(name = "php:use")]
+    #[command(name = "php:use", alias = "use")]
     PhpUse { minor: String },
     /// Switches an extension of a PHP version on or off, e.g. `hearth php:ext 8.4 xdebug on`.
     #[command(name = "php:ext")]
@@ -53,18 +53,41 @@ enum Command {
         #[arg(value_parser = ["on", "off"])]
         state: String,
     },
-    /// Runs the default PHP with Hearth's php.ini.
+    /// Runs the PHP of the project you are in (or `--site=<name>`'s) with Hearth's php.ini.
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Php { args: Vec<String> },
-    /// Runs Composer with the default PHP.
+    /// Runs Composer with the project's PHP (or `--site=<name>`'s).
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Composer { args: Vec<String> },
+    /// Runs the Laravel installer with the project's PHP.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Laravel { args: Vec<String> },
+    /// Opens `php artisan tinker` in a site (default: the current folder's).
+    Tinker {
+        #[arg(long)]
+        site: Option<String>,
+    },
     /// Serves every subfolder of a folder (default: the current one) as <name>.test.
     Park { dir: Option<PathBuf> },
     /// Stops serving the subfolders of a parked folder.
+    #[command(alias = "forget")]
     Unpark { dir: Option<PathBuf> },
+    /// Lists the parked folders.
+    #[command(alias = "paths")]
+    Parked {
+        #[arg(long)]
+        json: bool,
+    },
     /// Serves a folder (the current one) as <name>.test; the name defaults to the folder name.
-    Link { name: Option<String> },
+    Link {
+        name: Option<String>,
+        /// Serve it over HTTPS right away.
+        #[arg(long)]
+        secure: bool,
+        /// Run it on this PHP version, e.g. 8.3.
+        #[arg(long)]
+        isolate: Option<String>,
+    },
     /// Stops serving a linked site.
     Unlink { name: Option<String> },
     /// Lists the sites.
@@ -74,9 +97,52 @@ enum Command {
         json: bool,
     },
     /// Forwards <name>.test to a local server, e.g. `hearth proxy app http://localhost:5173`.
-    Proxy { name: String, upstream: String },
+    Proxy {
+        name: String,
+        upstream: String,
+        #[arg(long)]
+        secure: bool,
+    },
     /// Removes a proxy.
     Unproxy { name: String },
+    /// Lists the proxies.
+    Proxies {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the sites that run on their own PHP version.
+    Isolated {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Shows the site of the current folder.
+    Which {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prints the PHP program a site (default: the current folder's) runs.
+    #[command(name = "which-php")]
+    WhichPhp { site: Option<String> },
+    /// Shows a site's details: the site of a folder (default: the current one).
+    #[command(name = "site:info", alias = "site-information")]
+    SiteInfo {
+        path: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restarts the web server and the PHP pools.
+    Restart { service: Option<String> },
+    /// Starts the web server and the PHP pools again after `stop`.
+    Start { service: Option<String> },
+    /// Stops the web server and the PHP pools until `start` (or the next app start).
+    Stop { service: Option<String> },
+    /// Prints the top-level domain of the sites (always `test`).
+    Tld,
+    /// Anything else, e.g. a Herd command for a feature Hearth does not have yet.
+    #[command(external_subcommand)]
+    Other(Vec<String>),
+    /// Prints the address the sites are served on.
+    Loopback,
     /// Runs a site (default: the current folder's) on a PHP version.
     Isolate {
         minor: String,
@@ -93,7 +159,12 @@ enum Command {
     /// Serves a site (default: the current folder's) over HTTPS with Hearth's certificate.
     Secure { name: Option<String> },
     /// Serves a site (default: the current folder's) over plain HTTP again.
-    Unsecure { name: Option<String> },
+    Unsecure {
+        name: Option<String>,
+        /// Every secured site.
+        #[arg(long)]
+        all: bool,
+    },
     /// Lists the sites served over HTTPS.
     Secured {
         #[arg(long)]
@@ -120,7 +191,18 @@ enum Command {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let args = as_hearth(std::env::args_os().collect());
+    // `php`, `composer` and `laravel` pass every argument to PHP as typed, so they skip the parser
+    // (which would, for one, eat a leading `--`).
+    if let Some(command) = args.get(1).and_then(|a| a.to_str()).filter(|c| matches!(*c, "php" | "composer" | "laravel"))
+    {
+        let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        return match HearthPaths::from_env() {
+            Ok(paths) => run_named(&paths, command, &rest),
+            Err(e) => fail(&e.to_string()),
+        };
+    }
+    let cli = Cli::parse_from(args);
     let paths = match HearthPaths::from_env() {
         Ok(paths) => paths,
         Err(e) => return fail(&e.to_string()),
@@ -144,8 +226,11 @@ async fn main() -> ExitCode {
             let params = json!({ "minor": minor, "name": name, "on": state == "on" });
             print_call(&paths, "php.extension", params, false, |_| println!("{name} is {state} for PHP {minor}.")).await
         }
-        Command::Php { args } => run_php(&paths, None, &args),
-        Command::Composer { args } => run_php(&paths, Some(paths.bin.join("composer.phar")), &args),
+        // Handled before parsing (see above); listed in the enum for `hearth --help`.
+        Command::Php { args } => run_named(&paths, "php", &args),
+        Command::Composer { args } => run_named(&paths, "composer", &args),
+        Command::Laravel { args } => run_named(&paths, "laravel", &args),
+        Command::Tinker { site } => tinker(&paths, site),
         Command::Park { dir } => {
             let dir = folder(dir);
             let done = format!("Every folder in {} is now a site", dir.display());
@@ -156,20 +241,79 @@ async fn main() -> ExitCode {
             let done = format!("{} is no longer parked", dir.display());
             print_call(&paths, "sites.unpark", json!({ "dir": dir }), false, |_| println!("{done}")).await
         }
-        Command::Link { name } => match site_name(name) {
+        Command::Link { name, secure, isolate } => match site_name(name) {
             Ok(name) => {
                 let dir = folder(None);
-                match ipc::call(&paths, "sites.link", json!({ "name": name, "dir": dir })).await {
-                    Ok(_) => {
-                        let port = http_port(&paths).await;
-                        println!("{name} is now served at http://{name}.test:{port}");
-                        ExitCode::SUCCESS
-                    }
-                    Err(e) => fail(&message(e)),
+                let mut steps = vec![("sites.link", json!({ "name": name, "dir": dir }))];
+                if let Some(minor) = &isolate {
+                    steps.push(("sites.isolate", json!({ "name": name, "minor": minor })));
                 }
+                if secure {
+                    steps.push(("sites.secure", json!({ "name": name })));
+                }
+                for (method, params) in steps {
+                    if let Err(e) = ipc::call(&paths, method, params).await {
+                        return fail(&message(e));
+                    }
+                }
+                println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
+                ExitCode::SUCCESS
             }
             Err(code) => code,
         },
+        Command::Parked { json } => match ipc::call(&paths, "sites.list", Value::Null).await {
+            Ok(list) if json => {
+                println!("{}", list["parked"]);
+                ExitCode::SUCCESS
+            }
+            Ok(list) => {
+                for dir in list["parked"].as_array().into_iter().flatten() {
+                    println!("{}", dir.as_str().unwrap_or_default());
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(&message(e)),
+        },
+        Command::Proxies { json } => {
+            list_sites(
+                &paths,
+                json,
+                |s| s["kind"] == "proxy",
+                |s| json!({ "name": s["name"], "upstream": s["upstream"], "secured": s["secured"] }),
+            )
+            .await
+        }
+        Command::Isolated { json } => {
+            list_sites(&paths, json, |s| s["php"].is_string(), |s| json!({ "name": s["name"], "php": s["php"] })).await
+        }
+        Command::Which { json } => site_info(&paths, None, json).await,
+        Command::SiteInfo { path, json } => site_info(&paths, path, json).await,
+        Command::WhichPhp { site } => which_php(&paths, site),
+        Command::Restart { service: Some(s) }
+        | Command::Start { service: Some(s) }
+        | Command::Stop { service: Some(s) }
+            if !is_web_service(&s) =>
+        {
+            fail(&missing("services"))
+        }
+        Command::Restart { .. } => {
+            print_call(&paths, "web.restart", Value::Null, false, |_| println!("The web server and PHP restart")).await
+        }
+        Command::Start { .. } => {
+            print_call(&paths, "web.start", Value::Null, false, |_| println!("The web server and PHP start")).await
+        }
+        Command::Stop { .. } => {
+            print_call(&paths, "web.stop", Value::Null, false, |_| println!("The web server and PHP are stopped")).await
+        }
+        Command::Tld => {
+            println!("test");
+            ExitCode::SUCCESS
+        }
+        Command::Other(args) => fail(&missing(args.first().map(String::as_str).unwrap_or_default())),
+        Command::Loopback => {
+            println!("127.0.0.1");
+            ExitCode::SUCCESS
+        }
         Command::Unlink { name } => match site_name(name) {
             Ok(name) => {
                 print_call(&paths, "sites.unlink", json!({ "name": name }), false, |_| println!("{name} is unlinked"))
@@ -178,14 +322,21 @@ async fn main() -> ExitCode {
             Err(code) => code,
         },
         Command::Links { json } => print_call(&paths, "sites.list", Value::Null, json, print_sites).await,
-        Command::Proxy { name, upstream } => {
-            let done = format!("{name}.test now forwards to {upstream}");
-            print_call(&paths, "sites.proxy", json!({ "name": name, "upstream": upstream }), false, |_| {
-                println!("{done}")
-            })
-            .await
+        Command::Proxy { name, upstream, secure } => {
+            let name = domain(&name);
+            if let Err(e) = ipc::call(&paths, "sites.proxy", json!({ "name": name, "upstream": upstream })).await {
+                return fail(&message(e));
+            }
+            if secure {
+                if let Err(e) = ipc::call(&paths, "sites.secure", json!({ "name": name })).await {
+                    return fail(&message(e));
+                }
+            }
+            println!("{} now forwards to {upstream}", site_url(&sites(&paths).await, &name));
+            ExitCode::SUCCESS
         }
         Command::Unproxy { name } => {
+            let name = domain(&name);
             print_call(&paths, "sites.unproxy", json!({ "name": name }), false, |_| println!("{name}.test is removed"))
                 .await
         }
@@ -221,7 +372,27 @@ async fn main() -> ExitCode {
             },
             Err(code) => code,
         },
-        Command::Unsecure { name } => match site_name(name) {
+        Command::Unsecure { all: true, .. } => {
+            let list = match ipc::call(&paths, "sites.list", Value::Null).await {
+                Ok(list) => list,
+                Err(e) => return fail(&message(e)),
+            };
+            let secured: Vec<String> = list["sites"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|s| s["secured"] == true)
+                .filter_map(|s| s["name"].as_str().map(str::to_string))
+                .collect();
+            for name in &secured {
+                if let Err(e) = ipc::call(&paths, "sites.unsecure", json!({ "name": name })).await {
+                    return fail(&message(e));
+                }
+            }
+            println!("{} sites are served over plain HTTP again", secured.len());
+            ExitCode::SUCCESS
+        }
+        Command::Unsecure { name, .. } => match site_name(name) {
             Ok(name) => match ipc::call(&paths, "sites.unsecure", json!({ "name": name })).await {
                 Ok(_) => {
                     println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
@@ -341,19 +512,120 @@ fn folder(dir: Option<PathBuf>) -> PathBuf {
     std::path::absolute(&dir).unwrap_or(dir)
 }
 
+/// Herd's names for what Hearth's web server covers: Caddy (in place of nginx) and the PHP pools.
+fn is_web_service(name: &str) -> bool {
+    matches!(name.to_lowercase().as_str(), "nginx" | "caddy" | "php" | "web" | "dnsmasq")
+}
+
+/// What to say for a command Hearth does not have: Herd's command groups name the feature that is
+/// still to come, so an old script fails with a reason instead of doing nothing.
+fn missing(command: &str) -> String {
+    let group = command.split(':').next().unwrap_or_default();
+    let feature = match group {
+        "mail" => "mail catcher",
+        "services" | "start-service" => "services (databases, Redis, ...)",
+        "db" => "database tools",
+        "debug" | "coverage" => "one-click Xdebug",
+        "log" | "logs" | "insights" => "log and insights viewer",
+        "processes" => "process manager",
+        "workspace" | "workspaces" => "workspaces",
+        "node" => "Node version manager",
+        "mcp" => "MCP server",
+        "share" | "fetch-share-url" => "site sharing",
+        "studio" => return "Hearth has no Studio, and none is planned".into(),
+        _ => return format!("Hearth has no `{command}` command (see `hearth --help`)"),
+    };
+    format!("Hearth has no {feature} yet")
+}
+
+/// A site name from a Herd-style domain argument: `Shop.test` and `shop` are both `shop`.
+fn domain(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    lower.strip_suffix(".test").map(str::to_string).unwrap_or(lower)
+}
+
+/// Lists the sites matching `keep`, each as `shape`; as JSON or one per line.
+async fn list_sites(
+    paths: &HearthPaths,
+    as_json: bool,
+    keep: impl Fn(&Value) -> bool,
+    shape: impl Fn(&Value) -> Value,
+) -> ExitCode {
+    match ipc::call(paths, "sites.list", Value::Null).await {
+        Ok(list) => {
+            let rows: Vec<Value> =
+                list["sites"].as_array().into_iter().flatten().filter(|s| keep(s)).map(&shape).collect();
+            if as_json {
+                println!("{}", Value::from(rows));
+            } else {
+                for row in rows {
+                    let rest: Vec<String> = row
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .filter(|(k, _)| *k != "name")
+                        .map(|(_, v)| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()))
+                        .collect();
+                    println!("{}.test  {}", row["name"].as_str().unwrap_or_default(), rest.join("  "));
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// The site of `path` (default: the current folder) with its address and PHP.
+async fn site_info(paths: &HearthPaths, path: Option<PathBuf>, as_json: bool) -> ExitCode {
+    let dir = folder(path);
+    let Some(site) = locate::site_for_dir(paths, &dir) else {
+        return fail(&format!("{} is not in a site", dir.display()));
+    };
+    // The version the site is set to, else the one it gets (the default).
+    let php = site.php.clone().or_else(|| locate::php_for_site(paths, &site.name).ok().flatten());
+    let url = site_url(&sites(paths).await, &site.name);
+    let mut info = serde_json::to_value(&site).unwrap_or(Value::Null);
+    info["url"] = json!(url);
+    info["php"] = json!(php);
+    if as_json {
+        println!("{info}");
+    } else {
+        let folder = site.path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
+        let php = php.map(|m| format!("PHP {m}")).unwrap_or_else(|| "no PHP installed".into());
+        println!("{}.test  {url}  {folder}  {php}", site.name);
+    }
+    ExitCode::SUCCESS
+}
+
+/// The PHP program a site (or the current folder) runs.
+fn which_php(paths: &HearthPaths, site: Option<String>) -> ExitCode {
+    let minor = match site {
+        Some(name) => match locate::php_for_site(paths, &domain(&name)) {
+            Ok(minor) => minor,
+            Err(e) => return fail(&e.to_string()),
+        },
+        None => locate::php_for_dir(paths, &folder(None)),
+    };
+    let Some(minor) = minor else {
+        return fail("No PHP version is installed. Install one with: hearth php:install 8.4");
+    };
+    let program = match Os::current() {
+        Os::Windows => install_dir(paths, &minor).join("php.exe"),
+        Os::Macos => install_dir(paths, &minor).join("bin").join("php"),
+    };
+    println!("{}", program.display());
+    ExitCode::SUCCESS
+}
+
 /// The given site name, or the one the current folder would get.
 fn site_name(name: Option<String>) -> Result<String, ExitCode> {
     if let Some(name) = name {
-        return Ok(name);
+        return Ok(domain(&name));
     }
     let cwd = folder(None);
     let base = cwd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     registry::name_from_folder(&base)
         .ok_or_else(|| fail("This folder's name cannot be a site name; give one, e.g. `hearth link shop`"))
-}
-
-async fn http_port(paths: &HearthPaths) -> u64 {
-    ipc::call(paths, "sites.list", Value::Null).await.ok().and_then(|v| v["httpPort"].as_u64()).unwrap_or(8080)
 }
 
 fn print_sites(value: &Value) {
@@ -491,9 +763,73 @@ fn exit_code(code: Option<i32>) -> u8 {
 }
 
 /// Runs the default PHP directly (no core needed), passing the exit code through.
-fn run_php(paths: &HearthPaths, script: Option<std::path::PathBuf>, args: &[String]) -> ExitCode {
-    let Some(minor) = store::load(paths).default.filter(|m| install_dir(paths, m).join(store::VERSION_FILE).is_file())
-    else {
+/// The arguments as `hearth` would get them. The CLI is also installed as `php`, `composer`,
+/// `laravel` (run that with the project's PHP) and `herd` (Herd's commands are Hearth's).
+fn as_hearth(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let name = args
+        .first()
+        .and_then(|a| std::path::Path::new(a).file_stem().map(|s| s.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+    match name.as_str() {
+        "php" | "composer" | "laravel" => args.insert(1, name.into()),
+        _ => {}
+    }
+    args
+}
+
+/// `php`, `composer` or `laravel` with the PHP of the project (or of a leading `--site=<name>`).
+fn run_named(paths: &HearthPaths, command: &str, args: &[String]) -> ExitCode {
+    let (site, args) = split_site(args);
+    let script = match command {
+        "composer" => Some(paths.bin.join("composer.phar")),
+        "laravel" => Some(
+            paths.data.join("composer").join("vendor").join("laravel").join("installer").join("bin").join("laravel"),
+        ),
+        _ => None,
+    };
+    run_php(paths, site.as_deref(), script, args, None)
+}
+
+/// A leading `--site=<name>` or `--site <name>` (Herd's way to pick a site's PHP), and the rest.
+fn split_site(args: &[String]) -> (Option<String>, &[String]) {
+    match args {
+        [first, rest @ ..] if first.starts_with("--site=") => (Some(first["--site=".len()..].to_string()), rest),
+        [first, name, rest @ ..] if first == "--site" => (Some(name.clone()), rest),
+        _ => (None, args),
+    }
+}
+
+/// `php artisan tinker` in a site's folder, with that site's PHP.
+fn tinker(paths: &HearthPaths, site: Option<String>) -> ExitCode {
+    let found = match &site {
+        Some(name) => registry::list(paths).into_iter().find(|s| s.name == name.trim_end_matches(".test")),
+        None => std::env::current_dir().ok().and_then(|cwd| locate::site_for_dir(paths, &cwd)),
+    };
+    let Some(folder) = found.as_ref().and_then(|s| s.path.clone()) else {
+        return fail("Run tinker inside a site's folder, or name one with --site");
+    };
+    let name = found.map(|s| s.name);
+    run_php(paths, name.as_deref(), Some(folder.join("artisan")), &["tinker".to_string()], Some(&folder))
+}
+
+fn run_php(
+    paths: &HearthPaths,
+    site: Option<&str>,
+    script: Option<std::path::PathBuf>,
+    args: &[String],
+    cwd: Option<&std::path::Path>,
+) -> ExitCode {
+    let minor = match site {
+        Some(name) => {
+            let name = name.trim_end_matches(".test");
+            match locate::php_for_site(paths, name) {
+                Ok(minor) => minor,
+                Err(e) => return fail(&e.to_string()),
+            }
+        }
+        None => std::env::current_dir().ok().and_then(|cwd| locate::php_for_dir(paths, &cwd)),
+    };
+    let Some(minor) = minor.filter(|m| install_dir(paths, m).join(store::VERSION_FILE).is_file()) else {
         return fail("No PHP version is installed. Install one with: hearth php:install 8.4");
     };
     let php = match Os::current() {
@@ -507,7 +843,26 @@ fn run_php(paths: &HearthPaths, script: Option<std::path::PathBuf>, args: &[Stri
     if let Some(script) = script {
         command.arg(script);
     }
-    match command.args(args).status() {
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command.args(args);
+    // On unix the CLI becomes PHP: signals (Ctrl+C) and the exit status are PHP's own.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = command.exec();
+        return fail(&format!("Could not start PHP {minor}: {e}"));
+    }
+    // On Windows Ctrl+C reaches every program in the console: this one lets PHP decide and
+    // waits for it, so the prompt only returns once PHP has finished.
+    #[cfg(windows)]
+    // SAFETY: removes no handler; only makes this process ignore Ctrl+C from now on.
+    unsafe {
+        windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1);
+    }
+    #[allow(unreachable_code)]
+    match command.status() {
         Ok(status) => ExitCode::from(exit_code(status.code())),
         Err(e) => fail(&format!("Could not start PHP {minor}: {e}")),
     }

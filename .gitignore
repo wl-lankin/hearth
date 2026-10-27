@@ -4,3 +4,4 @@ dist/
 target/
 src-tauri/gen/
 docs/local/
+src-tauri/binaries/
