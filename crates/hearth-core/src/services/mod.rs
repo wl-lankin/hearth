@@ -3,3 +3,7 @@
 pub mod install;
 #[cfg(test)]
 mod install_tests;
+pub mod kinds;
+pub mod store;
+#[cfg(test)]
+mod tests;
