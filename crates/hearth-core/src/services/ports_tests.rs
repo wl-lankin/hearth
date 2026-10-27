@@ -21,19 +21,20 @@ fn a_port_another_program_listens_on_is_taken() {
     let taken = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = taken.local_addr().unwrap().port();
     assert!(!port_free(port));
+    // (Whether it is free again after `drop` is not checked: a test running alongside may take it.)
     drop(taken);
-    assert!(port_free(port));
 }
 
 #[test]
 fn the_suggestion_skips_taken_ports_and_other_instances() {
     let (_d, paths) = home();
-    let start = free();
-    let taken = TcpListener::bind(("127.0.0.1", start)).unwrap();
+    // Held from the start: a port released and bound again can be taken by a test running alongside.
+    let taken = TcpListener::bind("127.0.0.1:0").unwrap();
+    let start = taken.local_addr().unwrap().port();
     // The next port belongs to another Hearth instance (not running, still reserved).
     store::create(&paths, "redis", "8", start + 1, None).unwrap();
     let suggested = suggest_from(&paths, start, 1);
-    assert!(suggested >= start + 2, "{suggested}");
+    assert!(suggested >= start + 2, "start {start} suggested {suggested}");
     drop(taken);
 }
 
