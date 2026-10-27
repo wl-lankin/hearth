@@ -139,13 +139,19 @@ pub(crate) fn stop_core(app: &AppHandle) {
     if let Some(server) = server {
         tauri::async_runtime::block_on(server.shutdown());
     }
-    // Caddy and the PHP pools stop with the core (they would also die with the process).
-    app.state::<CoreState>().supervisor.stop_all();
+    // Databases shut down cleanly first; then Caddy, the PHP pools and anything left stop with the
+    // core (they would also die with the process).
+    let core = app.state::<CoreState>().inner().clone();
+    tauri::async_runtime::block_on(hearth_core::services::run::stop_all(&core));
+    core.supervisor.stop_all();
 }
 
 /// Brings the web server up and re-checks it every 30 s (a crashed pool or a changed folder).
 fn start_web(app: &AppHandle) {
     let core = app.state::<CoreState>().inner().clone();
+    // Services marked to start with Hearth (problems show in the Services view).
+    let services = core.clone();
+    tauri::async_runtime::spawn(async move { hearth_core::services::run::start_autostart(&services).await });
     // macOS asks this responder for every .test name (see /etc/resolver/test).
     #[cfg(target_os = "macos")]
     if core.dns_pipe.is_some() {

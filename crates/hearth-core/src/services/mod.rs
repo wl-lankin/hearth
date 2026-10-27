@@ -7,6 +7,9 @@ pub mod kinds;
 pub mod ports;
 #[cfg(test)]
 mod ports_tests;
+pub mod run;
+#[cfg(test)]
+mod run_tests;
 pub mod store;
 #[cfg(test)]
 mod tests;

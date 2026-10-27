@@ -110,7 +110,7 @@ fn answers(port: u16) -> bool {
 }
 
 /// The last lines of a log, for start errors.
-fn log_tail(path: &std::path::Path) -> String {
+pub(crate) fn log_tail(path: &std::path::Path) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(3)..].join(" | ")
@@ -253,6 +253,15 @@ impl Supervisor {
         if let Some(mut child) = entry.and_then(|e| e.child) {
             terminate(&mut child);
         }
+    }
+
+    /// Takes a process out of the supervisor's care without stopping it, so it can shut down on
+    /// its own (a database's clean shutdown) without being restarted. The caller waits for it.
+    pub fn detach(&self, key: &str) -> Option<Child> {
+        let mut table = self.table.lock().unwrap();
+        let entry = table.remove(key);
+        persist(&table, &self.record);
+        entry.and_then(|e| e.child)
     }
 
     pub fn stop_all(&self) {
@@ -408,13 +417,13 @@ fn spawn(spec: &ProcessSpec) -> Result<Child, CoreError> {
 }
 
 #[cfg(windows)]
-fn terminate(child: &mut Child) {
+pub(crate) fn terminate(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
 }
 
 #[cfg(unix)]
-fn terminate(child: &mut Child) {
+pub(crate) fn terminate(child: &mut Child) {
     let group = -(child.id() as i32);
     // SAFETY: plain signal calls on the child's process group.
     unsafe { libc::kill(group, libc::SIGTERM) };
