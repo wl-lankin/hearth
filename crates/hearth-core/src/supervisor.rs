@@ -35,6 +35,9 @@ pub struct ProcessSpec {
     pub ready_port: Option<u16>,
     /// Or: the process counts as started once this socket file exists.
     pub ready_socket: Option<PathBuf>,
+    /// After a crash, the process is only restarted while this port is free: when another program
+    /// took it, restarting would fail forever, so the process is parked with that reason instead.
+    pub guard_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -347,6 +350,11 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
             continue;
         }
         if entry.retry_at.is_some_and(|t| t <= now) {
+            if let Some(port) = entry.spec.guard_port.filter(|p| port_taken(*p)) {
+                entry.last_error = Some(format!("Port {port} is used by another program"));
+                entry.retry_at = None;
+                continue;
+            }
             #[cfg(windows)]
             let spawned = spawn(&entry.spec, job);
             #[cfg(unix)]
@@ -371,6 +379,13 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
     if respawned {
         persist(&table, record);
     }
+}
+
+/// Something answers on the port, or it cannot be bound.
+fn port_taken(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok()
+        || std::net::TcpListener::bind(addr).is_err()
 }
 
 fn command(spec: &ProcessSpec) -> Result<Command, CoreError> {

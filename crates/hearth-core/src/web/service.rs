@@ -178,6 +178,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
                 log: paths.logs.join("caddy-process.log"),
                 ready_port: Some(config.http_port),
                 ready_socket: None,
+                guard_port: None,
             };
             if let Err(e) = core.supervisor.ensure(spec) {
                 errors.push(e.to_string());

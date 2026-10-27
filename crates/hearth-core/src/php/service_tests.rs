@@ -362,6 +362,7 @@ async fn a_version_serving_sites_can_still_be_removed_and_updated() {
         log: p.logs.join("pool.log"),
         ready_port: Some(port),
         ready_socket: None,
+        guard_port: None,
     };
     f.core.supervisor.ensure(pool("php-8.4-0")).unwrap();
     // An update swaps the folder, too.
