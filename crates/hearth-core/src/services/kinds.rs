@@ -243,9 +243,27 @@ pub fn clean_stale(inst: &Instance, data: &Path) {
     let pid =
         std::fs::read_to_string(&lock).ok().and_then(|t| t.lines().next().and_then(|l| l.trim().parse::<u32>().ok()));
     if let Some(pid) = pid {
-        if !process_alive(pid) {
+        if !process_alive(pid) || !is_postgres(pid) {
             let _ = std::fs::remove_file(&lock);
         }
+    }
+}
+
+/// Whether `pid` runs postgres. On Windows PostgreSQL checks a reused number itself, so any live
+/// process counts; on unix the program name is asked (after a reboot the number is often reused).
+fn is_postgres(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        std::process::Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "comm="])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("postgres"))
+            .unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        true
     }
 }
 

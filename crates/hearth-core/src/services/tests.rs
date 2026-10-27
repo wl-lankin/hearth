@@ -84,9 +84,11 @@ fn postgresql_uses_trust_auth_and_clears_a_stale_lock() {
     std::fs::write(data.join("postmaster.pid"), "4000000000\n/data\n").unwrap();
     kinds::clean_stale(&inst, &data);
     assert!(!data.join("postmaster.pid").exists());
+    // A lock naming a live process: on Windows PostgreSQL judges that itself; on macOS the number
+    // is often reused by another program after a reboot, so only a live postgres keeps it.
     std::fs::write(data.join("postmaster.pid"), format!("{}\n", std::process::id())).unwrap();
     kinds::clean_stale(&inst, &data);
-    assert!(data.join("postmaster.pid").exists(), "a lock of a live process stays");
+    assert_eq!(data.join("postmaster.pid").exists(), cfg!(windows), "this test process is alive but is not postgres");
     let spec = kinds::spec(&paths, &inst, &dir).unwrap();
     let a: Vec<String> = spec.args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
     assert!(a.windows(2).any(|w| w == ["-p", "5433"]), "{a:?}");
