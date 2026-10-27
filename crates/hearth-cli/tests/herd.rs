@@ -139,7 +139,7 @@ fn commands_of_later_milestones_say_what_is_missing() {
     let (d, paths) = home();
     for (args, line) in [
         (vec!["mail:list"], "Hearth has no mail catcher yet\n"),
-        (vec!["services:list", "--json"], "Hearth has no services (databases, Redis, ...) yet\n"),
+        (vec!["services:clone", "mysql"], "Hearth cannot clone services yet\n"),
         (vec!["workspace", "feature"], "Hearth has no workspaces yet\n"),
         (vec!["studio"], "Hearth has no Studio, and none is planned\n"),
         (vec!["frobnicate"], "Hearth has no `frobnicate` command (see `hearth --help`)\n"),
@@ -188,9 +188,10 @@ async fn service_names_other_than_the_web_server_are_not_restarted() {
         ]
     })
     .await;
-    for out in &outs[..2] {
+    // No such service exists in this home: the web server is never restarted in its place.
+    for (out, name) in outs[..2].iter().zip(["mysql", "redis"]) {
         assert_eq!(out.status.code(), Some(1));
-        assert_eq!(String::from_utf8_lossy(&out.stderr), "Hearth has no services (databases, Redis, ...) yet\n");
+        assert_eq!(String::from_utf8_lossy(&out.stderr), format!("No service named {name}\n"));
     }
     for out in &outs[2..] {
         ok(out);
