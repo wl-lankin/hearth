@@ -81,9 +81,19 @@ fn launch(core: &CoreState, inst: &Instance, install: &Path) -> Result<(), CoreE
         std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
     }
     kinds::clean_stale(inst, &data);
-    if let Some(setup) = kinds::init(inst, install, &data) {
-        run_to_end(&setup, &log, SETUP_TIMEOUT)
-            .map_err(|e| CoreError::Php(format!("{} setup failed: {e}", inst.name)))?;
+    if kinds::init(inst, install, &data).is_some() {
+        // Set up next to the data folder and move it into place only when setup succeeded: a setup
+        // that dies halfway must not leave a folder that looks set up.
+        let staging = data.with_extension("init");
+        let _ = std::fs::remove_dir_all(&staging);
+        let setup = kinds::init(inst, install, &staging)
+            .ok_or_else(|| CoreError::Php(format!("{} cannot be set up", inst.name)))?;
+        if let Err(e) = run_to_end(&setup, &log, SETUP_TIMEOUT) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(CoreError::Php(format!("{} setup failed: {e}", inst.name)));
+        }
+        let _ = std::fs::remove_dir(&data);
+        crate::atomic::rename_dir(&staging, &data).map_err(|e| CoreError::io(&data, e))?;
     }
     let mut spec = kinds::spec(&core.paths, inst, install)?;
     // The supervisor's own wait is short; a database may need longer (see START_TIMEOUT).

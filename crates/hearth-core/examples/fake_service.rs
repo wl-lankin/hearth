@@ -39,6 +39,11 @@ fn main() {
     if initializing {
         let data = data.expect("a data folder to set up");
         std::fs::create_dir_all(&data).unwrap();
+        // `fail-init` next to the program: a setup that dies halfway, leaving a partial file.
+        if here.join("fail-init").exists() {
+            std::fs::write(std::path::Path::new(&data).join("ibdata1"), b"half").unwrap();
+            std::process::exit(1);
+        }
         std::fs::write(std::path::Path::new(&data).join("initialized"), b"1").unwrap();
         return;
     }

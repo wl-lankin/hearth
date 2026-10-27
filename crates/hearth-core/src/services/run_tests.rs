@@ -63,6 +63,23 @@ async fn a_database_is_set_up_once_then_runs_on_its_port() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_setup_that_dies_halfway_is_redone_on_the_next_start() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let (_d, core) = home();
+    let install = installed_mysql(&core.paths);
+    std::fs::write(install.join("bin").join("fail-init"), b"1").unwrap();
+    let inst = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
+    let err = start(&core, &inst.id).await.unwrap_err().to_string();
+    assert!(err.contains("setup failed"), "{err}");
+    let data = store::data_dir(&core.paths, &inst);
+    assert!(!data.join("ibdata1").exists(), "no half set-up data folder is left to block the next start");
+    std::fs::remove_file(install.join("bin").join("fail-init")).unwrap();
+    start(&core, &inst.id).await.unwrap();
+    assert!(data.join("initialized").exists());
+    stop_all(&core).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_taken_port_is_reported_without_starting() {
     let _one = ONE_AT_A_TIME.lock().await;
     let (_d, core) = home();
