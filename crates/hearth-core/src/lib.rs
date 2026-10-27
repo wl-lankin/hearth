@@ -10,6 +10,7 @@ pub mod jobs;
 pub mod path_env;
 pub mod paths;
 pub mod php;
+pub mod services;
 pub mod settings;
 pub mod sites;
 pub mod supervisor;
