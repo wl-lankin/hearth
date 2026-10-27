@@ -7,9 +7,6 @@ use super::store;
 use crate::ipc::CoreState;
 use crate::HearthPaths;
 
-/// Service ports are picked fresh per test; tests touching processes still run one at a time.
-static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 fn fake_service() -> PathBuf {
     let deps = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
     deps.parent().unwrap().join("examples").join(format!("fake_service{}", std::env::consts::EXE_SUFFIX))
@@ -47,7 +44,7 @@ fn calls(install: &Path) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_database_is_set_up_once_then_runs_on_its_port() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     let install = installed_mysql(&core.paths);
     let inst = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
@@ -64,7 +61,7 @@ async fn a_database_is_set_up_once_then_runs_on_its_port() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_setup_that_dies_halfway_is_redone_on_the_next_start() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     let install = installed_mysql(&core.paths);
     std::fs::write(install.join("bin").join("fail-init"), b"1").unwrap();
@@ -81,7 +78,7 @@ async fn a_setup_that_dies_halfway_is_redone_on_the_next_start() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn deleting_while_a_start_runs_leaves_nothing_running() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     installed_mysql(&core.paths);
     let inst = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
@@ -115,7 +112,7 @@ fn creates_at_the_same_time_get_their_own_ids() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_taken_port_is_reported_without_starting() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     installed_mysql(&core.paths);
     let taken = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -131,7 +128,7 @@ async fn a_taken_port_is_reported_without_starting() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn stopping_a_database_asks_it_to_shut_down_first() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     let install = installed_mysql(&core.paths);
     let inst = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
@@ -148,7 +145,7 @@ async fn stopping_a_database_asks_it_to_shut_down_first() {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread")]
 async fn on_windows_a_database_is_asked_to_shut_down_through_its_event() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     let install = installed_mysql(&core.paths);
     std::fs::remove_file(install.join("bin").join("mysqladmin.exe")).unwrap();
@@ -160,7 +157,7 @@ async fn on_windows_a_database_is_asked_to_shut_down_through_its_event() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn autostart_instances_start_and_quitting_stops_them_all() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     installed_mysql(&core.paths);
     let on = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();

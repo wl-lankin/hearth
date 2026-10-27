@@ -16,3 +16,7 @@ mod run_tests;
 pub mod store;
 #[cfg(test)]
 mod tests;
+
+/// Tests that start service processes on real ports run one at a time, across modules.
+#[cfg(test)]
+pub(crate) static PROCESS_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

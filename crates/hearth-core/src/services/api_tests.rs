@@ -6,9 +6,6 @@ use serde_json::{json, Value};
 use crate::ipc::{router, CoreState, RpcError, INVALID_PARAMS};
 use crate::HearthPaths;
 
-/// Service ports are real; processes run one test at a time.
-static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 async fn call(core: &CoreState, method: &str, params: Value) -> Result<Value, RpcError> {
     router(core.clone())(method.into(), params).await
 }
@@ -41,7 +38,7 @@ fn free_port() -> u16 {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn create_start_stop_env_and_delete_a_service() {
-    let _one = ONE_AT_A_TIME.lock().await;
+    let _one = super::PROCESS_TESTS.lock().await;
     let (_d, core) = home();
     let port = free_port();
     let created = call(&core, "services.create", json!({ "kind": "redis", "line": "8", "port": port })).await.unwrap();
