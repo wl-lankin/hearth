@@ -121,6 +121,22 @@ fn every_kind_finds_its_program_and_binds_to_loopback() {
 }
 
 #[test]
+fn keys_travel_in_the_environment_not_the_command_line() {
+    let (d, paths) = home();
+    for (kind, line, program, var) in [
+        ("meilisearch", "1", "meilisearch", "MEILI_MASTER_KEY"),
+        ("typesense", "30", "typesense-server", "TYPESENSE_API_KEY"),
+    ] {
+        let inst = store::create(&paths, kind, line, 7700, None).unwrap();
+        let dir = install(&d.path().join(kind), &[program]);
+        let spec = kinds::spec(&paths, &inst, &dir).unwrap();
+        let joined = spec.args.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
+        assert!(!joined.contains(&inst.secret), "{kind}: the key is visible in the process list: {joined}");
+        assert!(spec.env.iter().any(|(k, v)| k == var && v.to_string_lossy() == inst.secret), "{kind}");
+    }
+}
+
+#[test]
 fn a_missing_program_is_named() {
     let (d, paths) = home();
     let inst = store::create(&paths, "redis", "8", 6380, None).unwrap();

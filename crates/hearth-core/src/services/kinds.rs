@@ -159,21 +159,16 @@ pub fn spec(paths: &HearthPaths, inst: &Instance, install: &Path) -> Result<Proc
         "meilisearch" => {
             let mut a = os(&["--http-addr", &format!("127.0.0.1:{port}"), "--db-path"]);
             a.push(data.join("data.ms").into_os_string());
-            a.extend(os(&["--master-key", &inst.secret, "--no-analytics", "--env", "development"]));
+            a.extend(os(&["--no-analytics", "--env", "development"]));
+            // Keys go through the environment: a command line is visible to every local user.
+            env.push(("MEILI_MASTER_KEY".into(), inst.secret.clone().into()));
             a
         }
         "typesense" => {
             let mut a = os(&["--data-dir"]);
             a.push(data.as_os_str().to_owned());
-            a.extend(os(&[
-                "--api-key",
-                &inst.secret,
-                "--listen-address",
-                "127.0.0.1",
-                "--api-port",
-                &port,
-                "--enable-cors",
-            ]));
+            a.extend(os(&["--listen-address", "127.0.0.1", "--api-port", &port, "--enable-cors"]));
+            env.push(("TYPESENSE_API_KEY".into(), inst.secret.clone().into()));
             a
         }
         _ => {
