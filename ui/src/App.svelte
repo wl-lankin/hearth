@@ -5,15 +5,16 @@
   import { applyTheme, resolveTheme } from './theme';
   import Dashboard from './views/Dashboard.svelte';
   import Php from './views/Php.svelte';
+  import Services from './views/Services.svelte';
   import Sites from './views/Sites.svelte';
   import Settings from './views/Settings.svelte';
 
-  type View = 'dashboard' | 'sites' | 'php' | 'settings';
+  type View = 'dashboard' | 'sites' | 'services' | 'php' | 'settings';
 
   const settings = createSettingsStore(api);
   // `?view=settings` opens a section directly (used for screenshots in the browser demo).
   const requested = new URLSearchParams(location.search).get('view');
-  let view = $state<View>(requested === 'settings' || requested === 'php' || requested === 'sites' ? requested : 'dashboard');
+  let view = $state<View>(requested === 'settings' || requested === 'php' || requested === 'sites' || requested === 'services' ? requested : 'dashboard');
   let prefersDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   settings.load();
@@ -30,6 +31,7 @@
   const nav: { id: View; label: string }[] = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'sites', label: 'Sites' },
+    { id: 'services', label: 'Services' },
     { id: 'php', label: 'PHP' },
     { id: 'settings', label: 'Settings' },
   ];
@@ -55,6 +57,8 @@
       <Dashboard />
     {:else if view === 'sites'}
       <Sites />
+    {:else if view === 'services'}
+      <Services />
     {:else if view === 'php'}
       <Php />
     {:else}
