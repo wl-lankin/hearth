@@ -188,6 +188,16 @@ fn env_lines_for_laravel() {
     assert!(env.contains(&("AWS_SECRET_ACCESS_KEY".into(), silo.secret.clone())));
 }
 
+#[cfg(unix)]
+#[test]
+fn the_file_with_the_keys_is_readable_by_the_user_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, paths) = home();
+    store::create(&paths, "silo", "current", 9000, None).unwrap();
+    let mode = std::fs::metadata(paths.config.join("services.json")).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+}
+
 #[test]
 fn instances_survive_a_reload() {
     let (_d, paths) = home();
