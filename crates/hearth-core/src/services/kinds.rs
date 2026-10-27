@@ -31,10 +31,10 @@ pub fn default_port(kind: &str) -> u16 {
     }
 }
 
-/// Ports an instance takes: Silo also serves its console on the next one.
+/// Ports an instance takes: Silo also serves its console on the next one, Typesense its peering.
 pub fn ports(inst: &Instance) -> Vec<u16> {
     match inst.kind.as_str() {
-        "silo" => vec![inst.port, inst.port.saturating_add(1)],
+        "silo" | "typesense" => vec![inst.port, inst.port.saturating_add(1)],
         _ => vec![inst.port],
     }
 }
@@ -167,7 +167,19 @@ pub fn spec(paths: &HearthPaths, inst: &Instance, install: &Path) -> Result<Proc
         "typesense" => {
             let mut a = os(&["--data-dir"]);
             a.push(data.as_os_str().to_owned());
-            a.extend(os(&["--listen-address", "127.0.0.1", "--api-port", &port, "--enable-cors"]));
+            // Peering (its raft port) would otherwise go to the first network address on 8107.
+            let peering = inst.port.saturating_add(1).to_string();
+            a.extend(os(&[
+                "--api-address",
+                "127.0.0.1",
+                "--api-port",
+                &port,
+                "--peering-address",
+                "127.0.0.1",
+                "--peering-port",
+                &peering,
+                "--enable-cors",
+            ]));
             env.push(("TYPESENSE_API_KEY".into(), inst.secret.clone().into()));
             a
         }

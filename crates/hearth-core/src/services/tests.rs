@@ -121,6 +121,19 @@ fn every_kind_finds_its_program_and_binds_to_loopback() {
 }
 
 #[test]
+fn typesense_uses_its_real_flags_and_keeps_peering_on_loopback() {
+    let (d, paths) = home();
+    let inst = store::create(&paths, "typesense", "30", 8108, None).unwrap();
+    let dir = install(&d.path().join("ts"), &["typesense-server"]);
+    let a: Vec<String> = kinds::spec(&paths, &inst, &dir).unwrap().args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    for pair in [["--api-address", "127.0.0.1"], ["--api-port", "8108"], ["--peering-address", "127.0.0.1"], ["--peering-port", "8109"]] {
+        assert!(a.windows(2).any(|w| w == pair), "{pair:?} missing: {a:?}");
+    }
+    assert!(!a.iter().any(|x| x == "--listen-address"), "Typesense has no --listen-address: {a:?}");
+    assert_eq!(kinds::ports(&inst), [8108, 8109], "the peering port is reserved too");
+}
+
+#[test]
 fn keys_travel_in_the_environment_not_the_command_line() {
     let (d, paths) = home();
     for (kind, line, program, var) in [

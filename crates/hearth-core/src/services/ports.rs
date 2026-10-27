@@ -37,7 +37,7 @@ pub fn suggest_from(paths: &HearthPaths, start: u16, count: u16) -> u16 {
 
 /// A free port for a new instance of `kind`, from its usual one upward.
 pub fn suggest(paths: &HearthPaths, kind: &str) -> u16 {
-    let count = if kind == "silo" { 2 } else { 1 };
+    let count = if matches!(kind, "silo" | "typesense") { 2 } else { 1 };
     suggest_from(paths, kinds::default_port(kind), count)
 }
 
