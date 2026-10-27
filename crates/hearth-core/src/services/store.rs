@@ -40,7 +40,8 @@ pub fn load(paths: &HearthPaths) -> Vec<Instance> {
 fn save(paths: &HearthPaths, instances: &[Instance]) -> Result<(), CoreError> {
     let mut text = serde_json::to_string_pretty(instances).map_err(|e| CoreError::Php(e.to_string()))?;
     text.push('\n');
-    atomic::write(&file(paths), text.as_bytes())
+    // It holds the search keys and the Silo password.
+    atomic::write_private(&file(paths), text.as_bytes())
 }
 
 pub fn get(paths: &HearthPaths, id: &str) -> Result<Instance, CoreError> {

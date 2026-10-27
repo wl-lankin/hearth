@@ -29,7 +29,8 @@ fn a_port_another_program_listens_on_is_taken() {
 fn the_suggestion_skips_taken_ports_and_other_instances() {
     let (_d, paths) = home();
     // Held from the start: a port released and bound again can be taken by a test running alongside.
-    let taken = TcpListener::bind("127.0.0.1:0").unwrap();
+    // Below the dynamic range: Windows reserves blocks of 100 ports there, which no suggestion can use.
+    let taken = (20000..30000).find_map(|p| TcpListener::bind(("127.0.0.1", p)).ok()).unwrap();
     let start = taken.local_addr().unwrap().port();
     // The next port belongs to another Hearth instance (not running, still reserved).
     store::create(&paths, "redis", "8", start + 1, None).unwrap();
@@ -41,13 +42,14 @@ fn the_suggestion_skips_taken_ports_and_other_instances() {
 #[test]
 fn silo_needs_two_free_ports() {
     let (_d, paths) = home();
-    let start = free();
-    let console = TcpListener::bind(("127.0.0.1", start + 1));
-    if let Ok(console) = console {
-        let suggested = suggest_from(&paths, start, 2);
-        assert!(suggested != start, "the console port next to {start} is taken");
-        drop(console);
-    }
+    // A free port whose neighbor is taken, below the dynamic range (see above).
+    let (start, console) = (20000..30000)
+        .filter(|&p| port_free(p))
+        .find_map(|p| TcpListener::bind(("127.0.0.1", p + 1)).ok().map(|l| (p, l)))
+        .unwrap();
+    let suggested = suggest_from(&paths, start, 2);
+    assert!(suggested != start, "the console port next to {start} is taken");
+    drop(console);
 }
 
 #[test]
