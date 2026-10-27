@@ -64,6 +64,8 @@ pub struct CoreState {
     pub web_paused: Arc<std::sync::atomic::AtomicBool>,
     /// The latest start problem of each service (port taken, setup failed), by instance id.
     pub service_errors: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    /// One start, stop, delete or port change at a time per service instance.
+    pub service_locks: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     /// Set while Hearth quits: no new syncs (they could start Caddy or PHP again).
     pub quitting: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -88,6 +90,7 @@ impl CoreState {
             dns_pipe: None,
             web_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             service_errors: Default::default(),
+            service_locks: Default::default(),
             quitting: Arc::default(),
         }
     }

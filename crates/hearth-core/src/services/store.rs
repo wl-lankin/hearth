@@ -26,6 +26,9 @@ pub struct Instance {
     pub secret: String,
 }
 
+/// One load-change-save of services.json at a time (the app and a CLI call may create at once).
+static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn file(paths: &HearthPaths) -> PathBuf {
     paths.config.join("services.json")
 }
@@ -67,6 +70,7 @@ pub fn create(
     if !kinds::known(kind) {
         return Err(CoreError::Php(format!("Hearth cannot run {kind}")));
     }
+    let _one = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut instances = load(paths);
     let id = (1..)
         .map(|n| if n == 1 { kind.to_string() } else { format!("{kind}-{n}") })
@@ -86,6 +90,7 @@ pub fn create(
 
 /// Removes the instance and its data. Callers stop it first.
 pub fn delete(paths: &HearthPaths, id: &str) -> Result<(), CoreError> {
+    let _one = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let instance = get(paths, id)?;
     let data = data_dir(paths, &instance);
     if data.exists() {
@@ -96,6 +101,7 @@ pub fn delete(paths: &HearthPaths, id: &str) -> Result<(), CoreError> {
 }
 
 fn change(paths: &HearthPaths, id: &str, f: impl FnOnce(&mut Instance)) -> Result<(), CoreError> {
+    let _one = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut instances = load(paths);
     let instance =
         instances.iter_mut().find(|i| i.id == id).ok_or_else(|| CoreError::Php(format!("No service named {id}")))?;

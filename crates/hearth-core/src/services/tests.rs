@@ -125,8 +125,14 @@ fn typesense_uses_its_real_flags_and_keeps_peering_on_loopback() {
     let (d, paths) = home();
     let inst = store::create(&paths, "typesense", "30", 8108, None).unwrap();
     let dir = install(&d.path().join("ts"), &["typesense-server"]);
-    let a: Vec<String> = kinds::spec(&paths, &inst, &dir).unwrap().args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
-    for pair in [["--api-address", "127.0.0.1"], ["--api-port", "8108"], ["--peering-address", "127.0.0.1"], ["--peering-port", "8109"]] {
+    let a: Vec<String> =
+        kinds::spec(&paths, &inst, &dir).unwrap().args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+    for pair in [
+        ["--api-address", "127.0.0.1"],
+        ["--api-port", "8108"],
+        ["--peering-address", "127.0.0.1"],
+        ["--peering-port", "8109"],
+    ] {
         assert!(a.windows(2).any(|w| w == pair), "{pair:?} missing: {a:?}");
     }
     assert!(!a.iter().any(|x| x == "--listen-address"), "Typesense has no --listen-address: {a:?}");

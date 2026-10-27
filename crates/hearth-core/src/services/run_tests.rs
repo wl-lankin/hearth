@@ -80,6 +80,40 @@ async fn a_setup_that_dies_halfway_is_redone_on_the_next_start() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn deleting_while_a_start_runs_leaves_nothing_running() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let (_d, core) = home();
+    installed_mysql(&core.paths);
+    let inst = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
+    let starting = {
+        let (core, id) = (core.clone(), inst.id.clone());
+        tokio::spawn(async move { start(&core, &id).await })
+    };
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    super::run::delete(&core, &inst.id).await.unwrap();
+    let _ = starting.await.unwrap();
+    assert!(core.supervisor.status().is_empty(), "{:?}", core.supervisor.status());
+    assert!(!answers(inst.port));
+    assert!(store::load(&core.paths).is_empty());
+}
+
+#[test]
+fn creates_at_the_same_time_get_their_own_ids() {
+    let d = tempfile::tempdir().unwrap();
+    let paths = HearthPaths::at(d.path().join("hearth"));
+    paths.ensure().unwrap();
+    let threads: Vec<_> = (0..8)
+        .map(|i| {
+            let paths = paths.clone();
+            std::thread::spawn(move || store::create(&paths, "redis", "8", 7000 + i, None).unwrap().id)
+        })
+        .collect();
+    let ids: std::collections::BTreeSet<String> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+    assert_eq!(ids.len(), 8, "{ids:?}");
+    assert_eq!(store::load(&paths).len(), 8);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_taken_port_is_reported_without_starting() {
     let _one = ONE_AT_A_TIME.lock().await;
     let (_d, core) = home();

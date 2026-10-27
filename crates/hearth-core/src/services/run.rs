@@ -54,7 +54,20 @@ fn remember(core: &CoreState, id: &str, error: Option<String>) {
     };
 }
 
+/// The lock that keeps a start, stop, delete or port change of one instance from overlapping.
+fn lock_for(core: &CoreState, id: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    let mut locks = core.service_locks.lock().unwrap_or_else(|e| e.into_inner());
+    locks.entry(id.to_string()).or_default().clone()
+}
+
 pub async fn start(core: &CoreState, id: &str) -> Result<(), CoreError> {
+    let lock = lock_for(core, id);
+    let _one = lock.lock().await;
+    start_locked(core, id).await
+}
+
+/// `start` for a caller that already holds the instance's lock.
+pub(crate) async fn start_locked(core: &CoreState, id: &str) -> Result<(), CoreError> {
     let result = start_inner(core, id).await;
     remember(core, id, result.as_ref().err().map(|e| e.to_string()));
     result
@@ -166,6 +179,13 @@ fn wait(child: &mut Child, timeout: Duration) -> Option<std::process::ExitStatus
 }
 
 pub async fn stop(core: &CoreState, id: &str) -> Result<(), CoreError> {
+    let lock = lock_for(core, id);
+    let _one = lock.lock().await;
+    stop_locked(core, id).await
+}
+
+/// `stop` for a caller that already holds the instance's lock.
+pub(crate) async fn stop_locked(core: &CoreState, id: &str) -> Result<(), CoreError> {
     let inst = store::get(&core.paths, id)?;
     let owned = core.clone();
     tokio::task::spawn_blocking(move || shut_down(&owned, &inst)).await.map_err(|e| CoreError::Php(e.to_string()))?;
@@ -225,4 +245,30 @@ pub async fn stop_all(core: &CoreState) {
     for inst in store::load(&core.paths) {
         let _ = stop(core, &inst.id).await;
     }
+}
+
+/// Stops the instance and deletes it with its data.
+pub async fn delete(core: &CoreState, id: &str) -> Result<(), CoreError> {
+    let lock = lock_for(core, id);
+    let _one = lock.lock().await;
+    stop_locked(core, id).await?;
+    store::delete(&core.paths, id)
+}
+
+/// Moves an instance to another port, restarting it when it runs.
+pub async fn set_port(core: &CoreState, id: &str, port: u16) -> Result<(), CoreError> {
+    let lock = lock_for(core, id);
+    let _one = lock.lock().await;
+    let mut instance = store::get(&core.paths, id)?;
+    instance.port = port;
+    ports::check(&core.paths, &kinds::ports(&instance), Some(id))?;
+    let was_running = running(core, id);
+    if was_running {
+        stop_locked(core, id).await?;
+    }
+    store::set_port(&core.paths, id, port)?;
+    if was_running {
+        start_locked(core, id).await?;
+    }
+    Ok(())
 }

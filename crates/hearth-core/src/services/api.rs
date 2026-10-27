@@ -74,18 +74,7 @@ async fn create(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
 async fn set_port(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
     let id = text(params, "id")?;
     let port = port_of(params)?.ok_or_else(|| invalid("port must be a number between 1 and 65535"))?;
-    let mut instance = store::get(&core.paths, id).map_err(failed)?;
-    instance.port = port;
-    ports::check(&core.paths, &kinds::ports(&instance), Some(id)).map_err(failed)?;
-    let was_running = run::status(core).iter().any(|s| s.id == id && s.running);
-    if was_running {
-        run::stop(core, id).await.map_err(failed)?;
-    }
-    store::set_port(&core.paths, id, port).map_err(failed)?;
-    if was_running {
-        run::start(core, id).await.map_err(failed)?;
-    }
-    Ok(Value::Null)
+    run::set_port(core, id, port).await.map(|()| Value::Null).map_err(failed)
 }
 
 /// Answers a services.* method, or `None` when `method` is not one of them.
@@ -108,10 +97,7 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             Err(e) => Err(e),
         },
         "services.delete" => match text(params, "id") {
-            Ok(id) => match run::stop(core, id).await {
-                Ok(()) => store::delete(paths, id).map(|()| Value::Null).map_err(failed),
-                Err(e) => Err(failed(e)),
-            },
+            Ok(id) => run::delete(core, id).await.map(|()| Value::Null).map_err(failed),
             Err(e) => Err(e),
         },
         "services.port" => set_port(core, params).await,
