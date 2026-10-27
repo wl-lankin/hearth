@@ -137,9 +137,25 @@ async fn stopping_a_database_asks_it_to_shut_down_first() {
     let inst = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
     start(&core, &inst.id).await.unwrap();
     stop(&core, &inst.id).await.unwrap();
-    assert!(install.join("bin").join("shutdown.called").exists(), "mysqladmin shutdown ran");
+    // A clean shutdown: the named event on Windows, mysqladmin shutdown elsewhere.
+    let clean = install.join("bin").join(if cfg!(windows) { "event.shutdown" } else { "shutdown.called" });
+    assert!(clean.exists(), "{} missing: not a clean shutdown", clean.display());
     assert!(!answers(inst.port));
     assert!(core.supervisor.status().is_empty());
+}
+
+/// mysqladmin needs root's password once a user set one; the named event does not.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn on_windows_a_database_is_asked_to_shut_down_through_its_event() {
+    let _one = ONE_AT_A_TIME.lock().await;
+    let (_d, core) = home();
+    let install = installed_mysql(&core.paths);
+    std::fs::remove_file(install.join("bin").join("mysqladmin.exe")).unwrap();
+    let inst = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
+    start(&core, &inst.id).await.unwrap();
+    stop(&core, &inst.id).await.unwrap();
+    assert!(install.join("bin").join("event.shutdown").exists(), "a clean shutdown, not a kill");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -156,4 +172,13 @@ async fn autostart_instances_start_and_quitting_stops_them_all() {
     stop_all(&core).await;
     assert!(!answers(on.port));
     assert!(core.supervisor.status().is_empty());
+}
+
+#[test]
+fn a_missing_visual_cpp_runtime_is_explained() {
+    let message = "MySQL 8.4 setup failed: mysqld.exe (exit code: 0xc0000135): ";
+    let explained = super::run::explain(message.into());
+    assert!(explained.starts_with(message.trim_end()), "{explained}");
+    assert!(explained.contains("Microsoft Visual C++ Redistributable (x64)"), "{explained}");
+    assert_eq!(super::run::explain("Port 1 is used".into()), "Port 1 is used");
 }

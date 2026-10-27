@@ -56,6 +56,21 @@ fn main() {
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     });
+    // Like mysqld on Windows: the named event MySQLShutdown<pid> asks for a clean shutdown.
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+        let name: Vec<u16> = format!("MySQLShutdown{}", std::process::id()).encode_utf16().chain([0]).collect();
+        // SAFETY: a named, manual-reset event this process owns for its lifetime.
+        let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, name.as_ptr()) } as usize;
+        let marker = here.join("event.shutdown");
+        std::thread::spawn(move || {
+            // SAFETY: the handle stays valid until the process exits.
+            unsafe { WaitForSingleObject(event as _, INFINITE) };
+            let _ = std::fs::write(marker, b"1");
+            std::process::exit(0);
+        });
+    }
     let listener = TcpListener::bind(("127.0.0.1", port.expect("a port"))).expect("bind");
     for stream in listener.incoming() {
         drop(stream);

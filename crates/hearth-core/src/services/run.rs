@@ -103,7 +103,7 @@ fn launch(core: &CoreState, inst: &Instance, install: &Path) -> Result<(), CoreE
             .ok_or_else(|| CoreError::Php(format!("{} cannot be set up", inst.name)))?;
         if let Err(e) = run_to_end(&setup, &log, SETUP_TIMEOUT) {
             let _ = std::fs::remove_dir_all(&staging);
-            return Err(CoreError::Php(format!("{} setup failed: {e}", inst.name)));
+            return Err(CoreError::Php(explain(format!("{} setup failed: {e}", inst.name))));
         }
         let _ = std::fs::remove_dir(&data);
         crate::atomic::rename_dir(&staging, &data).map_err(|e| CoreError::io(&data, e))?;
@@ -118,17 +118,40 @@ fn launch(core: &CoreState, inst: &Instance, install: &Path) -> Result<(), CoreE
             return Ok(());
         }
         let alive = core.supervisor.status().iter().any(|p| p.key == key(&inst.id) && p.running);
-        if !alive || Instant::now() > deadline {
+        if alive && Instant::now() > deadline {
+            // Not killed: a database recovering after a crash can need longer, and killing it
+            // would only start the recovery over.
+            return Err(CoreError::Php(format!(
+                "{} is still starting (after a crash a database may recover for a while); see its log",
+                inst.name
+            )));
+        }
+        if !alive {
             core.supervisor.stop(&key(&inst.id));
-            let reason = if alive { "did not start within a minute" } else { "stopped right away" };
             let tail = log_tail(&log);
-            return Err(CoreError::Php(if tail.is_empty() {
-                format!("{} {reason}", inst.name)
+            let last = core.supervisor.status().into_iter().find(|p| p.key == key(&inst.id)).and_then(|p| p.last_error);
+            let detail =
+                [last.unwrap_or_default(), tail].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(": ");
+            return Err(CoreError::Php(explain(if detail.is_empty() {
+                format!("{} stopped right away", inst.name)
             } else {
-                format!("{} {reason}: {tail}", inst.name)
-            }));
+                format!("{} stopped right away: {detail}", inst.name)
+            })));
         }
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// Adds what to do to errors that only show a Windows code: 0xC0000135 means a DLL is missing,
+/// for MySQL the Visual C++ runtime, which no window reports when the program runs hidden.
+pub(crate) fn explain(message: String) -> String {
+    if message.to_lowercase().contains("0xc0000135") {
+        format!(
+            "{} Install the Microsoft Visual C++ Redistributable (x64): https://aka.ms/vs/17/release/vc_redist.x64.exe",
+            message.trim_end()
+        )
+    } else {
+        message
     }
 }
 
@@ -196,6 +219,15 @@ pub(crate) async fn stop_locked(core: &CoreState, id: &str) -> Result<(), CoreEr
 /// Clean shutdown for databases, then whatever is left is stopped. Blocking.
 fn shut_down(core: &CoreState, inst: &Instance) {
     let Some(mut child) = core.supervisor.detach(&key(&inst.id)) else { return };
+    // On Windows, mysqld and mariadbd shut down cleanly when their named event is set: no
+    // password needed (mysqladmin fails once root has one).
+    #[cfg(windows)]
+    if matches!(inst.kind.as_str(), "mysql" | "mariadb")
+        && signal_shutdown_event(child.id())
+        && wait(&mut child, SHUTDOWN_TIMEOUT).is_some()
+    {
+        return;
+    }
     let data = data_dir(&core.paths, inst);
     let graceful = installed(core, &inst.kind, &inst.line).and_then(|install| kinds::stop(inst, &install, &data));
     if let Some(run) = graceful {
@@ -206,6 +238,24 @@ fn shut_down(core: &CoreState, inst: &Instance) {
         }
     }
     terminate(&mut child);
+}
+
+/// Sets `MySQLShutdown<pid>`, the event MySQL and MariaDB wait on for a clean shutdown on Windows.
+#[cfg(windows)]
+fn signal_shutdown_event(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
+    let name: Vec<u16> = format!("MySQLShutdown{pid}").encode_utf16().chain([0]).collect();
+    // SAFETY: a NUL-terminated name; the handle is closed below.
+    unsafe {
+        let event = OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr());
+        if event.is_null() {
+            return false;
+        }
+        let set = SetEvent(event) != 0;
+        CloseHandle(event);
+        set
+    }
 }
 
 pub fn status(core: &CoreState) -> Vec<ServiceStatus> {
