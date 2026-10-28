@@ -62,6 +62,10 @@ pub struct CoreState {
     pub dns_pipe: Option<String>,
     /// Set by `web.stop`: no syncs (Caddy and PHP stay stopped) until `web.start` or a restart.
     pub web_paused: Arc<std::sync::atomic::AtomicBool>,
+    /// The latest start problem of each service (port taken, setup failed), by instance id.
+    pub service_errors: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
+    /// One start, stop, delete or port change at a time per service instance.
+    pub service_locks: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
     /// Set while Hearth quits: no new syncs (they could start Caddy or PHP again).
     pub quitting: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -85,6 +89,8 @@ impl CoreState {
             web_sync: false,
             dns_pipe: None,
             web_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            service_errors: Default::default(),
+            service_locks: Default::default(),
             quitting: Arc::default(),
         }
     }
@@ -113,7 +119,10 @@ pub fn router(state: CoreState) -> Handler {
                     Some(result) => result,
                     None => match crate::sites::api::handle(&state, other, &params).await {
                         Some(result) => result,
-                        None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                        None => match crate::services::api::handle(&state, other, &params).await {
+                            Some(result) => result,
+                            None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                        },
                     },
                 },
             }

@@ -29,6 +29,7 @@ fn spec(dir: &tempfile::TempDir, key: &str, port: u16, crash_after_ms: Option<u6
         log: dir.path().join(format!("{key}.log")),
         ready_port: Some(port),
         ready_socket: None,
+        guard_port: None,
     }
 }
 
@@ -157,4 +158,22 @@ fn children_left_by_a_crash_are_stopped_on_the_next_start() {
     assert!(answers(port), "the child outlived its supervisor, as after a crash");
     let _next = Supervisor::new_in(Some(run)).unwrap();
     eventually("the leftover child is stopped", || !answers(port));
+}
+
+#[test]
+fn a_crashed_process_whose_port_was_taken_is_parked_not_restarted() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    let port = free_port();
+    let mut s = spec(&dir, "service-db", port, Some(400));
+    s.guard_port = Some(port);
+    sup.ensure(s).unwrap();
+    // Once it has crashed, another program takes its port.
+    eventually("the crash", || !answers(port) && !sup.status()[0].running);
+    let _other = TcpListener::bind(("127.0.0.1", port)).unwrap();
+    std::thread::sleep(Duration::from_millis(2500));
+    let status = &sup.status()[0];
+    assert_eq!(status.restarts, 0, "no restart onto a taken port");
+    assert_eq!(status.last_error.as_deref(), Some(format!("Port {port} is used by another program").as_str()));
+    sup.stop_all();
 }

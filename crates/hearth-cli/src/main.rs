@@ -138,6 +138,49 @@ enum Command {
     Stop { service: Option<String> },
     /// Prints the top-level domain of the sites (always `test`).
     Tld,
+    /// Lists the services this computer can run.
+    #[command(name = "services:available")]
+    ServicesAvailable {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the versions of a service type (default: all).
+    #[command(name = "services:versions")]
+    ServicesVersions {
+        kind: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the services and whether they run.
+    #[command(name = "services:list")]
+    ServicesList {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Creates a service, e.g. `hearth services:create mysql --service-version=8.4 --port=3307`.
+    #[command(name = "services:create")]
+    ServicesCreate {
+        kind: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long = "service-version")]
+        version: Option<String>,
+    },
+    /// Starts a service.
+    #[command(name = "services:start")]
+    ServicesStart { id: String },
+    /// Stops a service (databases shut down cleanly).
+    #[command(name = "services:stop")]
+    ServicesStop { id: String },
+    /// Deletes a service and all its data (needs --force).
+    #[command(name = "services:delete")]
+    ServicesDelete {
+        id: String,
+        #[arg(long)]
+        force: bool,
+    },
     /// Anything else, e.g. a Herd command for a feature Hearth does not have yet.
     #[command(external_subcommand)]
     Other(Vec<String>),
@@ -289,13 +332,23 @@ async fn main() -> ExitCode {
         Command::Which { json } => site_info(&paths, None, json).await,
         Command::SiteInfo { path, json } => site_info(&paths, path, json).await,
         Command::WhichPhp { site } => which_php(&paths, site),
-        Command::Restart { service: Some(s) }
-        | Command::Start { service: Some(s) }
-        | Command::Stop { service: Some(s) }
-            if !is_web_service(&s) =>
-        {
-            fail(&missing("services"))
+        // A Herd script's `stop mysql` acts on Hearth's service of that name.
+        Command::Start { service: Some(s) } if !is_web_service(&s) => {
+            service_call(&paths, &["services.start"], &s).await
         }
+        Command::Stop { service: Some(s) } if !is_web_service(&s) => service_call(&paths, &["services.stop"], &s).await,
+        Command::Restart { service: Some(s) } if !is_web_service(&s) => {
+            service_call(&paths, &["services.stop", "services.start"], &s).await
+        }
+        Command::ServicesAvailable { json } => services_available(&paths, None, json).await,
+        Command::ServicesVersions { kind, json } => services_available(&paths, kind.as_deref(), json).await,
+        Command::ServicesList { json } => services_list(&paths, json).await,
+        Command::ServicesCreate { kind, name, port, version } => {
+            services_create(&paths, &kind, name, port, version).await
+        }
+        Command::ServicesStart { id } => service_call(&paths, &["services.start"], &id).await,
+        Command::ServicesStop { id } => service_call(&paths, &["services.stop"], &id).await,
+        Command::ServicesDelete { id, force } => services_delete(&paths, &id, force).await,
         Command::Restart { .. } => {
             print_call(&paths, "web.restart", Value::Null, false, |_| println!("The web server and PHP restart")).await
         }
@@ -512,6 +565,137 @@ fn folder(dir: Option<PathBuf>) -> PathBuf {
     std::path::absolute(&dir).unwrap_or(dir)
 }
 
+/// Runs `methods` in order on the service `id`; prints its state afterwards.
+async fn service_call(paths: &HearthPaths, methods: &[&str], id: &str) -> ExitCode {
+    for method in methods {
+        if let Err(e) = ipc::call_waiting(paths, method, json!({ "id": id }), Duration::from_secs(120)).await {
+            return fail(&message(e));
+        }
+    }
+    let list = ipc::call(paths, "services.list", Value::Null).await.unwrap_or(Value::Null);
+    let row = list.as_array().into_iter().flatten().find(|s| s["id"] == id);
+    match row {
+        Some(s) if s["running"] == true => println!("{} runs on port {}", s["name"].as_str().unwrap_or(id), s["port"]),
+        Some(s) => println!("{} is stopped", s["name"].as_str().unwrap_or(id)),
+        None => println!("{id} is done"),
+    }
+    ExitCode::SUCCESS
+}
+
+async fn services_available(paths: &HearthPaths, kind: Option<&str>, as_json: bool) -> ExitCode {
+    match ipc::call(paths, "services.available", Value::Null).await {
+        Ok(all) => {
+            let builds: Vec<Value> = all["builds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|b| kind.is_none_or(|k| b["kind"] == k))
+                .cloned()
+                .collect();
+            if as_json {
+                println!("{}", Value::from(builds));
+                return ExitCode::SUCCESS;
+            }
+            for b in &builds {
+                println!(
+                    "{}  {} {}  ({})",
+                    b["kind"].as_str().unwrap_or_default(),
+                    b["name"].as_str().unwrap_or_default(),
+                    b["line"].as_str().unwrap_or_default(),
+                    b["version"].as_str().unwrap_or_default()
+                );
+            }
+            for u in all["unavailable"].as_array().into_iter().flatten().filter(|u| kind.is_none_or(|k| u["kind"] == k))
+            {
+                println!(
+                    "{}  {}  ({})",
+                    u["kind"].as_str().unwrap_or_default(),
+                    u["name"].as_str().unwrap_or_default(),
+                    u["reason"].as_str().unwrap_or_default()
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+async fn services_list(paths: &HearthPaths, as_json: bool) -> ExitCode {
+    match ipc::call(paths, "services.list", Value::Null).await {
+        Ok(list) if as_json => {
+            println!("{list}");
+            ExitCode::SUCCESS
+        }
+        Ok(list) => {
+            let rows = list.as_array().cloned().unwrap_or_default();
+            if rows.is_empty() {
+                println!("No services yet. Create one with: hearth services:create <type>");
+            }
+            for s in rows {
+                let state = if s["running"] == true { "running" } else { "stopped" };
+                let error = s["error"].as_str().map(|e| format!("  ({e})")).unwrap_or_default();
+                println!(
+                    "{}  {}  port {}  {state}{error}",
+                    s["id"].as_str().unwrap_or_default(),
+                    s["name"].as_str().unwrap_or_default(),
+                    s["port"]
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+async fn services_create(
+    paths: &HearthPaths,
+    kind: &str,
+    name: Option<String>,
+    port: Option<u16>,
+    version: Option<String>,
+) -> ExitCode {
+    // Without a version: the first line the catalog lists for this kind (its recommended one).
+    let line = match version {
+        Some(v) => v,
+        None => match ipc::call(paths, "services.available", Value::Null).await {
+            Ok(all) => match all["builds"].as_array().into_iter().flatten().find(|b| b["kind"] == kind) {
+                Some(b) => b["line"].as_str().unwrap_or_default().to_string(),
+                None => return fail(&format!("This computer cannot run {kind} (see `hearth services:available`)")),
+            },
+            Err(e) => return fail(&message(e)),
+        },
+    };
+    let params = json!({ "kind": kind, "line": line, "port": port, "name": name });
+    match ipc::call(paths, "services.create", params).await {
+        Ok(s) => {
+            println!(
+                "Created {} ({}) on port {}. Start it with: hearth services:start {}",
+                s["id"].as_str().unwrap_or_default(),
+                s["name"].as_str().unwrap_or_default(),
+                s["port"],
+                s["id"].as_str().unwrap_or_default()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+async fn services_delete(paths: &HearthPaths, id: &str, force: bool) -> ExitCode {
+    if !force {
+        let list = ipc::call(paths, "services.list", Value::Null).await.unwrap_or(Value::Null);
+        return match list.as_array().into_iter().flatten().find(|s| s["id"] == id) {
+            Some(s) => fail(&format!(
+                "This deletes {} and all its data. Run it again with --force.",
+                s["name"].as_str().unwrap_or(id)
+            )),
+            None => fail(&format!("No service named {id}")),
+        };
+    }
+    print_call(paths, "services.delete", json!({ "id": id }), false, |_| println!("{id} and its data are deleted"))
+        .await
+}
+
 /// Herd's names for what Hearth's web server covers: Caddy (in place of nginx) and the PHP pools.
 fn is_web_service(name: &str) -> bool {
     matches!(name.to_lowercase().as_str(), "nginx" | "caddy" | "php" | "web" | "dnsmasq")
@@ -520,10 +704,12 @@ fn is_web_service(name: &str) -> bool {
 /// What to say for a command Hearth does not have: Herd's command groups name the feature that is
 /// still to come, so an old script fails with a reason instead of doing nothing.
 fn missing(command: &str) -> String {
+    if command == "services:clone" {
+        return "Hearth cannot clone services yet".into();
+    }
     let group = command.split(':').next().unwrap_or_default();
     let feature = match group {
         "mail" => "mail catcher",
-        "services" | "start-service" => "services (databases, Redis, ...)",
         "db" => "database tools",
         "debug" | "coverage" => "one-click Xdebug",
         "log" | "logs" | "insights" => "log and insights viewer",

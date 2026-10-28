@@ -118,6 +118,35 @@ pub struct Tools {
     pub caddy: Vec<Tool>,
 }
 
+/// How a service build is packed: an archive, or a single program file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ServiceFormat {
+    #[serde(rename = "zip")]
+    Zip,
+    #[serde(rename = "tar.gz")]
+    TarGz,
+    #[serde(rename = "binary")]
+    Binary,
+}
+
+/// One build of a service (database, Redis, search, S3) for one OS and architecture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceBuild {
+    /// mysql, mariadb, postgresql, redis, meilisearch, typesense, silo (kept as text: a newer
+    /// catalog may list kinds this Hearth does not know yet).
+    pub kind: String,
+    /// The version line a user picks ("8.4", "18"), newest patch inside it.
+    pub line: String,
+    pub version: String,
+    pub os: Os,
+    pub arch: Arch,
+    pub url: String,
+    pub sha256: String,
+    pub format: ServiceFormat,
+    /// The archive's top folder ('' when its files sit at the top).
+    pub root: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub schema: u32,
@@ -128,6 +157,9 @@ pub struct Manifest {
     /// Added in M2; older catalogs have none.
     #[serde(default)]
     pub tools: Tools,
+    /// Added in M5; older catalogs have none.
+    #[serde(default)]
+    pub services: Vec<ServiceBuild>,
 }
 
 fn invalid(message: impl std::fmt::Display) -> CoreError {

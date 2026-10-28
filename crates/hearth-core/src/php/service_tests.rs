@@ -93,6 +93,22 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
         Os::Macos => (tar_gz_with(&[("caddy", b"caddy"), ("LICENSE", b"Apache")]), "tar.gz", "caddy"),
     };
 
+    // Services: Redis as an archive with a top folder, Meilisearch as a single program, and a
+    // PostgreSQL whose download does not match its hash.
+    let (redis_svc, svc_format, redis_root) = match Os::current() {
+        Os::Windows => (
+            zip_with(&[
+                ("Redis-8.10.3-Windows-x64-msys2/redis-server.exe", b"redis"),
+                ("Redis-8.10.3-Windows-x64-msys2/msys-2.0.dll", b"dll"),
+            ]),
+            "zip",
+            "Redis-8.10.3-Windows-x64-msys2",
+        ),
+        Os::Macos => (tar_gz_with(&[("redis-8.10.3/bin/redis-server", b"redis")]), "tar.gz", "redis-8.10.3"),
+    };
+    let meili = b"meilisearch program".to_vec();
+    let pg = zip_with(&[("postgresql/bin/postgres", b"pg")]);
+
     // The server's address is only known once it runs, so the catalog is served from a slot filled below.
     let catalog_slot: std::sync::Arc<std::sync::Mutex<(Vec<u8>, Vec<u8>)>> = Default::default();
     let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -104,6 +120,9 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
         ("/xdebug.zip".into(), xdebug.clone()),
         ("/cacert.pem".into(), cacert.clone()),
         ("/caddy".into(), caddy.clone()),
+        ("/svc/redis".into(), redis_svc.clone()),
+        ("/svc/meilisearch".into(), meili.clone()),
+        ("/svc/postgresql".into(), b"not the archive".to_vec()),
     ];
     if serve_composer {
         files.push(("/composer.phar".into(), composer.clone()));
@@ -158,6 +177,17 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
             "os": Os::current(), "arch": Arch::current(), "version": "2.11.7",
             "url": format!("{base}/caddy"), "sha256": hex(&caddy), "format": caddy_format, "binary": caddy_binary,
         }] },
+        "services": [
+            { "kind": "redis", "line": "8", "version": "8.10.3", "os": Os::current(), "arch": Arch::current(),
+              "url": format!("{base}/svc/redis"), "sha256": hex(&redis_svc), "format": svc_format, "root": redis_root },
+            { "kind": "meilisearch", "line": "1", "version": "1.56.0", "os": Os::current(), "arch": Arch::current(),
+              "url": format!("{base}/svc/meilisearch"), "sha256": hex(&meili), "format": "binary", "root": "" },
+            { "kind": "postgresql", "line": "18", "version": "18.6.1", "os": Os::current(), "arch": Arch::current(),
+              "url": format!("{base}/svc/postgresql"), "sha256": hex(&pg), "format": "zip", "root": "" },
+            // Typesense exists for macOS only.
+            { "kind": "typesense", "line": "30", "version": "30.2", "os": "macos", "arch": "arm64",
+              "url": format!("{base}/svc/typesense"), "sha256": hex(b"ts"), "format": "tar.gz", "root": "" },
+        ],
     });
     let json = serde_json::to_vec(&manifest).unwrap();
     *catalog_slot.lock().unwrap() = (json.clone(), sign(&json));
@@ -332,6 +362,7 @@ async fn a_version_serving_sites_can_still_be_removed_and_updated() {
         log: p.logs.join("pool.log"),
         ready_port: Some(port),
         ready_socket: None,
+        guard_port: None,
     };
     f.core.supervisor.ensure(pool("php-8.4-0")).unwrap();
     // An update swaps the folder, too.

@@ -63,6 +63,7 @@ pub fn pool_specs(paths: &HearthPaths, os: Os, minor: &str) -> Vec<ProcessSpec> 
                 log: log_path(paths, minor),
                 ready_port: Some(*port),
                 ready_socket: None,
+                guard_port: None,
             })
             .collect(),
         Os::Macos => vec![ProcessSpec {
@@ -74,6 +75,7 @@ pub fn pool_specs(paths: &HearthPaths, os: Os, minor: &str) -> Vec<ProcessSpec> 
             log: log_path(paths, minor),
             ready_port: None,
             ready_socket: Some(socket_path(paths, minor)),
+            guard_port: None,
         }],
     }
 }

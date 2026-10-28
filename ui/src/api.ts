@@ -241,3 +241,53 @@ export async function openUrl(url: string): Promise<void> {
   if (demo) return void window.open(url, '_blank');
   await invoke('open_url', { url });
 }
+
+export interface ServiceRow {
+  id: string;
+  kind: string;
+  name: string;
+  line: string;
+  port: number;
+  autostart: boolean;
+  running: boolean;
+  pid: number | null;
+  error: string | null;
+  log: string;
+}
+
+export interface ServicesAvailable {
+  builds: { kind: string; line: string; version: string; name: string }[];
+  unavailable: { kind: string; name: string; reason: string }[];
+}
+
+const demoServices: ServiceRow[] = [
+  { id: 'mysql', kind: 'mysql', name: 'MySQL 8.4', line: '8.4', port: 3307, autostart: true, running: true, pid: 4100, error: null, log: '' },
+  { id: 'redis', kind: 'redis', name: 'Redis 8', line: '8', port: 6380, autostart: true, running: true, pid: 4101, error: null, log: '' },
+  { id: 'postgresql', kind: 'postgresql', name: 'PostgreSQL 18', line: '18', port: 5432, autostart: false, running: false, pid: null, error: null, log: '' },
+  { id: 'meilisearch', kind: 'meilisearch', name: 'Meilisearch 1', line: '1', port: 7700, autostart: false, running: false, pid: null, error: 'Port 7700 is used by another program (7701 is free)', log: '' },
+];
+const demoServicesAvailable: ServicesAvailable = {
+  builds: [
+    ['mysql', '8.4', '8.4.11', 'MySQL'], ['mysql', '9.7', '9.7.4', 'MySQL'],
+    ['mariadb', '11.8', '11.8.9', 'MariaDB'], ['mariadb', '12.3', '12.3.3', 'MariaDB'],
+    ['postgresql', '18', '18.6.1', 'PostgreSQL'], ['postgresql', '17', '17.11.1', 'PostgreSQL'],
+    ['redis', '8', '8.10.3', 'Redis'], ['meilisearch', '1', '1.56.0', 'Meilisearch'], ['silo', 'current', '20261026000000.0.0', 'Silo (S3)'],
+  ].map(([kind, line, version, name]) => ({ kind, line, version, name })),
+  unavailable: [{ kind: 'typesense', name: 'Typesense', reason: 'Not available on Windows (it needs WSL)' }],
+};
+
+export const servicesList = (): Promise<ServiceRow[]> => (demo ? Promise.resolve(structuredClone(demoServices)) : core('services.list'));
+export const servicesAvailable = (): Promise<ServicesAvailable> =>
+  demo ? Promise.resolve(structuredClone(demoServicesAvailable)) : core('services.available');
+export const servicesSuggestPort = (kind: string): Promise<number> => (demo ? Promise.resolve(3308) : core('services.suggestPort', { kind }));
+export const servicesCreate = (kind: string, line: string, port: number, name?: string) =>
+  change('services.create', { kind, line, port, name: name || null })();
+export const servicesStart = (id: string) => change('services.start', { id })();
+export const servicesStop = (id: string) => change('services.stop', { id })();
+export const servicesDelete = (id: string) => change('services.delete', { id })();
+export const servicesAutostart = (id: string, on: boolean) => change('services.autostart', { id, on })();
+export const servicesEnv = (id: string): Promise<string> =>
+  demo
+    ? Promise.resolve(['DB_CONNECTION=mysql', 'DB_HOST=127.0.0.1', 'DB_PORT=3307', 'DB_USERNAME=root', 'DB_PASSWORD='].join('\n'))
+    : core('services.env', { id });
+export const servicesLog = (id: string): Promise<string> => (demo ? Promise.resolve('ready for connections') : core('services.log', { id }));

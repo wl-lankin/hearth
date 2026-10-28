@@ -35,6 +35,9 @@ pub struct ProcessSpec {
     pub ready_port: Option<u16>,
     /// Or: the process counts as started once this socket file exists.
     pub ready_socket: Option<PathBuf>,
+    /// After a crash, the process is only restarted while this port is free: when another program
+    /// took it, restarting would fail forever, so the process is parked with that reason instead.
+    pub guard_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -110,7 +113,7 @@ fn answers(port: u16) -> bool {
 }
 
 /// The last lines of a log, for start errors.
-fn log_tail(path: &std::path::Path) -> String {
+pub(crate) fn log_tail(path: &std::path::Path) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(3)..].join(" | ")
@@ -255,6 +258,15 @@ impl Supervisor {
         }
     }
 
+    /// Takes a process out of the supervisor's care without stopping it, so it can shut down on
+    /// its own (a database's clean shutdown) without being restarted. The caller waits for it.
+    pub fn detach(&self, key: &str) -> Option<Child> {
+        let mut table = self.table.lock().unwrap();
+        let entry = table.remove(key);
+        persist(&table, &self.record);
+        entry.and_then(|e| e.child)
+    }
+
     pub fn stop_all(&self) {
         let entries: Vec<Entry> = {
             let mut table = self.table.lock().unwrap();
@@ -338,6 +350,11 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
             continue;
         }
         if entry.retry_at.is_some_and(|t| t <= now) {
+            if let Some(port) = entry.spec.guard_port.filter(|p| port_taken(*p)) {
+                entry.last_error = Some(format!("Port {port} is used by another program"));
+                entry.retry_at = None;
+                continue;
+            }
             #[cfg(windows)]
             let spawned = spawn(&entry.spec, job);
             #[cfg(unix)]
@@ -362,6 +379,13 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
     if respawned {
         persist(&table, record);
     }
+}
+
+/// Something answers on the port, or it cannot be bound.
+fn port_taken(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok()
+        || std::net::TcpListener::bind(addr).is_err()
 }
 
 fn command(spec: &ProcessSpec) -> Result<Command, CoreError> {
@@ -408,13 +432,13 @@ fn spawn(spec: &ProcessSpec) -> Result<Child, CoreError> {
 }
 
 #[cfg(windows)]
-fn terminate(child: &mut Child) {
+pub(crate) fn terminate(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
 }
 
 #[cfg(unix)]
-fn terminate(child: &mut Child) {
+pub(crate) fn terminate(child: &mut Child) {
     let group = -(child.id() as i32);
     // SAFETY: plain signal calls on the child's process group.
     unsafe { libc::kill(group, libc::SIGTERM) };
