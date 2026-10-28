@@ -158,6 +158,16 @@ fn keys_travel_in_the_environment_not_the_command_line() {
 }
 
 #[test]
+fn redis_saves_its_data_when_it_is_stopped() {
+    let (d, paths) = home();
+    let inst = store::create(&paths, "redis", "8", 6380, None).unwrap();
+    let dir = install(&d.path().join("redis"), &["redis-server", "redis-cli"]);
+    let stop = kinds::stop(&inst, &dir, &store::data_dir(&paths, &inst)).expect("Redis is stopped by redis-cli");
+    assert!(stop.program.ends_with(exe("redis-cli")), "{:?}", stop.program);
+    assert_eq!(args(&stop), ["-h", "127.0.0.1", "-p", "6380", "shutdown", "save"]);
+}
+
+#[test]
 fn a_missing_program_is_named() {
     let (d, paths) = home();
     let inst = store::create(&paths, "redis", "8", 6380, None).unwrap();

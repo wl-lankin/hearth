@@ -229,6 +229,11 @@ pub fn stop(inst: &Instance, install: &Path, data: &Path) -> Option<Run> {
             args.push(data.as_os_str().to_owned());
             Some(Run { program, args })
         }
+        // Redis only writes to disk once a minute: without this, the last minute is lost on quit.
+        "redis" => {
+            let program = sibling(install, &["redis-cli", "bin/redis-cli", "src/redis-cli"])?;
+            Some(Run { program, args: os(&["-h", "127.0.0.1", "-p", &port, "shutdown", "save"]) })
+        }
         _ => None,
     }
 }
