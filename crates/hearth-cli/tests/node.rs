@@ -108,3 +108,75 @@ fn a_missing_version_exits_1_with_the_install_command() {
         )
     );
 }
+
+async fn with_core<T: Send + 'static>(paths: &HearthPaths, f: impl FnOnce() -> T + Send + 'static) -> T {
+    use hearth_core::ipc::{router, serve, CoreState};
+    let server = serve(paths, router(CoreState::new(paths.clone()))).await.unwrap();
+    let out = tokio::task::spawn_blocking(f).await.unwrap();
+    server.shutdown().await;
+    out
+}
+
+fn text(out: &std::process::Output) -> String {
+    format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn list_default_and_uninstall_through_the_core() {
+    let (d, paths) = home();
+    fake_install(&paths, "22.21.1");
+    fake_install(&paths, "20.19.5");
+    set_default(&paths, Some("22.21.1")).unwrap();
+    let (p, cwd) = (paths.clone(), d.path().to_path_buf());
+    let outs = with_core(&paths, move || {
+        ["node:list", "node:default 20", "node:list", "node:uninstall 20", "node:list", "node:default 18"]
+            .map(|c| run(&hearth(), &p, &cwd, &c.split(' ').collect::<Vec<_>>()))
+    })
+    .await;
+    let texts: Vec<String> = outs.iter().map(text).collect();
+    assert_eq!(texts[0], "Node 22.21.1  default\nNode 20.19.5\n");
+    assert_eq!(texts[1], "Node 20.19.5 is the default now.\n");
+    assert_eq!(texts[2], "Node 22.21.1\nNode 20.19.5  default\n");
+    assert_eq!(texts[3], "Node 20.19.5 is removed.\n");
+    assert_eq!(texts[4], "Node 22.21.1  default\n");
+    assert_eq!((outs[5].status.code(), texts[5].as_str()), (Some(1), "Node 18 is not installed\n"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nvm_commands_are_hearths() {
+    let (d, paths) = home();
+    fake_install(&paths, "22.21.1");
+    fake_install(&paths, "20.19.5");
+    set_default(&paths, Some("22.21.1")).unwrap();
+    let nvm = d.path().join(format!("nvm{}", std::env::consts::EXE_SUFFIX));
+    std::fs::copy(hearth(), &nvm).unwrap();
+    let (p, cwd) = (paths.clone(), d.path().to_path_buf());
+    let outs = with_core(&paths, move || {
+        [
+            run(&nvm, &p, &cwd, &["use", "20"]),
+            run(&hearth(), &p, &cwd, &["nvm", "ls"]),
+            run(&nvm, &p, &cwd, &["current"]),
+            run(&nvm, &p, &cwd, &["alias", "x"]),
+        ]
+    })
+    .await;
+    let texts: Vec<String> = outs.iter().map(text).collect();
+    assert_eq!(texts[0], "Node 20.19.5 is the default now.\n");
+    assert_eq!(texts[1], "Node 22.21.1\nNode 20.19.5  default\n");
+    assert_eq!(texts[2], "Node 20.19.5 (default)\n");
+    assert_eq!(outs[3].status.code(), Some(1));
+    assert_eq!(texts[3], "Hearth's nvm knows install, uninstall, use, list, current and which\n");
+}
+
+#[test]
+fn node_which_says_why_without_the_core() {
+    let (d, paths) = home();
+    fake_install(&paths, "22.21.1");
+    fake_install(&paths, "20.19.5");
+    set_default(&paths, Some("22.21.1")).unwrap();
+    let cwd = project(&d, "20\n");
+    let out = run(&hearth(), &paths, &cwd, &["node:which"]);
+    assert_eq!(text(&out), format!("Node 20.19.5 (.nvmrc in {})\n", cwd.parent().unwrap().display()));
+    let out = run(&hearth(), &paths, d.path(), &["node:which"]);
+    assert_eq!(text(&out), "Node 22.21.1 (default)\n");
+}

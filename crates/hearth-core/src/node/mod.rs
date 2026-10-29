@@ -1,5 +1,8 @@
 //! Node.js versions from the signed catalog, the default version and the `current` link.
 
+pub mod api;
+#[cfg(test)]
+mod api_tests;
 pub mod install;
 pub mod launch;
 #[cfg(test)]

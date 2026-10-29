@@ -63,6 +63,30 @@ enum Command {
     /// Runs the Laravel installer with the project's PHP.
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Laravel { args: Vec<String> },
+    /// Lists the installed Node versions.
+    #[command(name = "node:list")]
+    NodeList {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the Node versions available for this computer.
+    #[command(name = "node:available")]
+    NodeAvailable {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Installs a Node version: `hearth node:install 22`, `lts/*`, `lts/jod`, `22.21.1`.
+    #[command(name = "node:install")]
+    NodeInstall { spec: String },
+    /// Removes a Node version.
+    #[command(name = "node:uninstall")]
+    NodeUninstall { spec: String },
+    /// Makes a Node version the one used outside projects with a `.nvmrc` or `.node-version`.
+    #[command(name = "node:default")]
+    NodeDefault { spec: String },
+    /// Shows which Node the current folder runs, and why.
+    #[command(name = "node:which")]
+    NodeWhich,
     /// Runs the Node of the project you are in (its `.nvmrc` or `.node-version`, else the default).
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Node { args: Vec<String> },
@@ -261,6 +285,10 @@ async fn main() -> ExitCode {
         let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
         return run_named(&paths, command, &rest);
     }
+    let args = match nvm_as_hearth(args) {
+        Ok(args) => args,
+        Err(e) => return fail(&e),
+    };
     let cli = Cli::parse_from(args);
     let paths = match HearthPaths::from_env() {
         Ok(paths) => paths,
@@ -289,6 +317,24 @@ async fn main() -> ExitCode {
         Command::Php { args } => run_named(&paths, "php", &args),
         Command::Composer { args } => run_named(&paths, "composer", &args),
         Command::Laravel { args } => run_named(&paths, "laravel", &args),
+        Command::NodeList { json } => print_call(&paths, "node.list", Value::Null, json, print_node_list).await,
+        Command::NodeAvailable { json } => {
+            print_call(&paths, "node.available", Value::Null, json, print_node_available).await
+        }
+        Command::NodeInstall { spec } => install_node(&paths, &spec).await,
+        Command::NodeUninstall { spec } => {
+            print_call(&paths, "node.uninstall", json!({ "spec": spec }), false, |v| {
+                println!("Node {} is removed.", v["version"].as_str().unwrap_or_default())
+            })
+            .await
+        }
+        Command::NodeDefault { spec } => {
+            print_call(&paths, "node.default", json!({ "spec": spec }), false, |v| {
+                println!("Node {} is the default now.", v["version"].as_str().unwrap_or_default())
+            })
+            .await
+        }
+        Command::NodeWhich => node_which(&paths),
         Command::Node { .. } | Command::Npm { .. } | Command::Npx { .. } | Command::Corepack { .. } => {
             unreachable!("run before parsing")
         }
@@ -734,7 +780,6 @@ fn missing(command: &str) -> String {
         "log" | "logs" | "insights" => "log and insights viewer",
         "processes" => "process manager",
         "workspace" | "workspaces" => "workspaces",
-        "node" => "Node version manager",
         "mcp" => "MCP server",
         "share" | "fetch-share-url" => "site sharing",
         "studio" => return "Hearth has no Studio, and none is planned".into(),
@@ -894,6 +939,59 @@ async fn print_call(
     }
 }
 
+fn print_node_list(value: &Value) {
+    let default = value["default"].as_str();
+    let rows = value["installed"].as_array().cloned().unwrap_or_default();
+    if rows.is_empty() {
+        println!("No Node version is installed. Install one with: hearth node:install 22");
+    }
+    for node in rows {
+        let version = node["version"].as_str().unwrap_or_default();
+        let mut line = format!("Node {version}");
+        if default == Some(version) {
+            line.push_str("  default");
+        }
+        if let Some(lts) = node["lts"].as_str() {
+            line.push_str(&format!("  LTS {lts}"));
+        }
+        println!("{line}");
+    }
+}
+
+fn print_node_available(value: &Value) {
+    for node in value.as_array().into_iter().flatten() {
+        let lts = node["lts"].as_str().map(|l| format!("LTS {l}")).unwrap_or_else(|| "current".into());
+        let installed = if node["installed"].as_bool() == Some(true) { "  installed" } else { "" };
+        println!("Node {:<9} {lts}{installed}", node["version"].as_str().unwrap_or_default());
+    }
+}
+
+/// The Node the current folder runs, and the file that asks for it (no core needed).
+fn node_which(paths: &HearthPaths) -> ExitCode {
+    use hearth_core::node::{resolve, store};
+    let cwd = folder(None);
+    let found = match resolve::find_spec(&cwd).transpose() {
+        Ok(found) => found,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let wanted = found.as_ref().map(|f| (&f.spec, f.file.as_path()));
+    match resolve::resolve(&store::installed(paths), store::default_version(paths).as_deref(), wanted) {
+        Ok(choice) => {
+            let why = match &found {
+                Some(f) if choice.why != resolve::Why::Default => format!(
+                    "{} in {}",
+                    f.file.file_name().unwrap_or_default().to_string_lossy(),
+                    f.file.parent().unwrap_or(&cwd).display()
+                ),
+                _ => "default".into(),
+            };
+            println!("Node {} ({why})", choice.version);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&e.to_string()),
+    }
+}
+
 fn print_list(value: &Value) {
     let default = value["default"].as_str();
     for php in value["installed"].as_array().into_iter().flatten() {
@@ -930,6 +1028,19 @@ async fn install(paths: &HearthPaths, minor: &str) -> ExitCode {
         Ok(v) => v["jobId"].as_u64().unwrap_or_default(),
         Err(e) => return fail(&message(e)),
     };
+    wait_for_job(paths, id, &format!("PHP {minor} is installed.")).await
+}
+
+async fn install_node(paths: &HearthPaths, spec: &str) -> ExitCode {
+    let (id, version) = match ipc::call(paths, "node.install", json!({ "spec": spec })).await {
+        Ok(v) => (v["jobId"].as_u64().unwrap_or_default(), v["version"].as_str().unwrap_or_default().to_string()),
+        Err(e) => return fail(&message(e)),
+    };
+    wait_for_job(paths, id, &format!("Node {version} is installed.")).await
+}
+
+/// Prints a job's progress until it ends, then `done` (or its error).
+async fn wait_for_job(paths: &HearthPaths, id: u64, done: &str) -> ExitCode {
     let mut last = String::new();
     loop {
         let job = match ipc::call(paths, "jobs.get", json!({ "id": id })).await {
@@ -938,7 +1049,7 @@ async fn install(paths: &HearthPaths, minor: &str) -> ExitCode {
         };
         match job["state"].as_str() {
             Some("done") => {
-                println!("PHP {minor} is installed.");
+                println!("{done}");
                 return ExitCode::SUCCESS;
             }
             Some("failed") => return fail(job["error"].as_str().unwrap_or("The install failed")),
@@ -975,10 +1086,28 @@ fn as_hearth(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
         .first()
         .and_then(|a| std::path::Path::new(a).file_stem().map(|s| s.to_string_lossy().to_lowercase()))
         .unwrap_or_default();
-    if is_runner(&name) {
+    if is_runner(&name) || name == "nvm" {
         args.insert(1, name.into());
     }
     args
+}
+
+/// `hearth nvm <command> ...` (and the CLI started as `nvm`) as Hearth's own command, so habits
+/// from Herd's nvm keep working.
+fn nvm_as_hearth(args: Vec<std::ffi::OsString>) -> Result<Vec<std::ffi::OsString>, String> {
+    if args.get(1).and_then(|a| a.to_str()) != Some("nvm") {
+        return Ok(args);
+    }
+    let command = match args.get(2).and_then(|a| a.to_str()) {
+        Some("install") => "node:install",
+        Some("uninstall") => "node:uninstall",
+        Some("use") => "node:default",
+        Some("list" | "ls") => "node:list",
+        Some("current" | "which") => "node:which",
+        _ => return Err("Hearth's nvm knows install, uninstall, use, list, current and which".into()),
+    };
+    let rest = args.iter().skip(3).take(if command == "node:which" || command == "node:list" { 0 } else { 1 });
+    Ok([args[0].clone(), command.into()].into_iter().chain(rest.cloned()).collect())
 }
 
 /// The commands that run a program with every argument passed on as typed.

@@ -121,7 +121,10 @@ pub fn router(state: CoreState) -> Handler {
                         Some(result) => result,
                         None => match crate::services::api::handle(&state, other, &params).await {
                             Some(result) => result,
-                            None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                            None => match crate::node::api::handle(&state, other, &params).await {
+                                Some(result) => result,
+                                None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
+                            },
                         },
                     },
                 },
