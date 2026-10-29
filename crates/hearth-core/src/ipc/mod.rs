@@ -106,30 +106,34 @@ pub fn status_of(state: &CoreState) -> Value {
     })
 }
 
+/// Answers a method the core knows: over IPC (the CLI) and in-process (the app) alike.
+pub async fn handle(state: &CoreState, method: &str, params: &Value) -> Result<Value, RpcError> {
+    match method {
+        "core.ping" => return Ok(json!("pong")),
+        "core.status" => return Ok(status_of(state)),
+        _ => {}
+    }
+    if let Some(result) = crate::php::api::handle(state, method, params).await {
+        return result;
+    }
+    if let Some(result) = crate::sites::api::handle(state, method, params).await {
+        return result;
+    }
+    if let Some(result) = crate::services::api::handle(state, method, params).await {
+        return result;
+    }
+    if let Some(result) = crate::node::api::handle(state, method, params).await {
+        return result;
+    }
+    Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {method}")))
+}
+
 /// The handler for the methods the core answers itself.
 pub fn router(state: CoreState) -> Handler {
     let state = Arc::new(state);
     Arc::new(move |method, params| {
         let state = state.clone();
-        Box::pin(async move {
-            match method.as_str() {
-                "core.ping" => Ok(json!("pong")),
-                "core.status" => Ok(status_of(&state)),
-                other => match crate::php::api::handle(&state, other, &params).await {
-                    Some(result) => result,
-                    None => match crate::sites::api::handle(&state, other, &params).await {
-                        Some(result) => result,
-                        None => match crate::services::api::handle(&state, other, &params).await {
-                            Some(result) => result,
-                            None => match crate::node::api::handle(&state, other, &params).await {
-                                Some(result) => result,
-                                None => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {other}"))),
-                            },
-                        },
-                    },
-                },
-            }
-        })
+        Box::pin(async move { handle(&state, &method, &params).await })
     })
 }
 

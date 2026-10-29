@@ -44,18 +44,10 @@ pub fn settings_set(app: AppHandle, state: State<'_, CoreState>, settings: Setti
     Ok(settings)
 }
 
-/// The php.*, jobs.* and tools.* core methods for the UI, answered in-process by the same code the
-/// CLI reaches over IPC.
+/// The core methods for the UI, answered in-process by the same code the CLI reaches over IPC.
 #[tauri::command]
 pub async fn core_call(state: State<'_, CoreState>, method: String, params: Value) -> Result<Value, String> {
-    let core = state.inner().clone();
-    if let Some(result) = hearth_core::php::api::handle(&core, &method, &params).await {
-        return result.map_err(|e| e.message);
-    }
-    match hearth_core::sites::api::handle(&core, &method, &params).await {
-        Some(result) => result.map_err(|e| e.message),
-        None => Err(format!("unknown method: {method}")),
-    }
+    hearth_core::ipc::handle(state.inner(), &method, &params).await.map_err(|e| e.message)
 }
 
 /// Opens a site in the default browser. Only http(s) URLs, so the UI cannot start other programs.
