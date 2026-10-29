@@ -53,6 +53,7 @@ pub async fn install(core: &CoreState, build: &NodeBuild) -> Result<PathBuf, Cor
     if default_version(paths).is_none() {
         set_default(paths, Some(&build.version))?;
     }
+    refresh_commands(core)?;
     Ok(dir)
 }
 
@@ -75,5 +76,15 @@ pub async fn uninstall(core: &CoreState, version: &str) -> Result<(), CoreError>
         let next = installed(paths).into_iter().next().map(|i| i.version);
         set_default(paths, next.as_deref())?;
     }
-    Ok(())
+    refresh_commands(core)
+}
+
+/// The Node commands in `<home>/bin` exist while a version is installed (Herd's answer until then),
+/// and terminals that use Hearth also get the global tools folder (added in M6).
+fn refresh_commands(core: &CoreState) -> Result<(), CoreError> {
+    let paths = &core.paths;
+    let _php = core.php_lock.lock().unwrap_or_else(|e| e.into_inner());
+    crate::php::service::refresh_shims(paths)?;
+    crate::cli_install::sync_node_names(paths, !installed(paths).is_empty())?;
+    crate::path_env::refresh_terminal(paths)
 }

@@ -1,7 +1,8 @@
 //! Puts the `hearth` CLI into `<home>/bin`, next to the shims, from where the app ships it. On
 //! Windows it is also copied as `php.exe`, `composer.exe`, `laravel.exe` and `herd.exe`: the CLI
 //! answers to the name it was started under, and an `.exe` (unlike a `.bat`) reaches PHP with every
-//! argument exactly as typed.
+//! argument exactly as typed. While a Node version is installed it is also `node.exe`, `npm.exe`,
+//! `npx.exe`, `corepack.exe` and `nvm.exe`.
 
 use std::path::{Path, PathBuf};
 
@@ -52,7 +53,36 @@ pub fn install_cli(paths: &HearthPaths, app_dir: &Path) -> Result<bool, CoreErro
     if !failed.is_empty() {
         return Err(CoreError::Php(failed.join("; ")));
     }
+    sync_node_names(paths, !crate::node::store::installed(paths).is_empty())?;
     Ok(changed)
+}
+
+/// The Node commands the CLI answers on Windows (macOS uses the shims).
+const NODE_NAMES: [&str; 5] = ["node.exe", "npm.exe", "npx.exe", "corepack.exe", "nvm.exe"];
+
+/// Copies `<home>/bin/hearth.exe` as the Node commands while a Node version is installed (`on`), and
+/// removes them otherwise, so Herd's nvm keeps answering until then. Nothing to do on macOS.
+pub fn sync_node_names(paths: &HearthPaths, on: bool) -> Result<(), CoreError> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    let cli = std::fs::read(paths.bin.join("hearth.exe")).ok();
+    for name in NODE_NAMES {
+        let (target, aside) = (paths.bin.join(name), paths.bin.join(format!("{name}.old")));
+        let _ = std::fs::remove_file(&aside);
+        match &cli {
+            Some(bytes) if on => {
+                if !std::fs::read(&target).is_ok_and(|current| current == *bytes) {
+                    place(bytes, &target, &aside)?;
+                }
+            }
+            // A copy still running (a long `npm run dev`) goes on the next sync.
+            _ => {
+                let _ = std::fs::remove_file(&target);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Writes `bytes` as `target`: next to it first, then renamed over it. A running program cannot be
@@ -108,6 +138,29 @@ mod tests {
         paths.ensure().unwrap();
         assert!(!install_cli(&paths, d.path()).unwrap());
         assert_eq!(std::fs::read_dir(&paths.bin).unwrap().count(), 0);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn node_names_exist_only_while_a_node_is_installed() {
+        let (_d, paths, app) = setup(b"cli v1");
+        install_cli(&paths, &app).unwrap();
+        let node_names = ["node.exe", "npm.exe", "npx.exe", "corepack.exe", "nvm.exe"];
+        assert!(node_names.iter().all(|n| !paths.bin.join(n).exists()), "Herd's node keeps answering");
+        sync_node_names(&paths, true).unwrap();
+        for name in node_names {
+            assert_eq!(std::fs::read(paths.bin.join(name)).unwrap(), b"cli v1", "{name}");
+        }
+        // An app update refreshes them while a Node is installed.
+        let dir = crate::node::store::version_dir(&paths, "22.21.1");
+        std::fs::create_dir_all(&dir).unwrap();
+        let build = r#"{"major":22,"version":"22.21.1","lts":"Jod","os":"windows","arch":"x64","url":"u","sha256":"s","format":"zip","root":""}"#;
+        std::fs::write(dir.join(crate::php::service::BUILD_FILE), build).unwrap();
+        std::fs::write(app.join("hearth-cli.exe"), b"cli v2").unwrap();
+        install_cli(&paths, &app).unwrap();
+        assert_eq!(std::fs::read(paths.bin.join("npm.exe")).unwrap(), b"cli v2");
+        sync_node_names(&paths, false).unwrap();
+        assert!(node_names.iter().all(|n| !paths.bin.join(n).exists()));
     }
 
     #[cfg(windows)]

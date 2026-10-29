@@ -10,6 +10,10 @@ async fn build(f: &Fixture, major: u32) -> NodeBuild {
     available(&manifest).into_iter().find(|b| b.major == major).unwrap().clone()
 }
 
+fn shim(name: &str) -> String {
+    format!("{name}{}", if cfg!(windows) { ".bat" } else { "" })
+}
+
 fn same_dir(a: &Path, b: &Path) -> bool {
     std::fs::canonicalize(a).ok().is_some() && std::fs::canonicalize(a).ok() == std::fs::canonicalize(b).ok()
 }
@@ -35,6 +39,7 @@ async fn the_first_version_installed_becomes_the_default() {
     assert_eq!(default_version(p).as_deref(), Some("22.21.1"));
     assert!(same_dir(&current_link(p), &dir), "current points to the default");
     assert_eq!(std::fs::read_dir(p.data.join("node").join("downloads")).map(|d| d.count()).unwrap_or(0), 0);
+    assert!(p.bin.join(shim("npm")).is_file(), "the Node commands are Hearth's now");
 
     install(&f.core, &build(&f, 20).await).await.unwrap();
     assert_eq!(default_version(p).as_deref(), Some("22.21.1"), "a second install keeps the default");
@@ -72,6 +77,7 @@ async fn uninstalling_the_default_moves_it_to_the_newest_remaining_version() {
     uninstall(&f.core, "22.21.1").await.unwrap();
     assert_eq!(default_version(p), None);
     assert!(std::fs::symlink_metadata(current_link(p)).is_err(), "the current link is removed with the last version");
+    assert!(!p.bin.join(shim("node")).exists(), "Herd's node answers again");
     assert_eq!(uninstall(&f.core, "22.21.1").await.unwrap_err().to_string(), "Node 22.21.1 is not installed");
 }
 

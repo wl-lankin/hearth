@@ -2,6 +2,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use hearth_core::node::launch::COMMANDS as NODE_COMMANDS;
 use hearth_core::php::manifest::Os;
 use hearth_core::php::store::{self, install_dir};
 use hearth_core::sites::{locate, registry};
@@ -62,6 +63,18 @@ enum Command {
     /// Runs the Laravel installer with the project's PHP.
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Laravel { args: Vec<String> },
+    /// Runs the Node of the project you are in (its `.nvmrc` or `.node-version`, else the default).
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Node { args: Vec<String> },
+    /// Runs npm with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Npm { args: Vec<String> },
+    /// Runs npx with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Npx { args: Vec<String> },
+    /// Runs corepack with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Corepack { args: Vec<String> },
     /// Opens `php artisan tinker` in a site (default: the current folder's).
     Tinker {
         #[arg(long)]
@@ -235,15 +248,18 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args = as_hearth(std::env::args_os().collect());
-    // `php`, `composer` and `laravel` pass every argument to PHP as typed, so they skip the parser
-    // (which would, for one, eat a leading `--`).
-    if let Some(command) = args.get(1).and_then(|a| a.to_str()).filter(|c| matches!(*c, "php" | "composer" | "laravel"))
-    {
-        let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        return match HearthPaths::from_env() {
-            Ok(paths) => run_named(&paths, command, &rest),
-            Err(e) => fail(&e.to_string()),
+    // `php`, `composer`, `laravel` and the Node commands pass every argument on as typed, so they
+    // skip the parser (which would, for one, eat a leading `--`).
+    if let Some(command) = args.get(1).and_then(|a| a.to_str()).filter(|c| is_runner(c)) {
+        let paths = match HearthPaths::from_env() {
+            Ok(paths) => paths,
+            Err(e) => return fail(&e.to_string()),
         };
+        if NODE_COMMANDS.contains(&command) {
+            return run_node(&paths, command, &args[2..]);
+        }
+        let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        return run_named(&paths, command, &rest);
     }
     let cli = Cli::parse_from(args);
     let paths = match HearthPaths::from_env() {
@@ -273,6 +289,9 @@ async fn main() -> ExitCode {
         Command::Php { args } => run_named(&paths, "php", &args),
         Command::Composer { args } => run_named(&paths, "composer", &args),
         Command::Laravel { args } => run_named(&paths, "laravel", &args),
+        Command::Node { .. } | Command::Npm { .. } | Command::Npx { .. } | Command::Corepack { .. } => {
+            unreachable!("run before parsing")
+        }
         Command::Tinker { site } => tinker(&paths, site),
         Command::Park { dir } => {
             let dir = folder(dir);
@@ -956,11 +975,30 @@ fn as_hearth(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
         .first()
         .and_then(|a| std::path::Path::new(a).file_stem().map(|s| s.to_string_lossy().to_lowercase()))
         .unwrap_or_default();
-    match name.as_str() {
-        "php" | "composer" | "laravel" => args.insert(1, name.into()),
-        _ => {}
+    if is_runner(&name) {
+        args.insert(1, name.into());
     }
     args
+}
+
+/// The commands that run a program with every argument passed on as typed.
+fn is_runner(name: &str) -> bool {
+    matches!(name, "php" | "composer" | "laravel") || NODE_COMMANDS.contains(&name)
+}
+
+/// `node`, `npm`, `npx` or `corepack` with the Node the current folder asks for.
+fn run_node(paths: &HearthPaths, command: &str, args: &[std::ffi::OsString]) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let launch = match hearth_core::node::launch::launch(paths, command, &cwd) {
+        Ok(launch) => launch,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(std::iter::once(launch.path_first.clone()).chain(std::env::split_paths(&path)))
+        .unwrap_or(path);
+    let mut child = std::process::Command::new(&launch.program);
+    child.args(&launch.args).args(args).env("PATH", path);
+    run_and_wait(child, &format!("Node {}", launch.version))
 }
 
 /// `php`, `composer` or `laravel` with the PHP of the project (or of a leading `--site=<name>`).
@@ -1033,15 +1071,20 @@ fn run_php(
         command.current_dir(cwd);
     }
     command.args(args);
-    // On unix the CLI becomes PHP: signals (Ctrl+C) and the exit status are PHP's own.
+    run_and_wait(command, &format!("PHP {minor}"))
+}
+
+/// Runs `command` in place of this one: its exit code is passed on.
+fn run_and_wait(mut command: std::process::Command, what: &str) -> ExitCode {
+    // On unix the CLI becomes the program: signals (Ctrl+C) and the exit status are its own.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         let e = command.exec();
-        return fail(&format!("Could not start PHP {minor}: {e}"));
+        return fail(&format!("Could not start {what}: {e}"));
     }
-    // On Windows Ctrl+C reaches every program in the console: this one lets PHP decide and
-    // waits for it, so the prompt only returns once PHP has finished.
+    // On Windows Ctrl+C reaches every program in the console: this one lets the program decide
+    // and waits for it, so the prompt only returns once it has finished.
     #[cfg(windows)]
     // SAFETY: removes no handler; only makes this process ignore Ctrl+C from now on.
     unsafe {
@@ -1050,7 +1093,7 @@ fn run_php(
     #[allow(unreachable_code)]
     match command.status() {
         Ok(status) => ExitCode::from(exit_code(status.code())),
-        Err(e) => fail(&format!("Could not start PHP {minor}: {e}")),
+        Err(e) => fail(&format!("Could not start {what}: {e}")),
     }
 }
 
