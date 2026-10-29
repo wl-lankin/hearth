@@ -34,6 +34,11 @@ async fn install_resolves_a_spec_against_the_catalog() {
     );
     let err = call(&f.core, "node.install", json!({ "spec": "18" })).await.unwrap_err();
     assert_eq!(err.message, "The catalog has no Node 18 for this computer");
+    let err = call(&f.core, "node.install", json!({ "spec": "20.11.1" })).await.unwrap_err();
+    assert_eq!(
+        err.message,
+        "The catalog has no Node 20.11.1, only the newest Node 20 (20.19.5): hearth node:install 20"
+    );
     let err = call(&f.core, "node.install", json!({ "spec": "system" })).await.unwrap_err();
     assert_eq!(err.message, "Name a Node version, like 22 or lts/*");
 }

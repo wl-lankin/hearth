@@ -76,7 +76,7 @@ pub struct Found {
 /// PowerShell 5.1).
 fn decode(bytes: &[u8]) -> Option<String> {
     let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
-        let units: Vec<u16> = rest.chunks_exact(2).map(|c| unit([c[0], c[1]])).collect();
+        let units: Vec<u16> = rest.as_chunks::<2>().0.iter().map(|c| unit(*c)).collect();
         String::from_utf16(&units).ok()
     };
     match bytes {
@@ -153,10 +153,15 @@ pub fn resolve(
             .find(|i| matches(spec, &i.version, i.lts.as_deref()))
             .map(|i| choice(i, Why::File(file.to_path_buf())))
             .ok_or_else(|| {
-                CoreError::Php(format!(
-                    "This project wants Node {spec} ({}), which is not installed. Install it with: hearth node:install {spec}",
-                    file.display()
-                ))
+                let wanted = format!("This project wants Node {spec} ({}), which is not installed.", file.display());
+                CoreError::Php(match spec {
+                    // The catalog has one build per major: a pinned minor or patch is not on offer.
+                    Spec::Version(parts) if parts.len() > 1 => format!(
+                        "{wanted} Hearth installs the newest Node {major} only: hearth node:install {major}, then put {major} in the file",
+                        major = parts[0]
+                    ),
+                    _ => format!("{wanted} Install it with: hearth node:install {spec}"),
+                })
             }),
         _ => installed
             .iter()

@@ -89,7 +89,7 @@ fn a_missing_version_is_an_error_never_another_version() {
     assert_eq!(
         err(v(&[22, 12])),
         format!(
-            "This project wants Node 22.12 ({}), which is not installed. Install it with: hearth node:install 22.12",
+            "This project wants Node 22.12 ({}), which is not installed. Hearth installs the newest Node 22 only: hearth node:install 22, then put 22 in the file",
             file.display()
         )
     );

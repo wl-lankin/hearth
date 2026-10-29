@@ -104,7 +104,7 @@ fn nothing_installed_or_a_missing_version_is_an_error() {
     assert_eq!(
         err,
         format!(
-            "This project wants Node 18.20.8 ({}), which is not installed. Install it with: hearth node:install 18.20.8",
+            "This project wants Node 18.20.8 ({}), which is not installed. Hearth installs the newest Node 18 only: hearth node:install 18, then put 18 in the file",
             file.display()
         )
     );

@@ -75,11 +75,23 @@ async fn available_list(core: &CoreState) -> Result<Value, RpcError> {
 /// Starts installing the newest catalog build `spec` asks for, as a background job.
 async fn start_install(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
     let spec = spec_of(params)?;
-    let build = builds(core)
-        .await?
-        .into_iter()
-        .find(|b| matches(&spec, &b.version, b.lts.as_deref()))
-        .ok_or_else(|| failed(CoreError::Php(format!("The catalog has no Node {spec} for this computer"))))?;
+    let builds = builds(core).await?;
+    let Some(build) = builds.iter().find(|b| matches(&spec, &b.version, b.lts.as_deref())).cloned() else {
+        // One build per major: name the one there is for a pinned minor or patch.
+        let same_major = match &spec {
+            Spec::Version(parts) if parts.len() > 1 => builds.iter().find(|b| b.major as u64 == parts[0]),
+            _ => None,
+        };
+        let message = match same_major {
+            Some(b) => format!(
+                "The catalog has no Node {spec}, only the newest Node {major} ({version}): hearth node:install {major}",
+                major = b.major,
+                version = b.version
+            ),
+            None => format!("The catalog has no Node {spec} for this computer"),
+        };
+        return Err(failed(CoreError::Php(message)));
+    };
     let label = format!("Installing Node {}", build.version);
     let (id, new) = core.jobs.start("node.install", &format!("node.install:{}", build.version), &label);
     if new {
