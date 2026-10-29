@@ -113,3 +113,20 @@ fn without_a_file_the_default_is_used() {
         "No Node version is installed in Hearth"
     );
 }
+
+#[test]
+fn a_utf16_file_from_windows_powershell_is_read_and_garbage_is_an_error() {
+    let d = tempfile::tempdir().unwrap();
+    // `echo 20 > .nvmrc` in Windows PowerShell 5.1 writes UTF-16LE with a BOM.
+    let mut bytes = vec![0xff, 0xfe];
+    bytes.extend("20\r\n".encode_utf16().flat_map(u16::to_le_bytes));
+    std::fs::write(d.path().join(".nvmrc"), &bytes).unwrap();
+    assert_eq!(find_spec(d.path()).unwrap().unwrap().spec, v(&[20]));
+    let mut bytes = vec![0xfe, 0xff];
+    bytes.extend("22".encode_utf16().flat_map(u16::to_be_bytes));
+    std::fs::write(d.path().join(".nvmrc"), &bytes).unwrap();
+    assert_eq!(find_spec(d.path()).unwrap().unwrap().spec, v(&[22]));
+    std::fs::write(d.path().join(".nvmrc"), [0xc3, 0x28, 0x32]).unwrap();
+    let err = find_spec(d.path()).unwrap().unwrap_err().to_string();
+    assert_eq!(err, format!("{} is not a text file Hearth can read", d.path().join(".nvmrc").display()));
+}

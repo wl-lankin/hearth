@@ -72,13 +72,34 @@ pub struct Found {
     pub file: PathBuf,
 }
 
+/// A version file's text: UTF-8, or UTF-16 with a BOM (what `echo 20 > .nvmrc` writes in Windows
+/// PowerShell 5.1).
+fn decode(bytes: &[u8]) -> Option<String> {
+    let utf16 = |rest: &[u8], unit: fn([u8; 2]) -> u16| {
+        let units: Vec<u16> = rest.chunks_exact(2).map(|c| unit([c[0], c[1]])).collect();
+        String::from_utf16(&units).ok()
+    };
+    match bytes {
+        [0xff, 0xfe, rest @ ..] => utf16(rest, u16::from_le_bytes),
+        [0xfe, 0xff, rest @ ..] => utf16(rest, u16::from_be_bytes),
+        _ => String::from_utf8(bytes.to_vec()).ok(),
+    }
+}
+
 /// The nearest `.nvmrc` (first) or `.node-version` in `cwd` or a folder above it; `None` when there
 /// is none up to the root.
 pub fn find_spec(cwd: &Path) -> Option<Result<Found, CoreError>> {
     for dir in cwd.ancestors() {
         for name in [".nvmrc", ".node-version"] {
             let file = dir.join(name);
-            let Ok(text) = std::fs::read_to_string(&file) else { continue };
+            let bytes = match std::fs::read(&file) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Some(Err(CoreError::io(&file, e))),
+            };
+            let Some(text) = decode(&bytes) else {
+                return Some(Err(CoreError::Php(format!("{} is not a text file Hearth can read", file.display()))));
+            };
             return Some(
                 parse_spec(&text)
                     .map(|spec| Found { spec, file: file.clone() })
