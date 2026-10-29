@@ -4,17 +4,19 @@
   import { createSettingsStore } from './settings.svelte';
   import { applyTheme, resolveTheme } from './theme';
   import Dashboard from './views/Dashboard.svelte';
+  import NodePage from './views/Node.svelte';
   import Php from './views/Php.svelte';
   import Services from './views/Services.svelte';
   import Sites from './views/Sites.svelte';
   import Settings from './views/Settings.svelte';
 
-  type View = 'dashboard' | 'sites' | 'services' | 'php' | 'settings';
+  type View = 'dashboard' | 'sites' | 'services' | 'php' | 'node' | 'settings';
 
   const settings = createSettingsStore(api);
   // `?view=settings` opens a section directly (used for screenshots in the browser demo).
   const requested = new URLSearchParams(location.search).get('view');
-  let view = $state<View>(requested === 'settings' || requested === 'php' || requested === 'sites' || requested === 'services' ? requested : 'dashboard');
+  const views: View[] = ['dashboard', 'sites', 'services', 'php', 'node', 'settings'];
+  let view = $state<View>(views.includes(requested as View) ? (requested as View) : 'dashboard');
   let prefersDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   settings.load();
@@ -33,6 +35,7 @@
     { id: 'sites', label: 'Sites' },
     { id: 'services', label: 'Services' },
     { id: 'php', label: 'PHP' },
+    { id: 'node', label: 'Node' },
     { id: 'settings', label: 'Settings' },
   ];
 </script>
@@ -61,6 +64,8 @@
       <Services />
     {:else if view === 'php'}
       <Php />
+    {:else if view === 'node'}
+      <NodePage />
     {:else}
       <Settings {settings} />
     {/if}

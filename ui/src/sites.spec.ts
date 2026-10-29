@@ -46,6 +46,25 @@ describe('sites store', () => {
     expect(store.defaultPhp).toBe('8.4');
   });
 
+  test('a site with a .nvmrc shows the Node it runs, or why it cannot', async () => {
+    const blog = { ...shop, name: 'blog', path: 'C:/x/blog' };
+    const plain = { ...shop, name: 'plain', path: 'C:/x/plain' };
+    const api = fakeApi({
+      nodeWhich: async (dir) =>
+        dir === shop.path
+          ? { version: '20.19.5', file: 'C:/x/shop/.nvmrc', error: null }
+          : dir === blog.path
+            ? { version: null, file: 'C:/x/blog/.nvmrc', error: 'This project wants Node 18 (C:/x/blog/.nvmrc), which is not installed' }
+            : { version: '22.21.1', file: null, error: null },
+    });
+    api.setList({ sites: [shop, blog, plain], parked: [], httpPort: 8080, httpsPort: 8443 });
+    const store = createSitesStore(api);
+    await store.load();
+    expect(store.node('shop')).toEqual({ text: 'Node 20.19.5', problem: null });
+    expect(store.node('blog')).toEqual({ text: 'Node not installed', problem: 'This project wants Node 18 (C:/x/blog/.nvmrc), which is not installed' });
+    expect(store.node('plain')).toBe(null);
+  });
+
   test('choosing a PHP version applies at once and rolls back when refused', async () => {
     const api = fakeApi({ sitesIsolate: async () => { throw 'There is no site shop'; } });
     const store = createSitesStore(api);

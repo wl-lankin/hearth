@@ -1,4 +1,4 @@
-import type { PhpList, Site, SitesList, WebStatus } from './api';
+import type { NodeWhich, PhpList, Site, SitesList, WebStatus } from './api';
 
 export type SitesApi = {
   sitesList(): Promise<SitesList>;
@@ -16,6 +16,8 @@ export type SitesApi = {
   sitesUnsecure(name: string): Promise<void>;
   tlsTrust(): Promise<void>;
   dnsSetup(): Promise<void>;
+  /** Optional: the Node a site's folder runs (shown for sites with a version file). */
+  nodeWhich?(dir: string): Promise<NodeWhich>;
 };
 
 const asMessage = (e: unknown): string => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e));
@@ -26,9 +28,14 @@ export function createSitesStore(api: SitesApi) {
   let php = $state<PhpList>({ default: null, installed: [] });
   let errors = $state<Record<string, string | null>>({});
   let error = $state<string | null>(null);
+  let nodes = $state<Record<string, NodeWhich>>({});
 
   async function reload() {
     [list, status, php] = await Promise.all([api.sitesList(), api.webStatus(), api.phpList()]);
+    const found = await Promise.all(
+      list.sites.map(async (site) => [site.name, site.path ? await api.nodeWhich?.(site.path).catch(() => undefined) : undefined] as const),
+    );
+    nodes = Object.fromEntries(found.filter((f): f is readonly [string, NodeWhich] => !!f[1]));
   }
 
   /** Runs a change, then reloads; a failure shows on `key` (a site) or as the page error. */
@@ -68,6 +75,12 @@ export function createSitesStore(api: SitesApi) {
     },
     get defaultPhp() {
       return php.default;
+    },
+    /** The Node a site runs when its folder has a `.nvmrc` / `.node-version`; null without one. */
+    node(name: string): { text: string; problem: string | null } | null {
+      const which = nodes[name];
+      if (!which?.file) return null;
+      return which.version ? { text: `Node ${which.version}`, problem: null } : { text: 'Node not installed', problem: which.error };
     },
     /** The one-line web server state above the sites. */
     get server(): { kind: 'error' | 'running' | 'stopped' | 'idle'; text: string } {

@@ -165,6 +165,55 @@ export const terminalSet = async (on: boolean): Promise<TerminalStatus> => {
 };
 export const jobsList = (): Promise<JobStatus[]> => (demo ? Promise.resolve([]) : core('jobs.list'));
 
+export interface InstalledNode {
+  version: string;
+  major: number;
+  lts: string | null;
+}
+
+export interface NodeList {
+  installed: InstalledNode[];
+  default: string | null;
+}
+
+export interface NodeBuild {
+  major: number;
+  version: string;
+  lts: string | null;
+  installed: boolean;
+}
+
+/** The Node version a folder runs, the version file that asks for it, or why it cannot run. */
+export interface NodeWhich {
+  version: string | null;
+  file: string | null;
+  error: string | null;
+}
+
+let demoNode: NodeList = { default: '22.21.1', installed: [{ version: '22.21.1', major: 22, lts: 'Jod' }] };
+const demoNodeAvailable: NodeBuild[] = [
+  { major: 26, version: '26.13.0', lts: 'Lithium', installed: false },
+  { major: 25, version: '25.9.0', lts: null, installed: false },
+  { major: 24, version: '24.22.2', lts: 'Krypton', installed: false },
+  { major: 22, version: '22.23.4', lts: 'Jod', installed: false },
+  { major: 20, version: '20.20.2', lts: 'Iron', installed: false },
+];
+
+export const nodeList = (): Promise<NodeList> => (demo ? Promise.resolve(structuredClone(demoNode)) : core('node.list'));
+export const nodeAvailable = (): Promise<NodeBuild[]> =>
+  demo ? Promise.resolve(structuredClone(demoNodeAvailable)) : core('node.available');
+export const nodeInstall = async (spec: string): Promise<number> =>
+  demo ? 1 : (await core<{ jobId: number }>('node.install', { spec })).jobId;
+export const nodeUninstall = async (version: string): Promise<void> => {
+  if (!demo) await core('node.uninstall', { spec: version });
+};
+export const nodeDefault = async (version: string): Promise<void> => {
+  if (demo) demoNode = { ...demoNode, default: version };
+  else await core('node.default', { spec: version });
+};
+export const nodeWhich = (dir: string): Promise<NodeWhich> =>
+  demo ? Promise.resolve({ version: null, file: null, error: null }) : core('node.which', { dir });
+
 export interface Site {
   name: string;
   kind: 'parked' | 'linked' | 'proxy';
