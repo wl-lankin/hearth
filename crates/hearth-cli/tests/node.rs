@@ -180,3 +180,26 @@ fn node_which_says_why_without_the_core() {
     let out = run(&hearth(), &paths, d.path(), &["node:which"]);
     assert_eq!(text(&out), "Node 22.21.1 (default)\n");
 }
+
+/// Ctrl+C must reach the program: the launcher itself ignores it, but that setting must not be
+/// handed on. Runs in its own hidden console, so the test runner gets no Ctrl+C.
+#[cfg(windows)]
+#[test]
+fn ctrl_c_reaches_the_program_on_windows() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let (d, paths) = home();
+    fake_install(&paths, "22.21.1");
+    set_default(&paths, Some("22.21.1")).unwrap();
+    let out = std::process::Command::new(fake_node())
+        .env("HEARTH_HOME", &paths.root)
+        .current_dir(d.path())
+        .arg("clean-console")
+        .arg(hearth())
+        .args(["node", "ctrlc"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("ctrl+c true"), "{text}");
+}

@@ -1213,11 +1213,18 @@ fn run_and_wait(mut command: std::process::Command, what: &str) -> ExitCode {
         return fail(&format!("Could not start {what}: {e}"));
     }
     // On Windows Ctrl+C reaches every program in the console: this one lets the program decide
-    // and waits for it, so the prompt only returns once it has finished.
+    // and waits for it, so the prompt only returns once it has finished. A handler that swallows
+    // the event does this; `SetConsoleCtrlHandler(None, ..)` would also be inherited by the
+    // program, which then could not be stopped with Ctrl+C.
     #[cfg(windows)]
-    // SAFETY: removes no handler; only makes this process ignore Ctrl+C from now on.
-    unsafe {
-        windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1);
+    {
+        unsafe extern "system" fn swallow(_: u32) -> i32 {
+            1
+        }
+        // SAFETY: registers a handler that does nothing but report the event as handled.
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(swallow), 1);
+        }
     }
     #[allow(unreachable_code)]
     match command.status() {
