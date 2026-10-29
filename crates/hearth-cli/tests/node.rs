@@ -48,6 +48,9 @@ fn project(d: &tempfile::TempDir, nvmrc: &str) -> PathBuf {
     let dir = d.path().join("project");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join(".nvmrc"), nvmrc).unwrap();
+    // The child sees its folder through symlinks resolved (macOS: /var is /private/var).
+    #[cfg(unix)]
+    let dir = dir.canonicalize().unwrap();
     dir.join("src")
 }
 
