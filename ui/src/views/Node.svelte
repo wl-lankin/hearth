@@ -4,6 +4,7 @@
 
   const node = createNodeStore(api);
   let confirming = $state<string | null>(null);
+  let spec = $state('');
 
   node.load();
 
@@ -73,6 +74,30 @@
   {/each}
 </section>
 
+<form
+  class="card other"
+  onsubmit={(e) => {
+    e.preventDefault();
+    node.installSpec(spec);
+  }}
+>
+  <label for="node-spec">Install another version</label>
+  <div class="field">
+    <input id="node-spec" bind:value={spec} placeholder="20.11.1 or lts/hydrogen" spellcheck="false" autocomplete="off" disabled={!!node.typed.job} />
+    <button class="primary" type="submit" disabled={!!node.typed.job}>Install</button>
+  </div>
+  {#if node.typed.job}
+    <span>{node.typed.job.message} ({Math.round(node.typed.job.progress * 100)} %)</span>
+    <span class="bar" role="progressbar" aria-valuenow={Math.round(node.typed.job.progress * 100)} aria-valuemin="0" aria-valuemax="100">
+      <span style:width="{node.typed.job.progress * 100}%"></span>
+    </span>
+  {:else if node.typed.error}
+    <span class="error" role="alert">{node.typed.error}</span>
+  {:else}
+    <span class="muted">Versions the list above does not offer come from nodejs.org, checked against its published checksums.</span>
+  {/if}
+</form>
+
 <style>
   h1 {
     margin: 0 0 8px;
@@ -97,6 +122,40 @@
 
   .list {
     padding: 4px 0;
+  }
+
+  .other {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 20px;
+    font-size: 13px;
+  }
+
+  .other label {
+    font-weight: 600;
+  }
+
+  .field {
+    display: flex;
+    gap: 8px;
+    max-width: 420px;
+  }
+
+  .field input {
+    flex: 1;
+    min-width: 0;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+  }
+
+  .field input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
   .row {

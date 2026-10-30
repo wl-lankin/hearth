@@ -124,4 +124,38 @@ describe('Node store', () => {
     expect(store.catalogError).toBe('offline');
     expect(store.rows.map((r) => r.version)).toEqual(['22.12.0']);
   });
+
+  test("installs a typed version and shows the core's error", async () => {
+    const api = fakeApi();
+    api.jobs.push(job('running', 0.5));
+    const store = createNodeStore(api);
+    await store.load();
+    await store.installSpec('  20.11.1 ');
+    expect(api.calls).toEqual(['install 20.11.1']);
+    expect(store.typed).toEqual({ job: { progress: 0.5, message: 'Downloading Node 20.19.5' }, error: null });
+    expect(store.busy).toBe(true);
+    api.setList({
+      default: '22.12.0',
+      installed: [
+        { version: '22.12.0', major: 22, lts: 'Jod' },
+        { version: '20.11.1', major: 20, lts: 'Iron' },
+      ],
+    });
+    await store.poll();
+    expect(store.typed).toEqual({ job: null, error: null });
+    expect(store.busy).toBe(false);
+    expect(store.rows.map((r) => r.installedVersion)).toContain('20.11.1');
+
+    const failing = createNodeStore(
+      fakeApi({
+        nodeInstall: async () => {
+          throw new Error("Neither Hearth's catalog nor nodejs.org has Node 9.9.9 for this computer");
+        },
+      }),
+    );
+    await failing.installSpec('9.9.9');
+    expect(failing.typed.error).toBe("Neither Hearth's catalog nor nodejs.org has Node 9.9.9 for this computer");
+    await failing.installSpec('   ');
+    expect(failing.typed.error).toBe('Name a Node version, like 20.11.1 or lts/hydrogen');
+  });
 });

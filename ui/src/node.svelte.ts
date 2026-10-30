@@ -3,7 +3,7 @@ import type { JobStatus, NodeBuild, NodeList } from './api';
 export type NodeApi = {
   nodeList(): Promise<NodeList>;
   nodeAvailable(): Promise<NodeBuild[]>;
-  /** Starts installing the newest build of a major ("22"); returns the job id. */
+  /** Starts installing what a spec asks for ("22", "20.11.1", "lts/hydrogen"); returns the job id. */
   nodeInstall(spec: string): Promise<number>;
   jobGet(id: number): Promise<JobStatus>;
   nodeUninstall(version: string): Promise<void>;
@@ -42,6 +42,9 @@ export function createNodeStore(api: NodeApi) {
   // Installs and their errors, by major.
   let jobs = $state<Record<number, { id: number; progress: number; message: string }>>({});
   let errors = $state<Record<number, string | null>>({});
+  // An install of a typed version ("20.11.1"), which may come from outside the catalog.
+  let typedJob = $state<{ id: number; progress: number; message: string } | null>(null);
+  let typedError = $state<string | null>(null);
 
   async function refresh() {
     list = await api.nodeList();
@@ -60,6 +63,16 @@ export function createNodeStore(api: NodeApi) {
     }
     delete jobs[major];
     if (status.state === 'failed') errors[major] = status.error;
+    else await refresh();
+  }
+
+  async function applyTyped(status: JobStatus) {
+    if (status.state === 'running') {
+      typedJob = { id: status.id, progress: status.progress, message: status.message };
+      return;
+    }
+    typedJob = null;
+    if (status.state === 'failed') typedError = status.error;
     else await refresh();
   }
 
@@ -101,9 +114,16 @@ export function createNodeStore(api: NodeApi) {
     get catalogError() {
       return catalogError;
     },
+    /** The typed install's progress or error. */
+    get typed() {
+      return {
+        job: typedJob ? { progress: typedJob.progress, message: typedJob.message } : null,
+        error: typedError,
+      };
+    },
     /** True while any install runs (the page polls then). */
     get busy() {
-      return Object.keys(jobs).length > 0;
+      return Object.keys(jobs).length > 0 || typedJob !== null;
     },
     async load() {
       await refresh();
@@ -124,8 +144,31 @@ export function createNodeStore(api: NodeApi) {
         errors[major] = asMessage(e);
       }
     },
+    /** Installs a typed version, like 20.11.1 or lts/hydrogen. */
+    async installSpec(spec: string) {
+      typedError = null;
+      const wanted = spec.trim();
+      if (!wanted) {
+        typedError = 'Name a Node version, like 20.11.1 or lts/hydrogen';
+        return;
+      }
+      try {
+        const id = await api.nodeInstall(wanted);
+        await applyTyped(await api.jobGet(id));
+      } catch (e) {
+        typedError = asMessage(e);
+      }
+    },
     /** Refreshes every running install once. */
     async poll() {
+      if (typedJob) {
+        try {
+          await applyTyped(await api.jobGet(typedJob.id));
+        } catch (e) {
+          typedJob = null;
+          typedError = asMessage(e);
+        }
+      }
       for (const [major, job] of Object.entries(jobs)) {
         try {
           await apply(Number(major), await api.jobGet(job.id));
