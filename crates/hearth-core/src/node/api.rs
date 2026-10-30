@@ -9,6 +9,7 @@ use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR, INVALID_PARAMS};
 use crate::php::manifest::{fetch, NodeBuild};
 use crate::CoreError;
 
+use super::dist;
 use super::install::{self, available};
 use super::resolve::{find_spec, matches, parse_spec, resolve, Spec};
 use super::store::{default_version, installed, set_default};
@@ -72,27 +73,26 @@ async fn available_list(core: &CoreState) -> Result<Value, RpcError> {
     Ok(Value::Array(rows))
 }
 
-/// Starts installing the newest catalog build `spec` asks for, as a background job.
+/// Starts installing the newest build `spec` asks for, as a background job: from the catalog, or
+/// from nodejs.org when the catalog has none (one build per major, so pinned versions land there).
 async fn start_install(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
     let spec = spec_of(params)?;
-    let builds = builds(core).await?;
-    let Some(build) = builds.iter().find(|b| matches(&spec, &b.version, b.lts.as_deref())).cloned() else {
-        // One build per major: name the one there is for a pinned minor or patch.
-        let same_major = match &spec {
-            Spec::Version(parts) if parts.len() > 1 => builds.iter().find(|b| b.major as u64 == parts[0]),
-            _ => None,
-        };
-        let message = match same_major {
-            Some(b) => format!(
-                "The catalog has no Node {spec}, only the newest Node {major} ({version}): hearth node:install {major}",
-                major = b.major,
-                version = b.version
-            ),
-            None => format!("The catalog has no Node {spec} for this computer"),
-        };
-        return Err(failed(CoreError::Php(message)));
+    let from_catalog = builds(core).await?.into_iter().find(|b| matches(&spec, &b.version, b.lts.as_deref()));
+    let (build, source) = match from_catalog {
+        Some(build) => (build, "catalog"),
+        None => match dist::find(&core.node_dist, &spec).await.map_err(failed)? {
+            Some(build) => (build, "nodejs.org"),
+            None => {
+                return Err(failed(CoreError::Php(format!(
+                    "Neither Hearth's catalog nor nodejs.org has Node {spec} for this computer"
+                ))))
+            }
+        },
     };
-    let label = format!("Installing Node {}", build.version);
+    let label = match source {
+        "catalog" => format!("Installing Node {}", build.version),
+        _ => format!("Installing Node {} from nodejs.org", build.version),
+    };
     let (id, new) = core.jobs.start("node.install", &format!("node.install:{}", build.version), &label);
     if new {
         let (worker, build) = (core.clone(), build.clone());
@@ -102,7 +102,7 @@ async fn start_install(core: &CoreState, params: &Value) -> Result<Value, RpcErr
             worker.jobs.finish(id, result.map_err(|e| e.to_string()));
         });
     }
-    Ok(json!({ "jobId": id, "version": build.version }))
+    Ok(json!({ "jobId": id, "version": build.version, "source": source }))
 }
 
 /// The version a folder runs, and the file that asks for it (none: the default). A version that

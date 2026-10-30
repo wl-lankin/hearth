@@ -154,14 +154,7 @@ pub fn resolve(
             .map(|i| choice(i, Why::File(file.to_path_buf())))
             .ok_or_else(|| {
                 let wanted = format!("This project wants Node {spec} ({}), which is not installed.", file.display());
-                CoreError::Php(match spec {
-                    // The catalog has one build per major: a pinned minor or patch is not on offer.
-                    Spec::Version(parts) if parts.len() > 1 => format!(
-                        "{wanted} Hearth installs the newest Node {major} only: hearth node:install {major}, then put {major} in the file",
-                        major = parts[0]
-                    ),
-                    _ => format!("{wanted} Install it with: hearth node:install {spec}"),
-                })
+                CoreError::Php(format!("{wanted} Install it with: hearth node:install {spec}"))
             }),
         _ => installed
             .iter()
