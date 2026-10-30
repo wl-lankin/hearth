@@ -43,6 +43,8 @@ pub struct CoreState {
     pub started: Instant,
     pub jobs: Arc<Jobs>,
     pub catalog: Catalog,
+    /// nodejs.org's dist folder, for Node versions the catalog does not carry.
+    pub node_dist: String,
     /// One writer at a time for PHP installs, php.json, php.ini and the shims.
     pub php_lock: Arc<std::sync::Mutex<()>>,
     /// One download at a time of the shared tools (Composer, the CA bundle).
@@ -81,6 +83,7 @@ impl CoreState {
             started: Instant::now(),
             jobs: Arc::default(),
             catalog: Catalog::default(),
+            node_dist: crate::node::dist::NODE_DIST_URL.into(),
             php_lock: Arc::default(),
             tools_lock: Arc::default(),
             sites_lock: Arc::default(),
