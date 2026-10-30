@@ -3,6 +3,9 @@ use super::resolve::parse_spec;
 use crate::php::manifest::{Arch, Os};
 
 const INDEX: &str = r#"[
+  {"version":"v20.99.0/../../../../Users/me/Documents","lts":"Iron","files":["osx-arm64-tar","osx-x64-tar","win-x64-zip"]},
+  {"version":"v20.98","lts":"Iron","files":["osx-arm64-tar","osx-x64-tar","win-x64-zip"]},
+  {"version":"v20.97.0","lts":"Iron/../x","files":["osx-arm64-tar","osx-x64-tar","win-x64-zip"]},
   {"version":"v22.12.0","lts":"Jod","files":["osx-arm64-tar","osx-x64-tar","win-x64-zip"]},
   {"version":"v20.11.1","lts":"Iron","files":["osx-arm64-tar","osx-x64-tar","win-x64-zip"]},
   {"version":"v20.11.0","lts":"Iron","files":["osx-arm64-tar","osx-x64-tar","win-x64-zip"]},
@@ -27,6 +30,17 @@ fn pick_takes_the_newest_match_with_a_build_for_this_computer() {
     assert_eq!(p("19", Os::Windows, Arch::X64), release("19.9.0", None));
     assert_eq!(p("19", Os::Macos, Arch::X86_64), None);
     assert_eq!(p("9.9.9", Os::Windows, Arch::X64), None);
+}
+
+#[test]
+fn a_version_that_is_not_three_numbers_is_never_picked() {
+    // index.json is not signed: its strings become folder names and URLs.
+    let p = |spec: &str| pick(INDEX.as_bytes(), &parse_spec(spec).unwrap(), Os::Windows, Arch::X64).unwrap();
+    assert_eq!(p("20"), release("20.97.0", None));
+    assert_eq!(p("20.99"), None);
+    assert_eq!(p("20.98"), None);
+    // A codename that is not plain letters is dropped, the release stays.
+    assert_eq!(p("20.97"), release("20.97.0", None));
 }
 
 #[test]

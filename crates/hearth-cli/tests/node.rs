@@ -120,6 +120,37 @@ async fn with_core<T: Send + 'static>(paths: &HearthPaths, f: impl FnOnce() -> T
     out
 }
 
+/// The catalog answers 404, but only after 12 s: longer than the CLI's usual 10 s for an answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_lookup_ends_with_its_own_error_not_a_timeout() {
+    use hearth_core::ipc::{router, serve, Catalog, CoreState};
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            std::thread::spawn(move || {
+                let _ = stream.read(&mut [0u8; 4096]);
+                std::thread::sleep(std::time::Duration::from_secs(12));
+                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            });
+        }
+    });
+    let (d, paths) = home();
+    let mut core = CoreState::new(paths.clone());
+    core.catalog = Catalog { url: format!("http://{addr}/manifest.json"), public_key: core.catalog.public_key.clone() };
+    core.node_dist = format!("http://{addr}/dist");
+    let server = serve(&paths, router(core)).await.unwrap();
+    let (p, cwd) = (paths.clone(), d.path().to_path_buf());
+    let out =
+        tokio::task::spawn_blocking(move || run(&hearth(), &p, &cwd, &["node:install", "20.11.1"])).await.unwrap();
+    server.shutdown().await;
+    assert_eq!(out.status.code(), Some(1));
+    let said = text(&out);
+    assert!(said.contains("manifest.json") && said.contains("404"), "{said}");
+}
+
 fn text(out: &std::process::Output) -> String {
     format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))
 }

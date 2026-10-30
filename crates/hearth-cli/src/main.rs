@@ -1033,10 +1033,14 @@ async fn install(paths: &HearthPaths, minor: &str) -> ExitCode {
 }
 
 async fn install_node(paths: &HearthPaths, spec: &str) -> ExitCode {
-    let (id, version, started) = match ipc::call(paths, "node.install", json!({ "spec": spec })).await {
-        Ok(v) => (v["jobId"].as_u64().unwrap_or_default(), v["version"].as_str().unwrap_or_default().to_string(), v),
-        Err(e) => return fail(&message(e)),
-    };
+    // Up to three downloads (catalog, nodejs.org's index and checksums) come before the answer.
+    let (id, version, started) =
+        match ipc::call_waiting(paths, "node.install", json!({ "spec": spec }), Duration::from_secs(120)).await {
+            Ok(v) => {
+                (v["jobId"].as_u64().unwrap_or_default(), v["version"].as_str().unwrap_or_default().to_string(), v)
+            }
+            Err(e) => return fail(&message(e)),
+        };
     if started["source"] == "nodejs.org" {
         println!("Node {version} is not in Hearth's catalog; downloading it from nodejs.org.");
     }

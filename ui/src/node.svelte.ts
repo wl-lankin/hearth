@@ -131,7 +131,11 @@ export function createNodeStore(api: NodeApi) {
       const running = (await api.jobsList?.().catch(() => [])) ?? [];
       for (const job of running) {
         if (job.state === 'running' && job.key.startsWith('node.install:')) {
-          jobs[majorOf(job.key.slice('node.install:'.length))] = { id: job.id, progress: job.progress, message: job.message };
+          const version = job.key.slice('node.install:'.length);
+          const entry = { id: job.id, progress: job.progress, message: job.message };
+          // A catalog build belongs on its major's row; anything else was typed.
+          if (available.some((b) => b.version === version)) jobs[majorOf(version)] = entry;
+          else typedJob = entry;
         }
       }
     },

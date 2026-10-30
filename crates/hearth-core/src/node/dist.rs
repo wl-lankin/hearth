@@ -46,7 +46,16 @@ pub fn pick(index: &[u8], spec: &Spec, os: Os, arch: Arch) -> Result<Option<Rele
         .filter(|e| e.files.iter().any(|f| f == key))
         .map(|e| Release {
             version: e.version.trim_start_matches('v').to_string(),
-            lts: e.lts.as_str().map(String::from),
+            lts: e
+                .lts
+                .as_str()
+                .filter(|l| !l.is_empty() && l.bytes().all(|b| b.is_ascii_alphabetic()))
+                .map(String::from),
+        })
+        // index.json is not signed and the version becomes folder names and URLs: three numbers only.
+        .filter(|r| {
+            let parts: Vec<&str> = r.version.split('.').collect();
+            parts.len() == 3 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
         })
         .filter(|r| matches(spec, &r.version, r.lts.as_deref()))
         .collect();

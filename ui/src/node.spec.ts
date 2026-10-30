@@ -158,4 +158,20 @@ describe('Node store', () => {
     await failing.installSpec('   ');
     expect(failing.typed.error).toBe('Name a Node version, like 20.11.1 or lts/hydrogen');
   });
+
+  test('a typed install still running when the page opens shows in the field', async () => {
+    const running = (version: string, id: number): JobStatus => ({
+      id, kind: 'node.install', key: `node.install:${version}`, label: `Installing Node ${version}`,
+      progress: 0.3, message: `Downloading Node ${version}`, state: 'running', error: null,
+    });
+    const api = fakeApi({ jobsList: async () => [running('18.20.8', 7), running('20.19.5', 8)] });
+    const store = createNodeStore(api);
+    await store.load();
+    // Node 18 is not in the catalog: the typed field shows it. 20.19.5 is the catalog's: its row.
+    expect(store.typed.job).toEqual({ progress: 0.3, message: 'Downloading Node 18.20.8' });
+    expect(store.rows.find((r) => r.major === 20)!.job).toEqual({ progress: 0.3, message: 'Downloading Node 20.19.5' });
+    api.jobs.push({ ...running('18.20.8', 7), state: 'failed', error: 'nodejs.org does not list a checksum' });
+    await store.poll();
+    expect(store.typed).toEqual({ job: null, error: 'nodejs.org does not list a checksum' });
+  });
 });
