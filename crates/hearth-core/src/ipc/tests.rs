@@ -207,3 +207,15 @@ async fn a_call_can_wait_longer_for_a_slow_answer() {
     assert_eq!(long, json!("done"));
     server.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_app_reaches_every_method_family_in_process() {
+    let (_dir, paths) = home();
+    let core = CoreState::new(paths);
+    for method in ["php.list", "sites.list", "services.list", "node.list"] {
+        let answer = handle(&core, method, &Value::Null).await;
+        assert!(answer.is_ok(), "{method}: {answer:?}");
+    }
+    let err = handle(&core, "nope.list", &Value::Null).await.unwrap_err();
+    assert_eq!(err.message, "unknown method: nope.list");
+}

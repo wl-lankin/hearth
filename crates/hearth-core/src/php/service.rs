@@ -211,7 +211,8 @@ pub fn apply_config(paths: &HearthPaths, minor: &str) -> Result<(), CoreError> {
 pub fn refresh_shims(paths: &HearthPaths) -> Result<(), CoreError> {
     let state = store::load(paths);
     let minors: Vec<String> = store::installed(paths).into_iter().map(|i| i.minor).collect();
-    write_shims(paths, state.default.as_deref(), &minors)
+    let node = !crate::node::store::installed(paths).is_empty();
+    write_shims(paths, state.default.as_deref(), &minors, node)
 }
 
 /// Holds the one-writer lock for installs, php.json, php.ini and the shims.

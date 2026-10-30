@@ -1,5 +1,6 @@
 //! "Use Hearth's PHP in terminals": puts `<home>/bin` first on the user's PATH (Windows: the user
 //! environment in the registry; macOS: a marked block in the shell profiles) and takes it out again.
+//! The global tools of the default Node (`npm i -g`, through the `current` link) come right after.
 
 use std::path::{Path, PathBuf};
 
@@ -25,6 +26,16 @@ pub fn with_entry(path_value: &str, entry: &str, sep: char, windows: bool) -> St
     } else {
         format!("{entry}{sep}{rest}")
     }
+}
+
+/// `path_value` with `entries` first, in this order, each exactly once.
+pub fn with_entries(path_value: &str, entries: &[String], sep: char, windows: bool) -> String {
+    entries.iter().rev().fold(path_value.to_string(), |value, entry| with_entry(&value, entry, sep, windows))
+}
+
+/// The folders Hearth puts on PATH: `<home>/bin`, then the default Node's global tools.
+pub fn terminal_entries(paths: &crate::HearthPaths) -> Vec<PathBuf> {
+    vec![paths.bin.clone(), crate::node::store::bin_dir(&crate::node::store::current_link(paths))]
 }
 
 /// `path_value` without `entry`; every other entry (also empty ones and %VARIABLES%) is kept as is.
@@ -141,9 +152,13 @@ pub fn terminal_status(paths: &crate::HearthPaths) -> Result<TerminalStatus, Cor
 
 #[cfg(windows)]
 pub fn set_terminal(paths: &crate::HearthPaths, on: bool) -> Result<TerminalStatus, CoreError> {
-    let ours = paths.bin.display().to_string();
+    let entries: Vec<String> = terminal_entries(paths).iter().map(|e| e.display().to_string()).collect();
     let (value, kind) = registry::user_path()?;
-    let next = if on { with_entry(&value, &ours, ';', true) } else { without_entry(&value, &ours, ';', true) };
+    let next = if on {
+        with_entries(&value, &entries, ';', true)
+    } else {
+        entries.iter().fold(value.clone(), |v, e| without_entry(&v, e, ';', true))
+    };
     if next != value {
         registry::set_user_path(&next, kind)?;
     }
@@ -161,18 +176,35 @@ fn all_profiles() -> Vec<PathBuf> {
     [".zprofile", ".bash_profile", ".profile"].iter().map(|n| home().join(n)).collect()
 }
 
+/// Inside double quotes only these four are special to the shell.
+#[cfg(unix)]
+fn quoted(p: &Path) -> String {
+    p.display().to_string().replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$").replace('`', "\\`")
+}
+
 #[cfg(unix)]
 fn profile_line(paths: &crate::HearthPaths) -> String {
-    // Inside double quotes only these four are special to the shell.
-    let bin = paths
-        .bin
-        .display()
-        .to_string()
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('$', "\\$")
-        .replace('`', "\\`");
-    format!("export PATH=\"{bin}:$PATH\"")
+    let entries: Vec<String> = terminal_entries(paths).iter().map(|e| quoted(e)).collect();
+    format!("export PATH=\"{}:$PATH\"", entries.join(":"))
+}
+
+/// Writes the PATH entries again when terminals already use this Hearth home, so a change in the
+/// entries (the Node tools folder, added in M6) reaches them. Another home's entries are left alone.
+#[cfg(unix)]
+pub fn refresh_terminal(paths: &crate::HearthPaths) -> Result<(), CoreError> {
+    let ours = format!("export PATH=\"{}:", quoted(&paths.bin));
+    if all_profiles().iter().any(|f| std::fs::read_to_string(f).is_ok_and(|t| t.contains(START) && t.contains(&ours))) {
+        set_terminal(paths, true)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn refresh_terminal(paths: &crate::HearthPaths) -> Result<(), CoreError> {
+    if terminal_status(paths)?.enabled {
+        set_terminal(paths, true)?;
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -301,6 +333,24 @@ mod tests {
         let once = with_entry(path, OURS, ';', true);
         assert_eq!(once, format!(r"{OURS};C:\Windows;%USERPROFILE%\.config\herd\bin"));
         assert_eq!(with_entry(&once, OURS, ';', true), once);
+    }
+
+    #[test]
+    fn several_entries_go_first_in_order() {
+        let entries = ["C:\\h\\bin".to_string(), "C:\\h\\data\\node\\current".to_string()];
+        assert_eq!(
+            with_entries("C:\\a;c:\\h\\data\\node\\current;C:\\h\\bin", &entries, ';', true),
+            "C:\\h\\bin;C:\\h\\data\\node\\current;C:\\a"
+        );
+    }
+
+    #[test]
+    fn terminals_also_get_the_global_node_tools() {
+        let paths = crate::HearthPaths::at("/h");
+        assert_eq!(
+            terminal_entries(&paths),
+            [paths.bin.clone(), crate::node::store::bin_dir(&paths.data.join("node").join("current"))]
+        );
     }
 
     #[test]

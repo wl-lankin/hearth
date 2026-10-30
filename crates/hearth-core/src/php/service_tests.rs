@@ -109,6 +109,25 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
     let meili = b"meilisearch program".to_vec();
     let pg = zip_with(&[("postgresql/bin/postgres", b"pg")]);
 
+    // Node 22 (LTS "Jod") and 20 ("Iron") laid out like nodejs.org's archives, and a Node 21 whose
+    // download does not match its hash.
+    let node = |version: &str| -> (Vec<u8>, String) {
+        let root = format!("node-v{version}");
+        let archive = match Os::current() {
+            Os::Windows => zip_with(&[
+                (&format!("{root}/node.exe"), version.as_bytes()),
+                (&format!("{root}/node_modules/npm/bin/npm-cli.js"), b"npm"),
+            ]),
+            Os::Macos => tar_gz_with(&[
+                (&format!("{root}/bin/node"), version.as_bytes()),
+                (&format!("{root}/lib/node_modules/npm/bin/npm-cli.js"), b"npm"),
+            ]),
+        };
+        (archive, root)
+    };
+    let (node22, node22_root) = node("22.21.1");
+    let (node20, node20_root) = node("20.19.5");
+
     // The server's address is only known once it runs, so the catalog is served from a slot filled below.
     let catalog_slot: std::sync::Arc<std::sync::Mutex<(Vec<u8>, Vec<u8>)>> = Default::default();
     let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -123,6 +142,9 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
         ("/svc/redis".into(), redis_svc.clone()),
         ("/svc/meilisearch".into(), meili.clone()),
         ("/svc/postgresql".into(), b"not the archive".to_vec()),
+        ("/node/22".into(), node22.clone()),
+        ("/node/20".into(), node20.clone()),
+        ("/node/21".into(), b"not the archive".to_vec()),
     ];
     if serve_composer {
         files.push(("/composer.phar".into(), composer.clone()));
@@ -187,6 +209,17 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
             // Typesense exists for macOS only.
             { "kind": "typesense", "line": "30", "version": "30.2", "os": "macos", "arch": "arm64",
               "url": format!("{base}/svc/typesense"), "sha256": hex(b"ts"), "format": "tar.gz", "root": "" },
+        ],
+        "node": [
+            { "major": 22, "version": "22.21.1", "lts": "Jod", "os": Os::current(), "arch": Arch::current(),
+              "url": format!("{base}/node/22"), "sha256": hex(&node22), "format": format, "root": node22_root },
+            { "major": 21, "version": "21.7.3", "lts": null, "os": Os::current(), "arch": Arch::current(),
+              "url": format!("{base}/node/21"), "sha256": hex(b"node 21"), "format": format, "root": "node-v21.7.3" },
+            { "major": 20, "version": "20.19.5", "lts": "Iron", "os": Os::current(), "arch": Arch::current(),
+              "url": format!("{base}/node/20"), "sha256": hex(&node20), "format": format, "root": node20_root },
+            // Another computer's build.
+            { "major": 24, "version": "24.11.0", "lts": "Krypton", "os": "windows", "arch": "arm64",
+              "url": format!("{base}/node/24"), "sha256": hex(b"24"), "format": "tar.gz", "root": "node-v24.11.0" },
         ],
     });
     let json = serde_json::to_vec(&manifest).unwrap();

@@ -119,6 +119,10 @@
         <span class="path" title={site.path ?? site.upstream ?? ''}>{site.path ?? site.upstream}</span>
         {#if site.problem}<span class="error">{site.problem}</span>{/if}
         {#if store.note(site.name)}<span class="muted">{store.note(site.name)}</span>{/if}
+        {#if store.node(site.name)}
+          {@const node = store.node(site.name)!}
+          <span class={node.problem ? 'error' : 'muted'} title={node.problem ?? ''}>{node.text}</span>
+        {/if}
         {#if store.errors[site.name]}<span class="error" role="alert">{store.errors[site.name]}</span>{/if}
       </div>
       <div class="php">

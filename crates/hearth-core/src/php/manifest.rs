@@ -147,6 +147,22 @@ pub struct ServiceBuild {
     pub root: String,
 }
 
+/// One Node.js release (the newest of its major) for one OS and architecture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeBuild {
+    pub major: u32,
+    pub version: String,
+    /// The LTS codename ("Jod"), none for a current release.
+    pub lts: Option<String>,
+    pub os: Os,
+    pub arch: Arch,
+    pub url: String,
+    pub sha256: String,
+    pub format: Format,
+    /// The archive's top folder.
+    pub root: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Manifest {
     pub schema: u32,
@@ -160,6 +176,9 @@ pub struct Manifest {
     /// Added in M5; older catalogs have none.
     #[serde(default)]
     pub services: Vec<ServiceBuild>,
+    /// Added in M6; older catalogs have none.
+    #[serde(default)]
+    pub node: Vec<NodeBuild>,
 }
 
 fn invalid(message: impl std::fmt::Display) -> CoreError {

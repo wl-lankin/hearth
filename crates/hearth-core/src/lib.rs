@@ -7,6 +7,7 @@ pub mod error;
 pub mod herd;
 pub mod ipc;
 pub mod jobs;
+pub mod node;
 pub mod path_env;
 pub mod paths;
 pub mod php;

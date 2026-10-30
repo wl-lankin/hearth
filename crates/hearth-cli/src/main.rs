@@ -2,6 +2,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
+use hearth_core::node::launch::COMMANDS as NODE_COMMANDS;
 use hearth_core::php::manifest::Os;
 use hearth_core::php::store::{self, install_dir};
 use hearth_core::sites::{locate, registry};
@@ -62,6 +63,42 @@ enum Command {
     /// Runs the Laravel installer with the project's PHP.
     #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
     Laravel { args: Vec<String> },
+    /// Lists the installed Node versions.
+    #[command(name = "node:list")]
+    NodeList {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the Node versions available for this computer.
+    #[command(name = "node:available")]
+    NodeAvailable {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Installs a Node version: `hearth node:install 22`, `lts/*`, `lts/jod`, `22.21.1`.
+    #[command(name = "node:install")]
+    NodeInstall { spec: String },
+    /// Removes a Node version.
+    #[command(name = "node:uninstall")]
+    NodeUninstall { spec: String },
+    /// Makes a Node version the one used outside projects with a `.nvmrc` or `.node-version`.
+    #[command(name = "node:default")]
+    NodeDefault { spec: String },
+    /// Shows which Node the current folder runs, and why.
+    #[command(name = "node:which")]
+    NodeWhich,
+    /// Runs the Node of the project you are in (its `.nvmrc` or `.node-version`, else the default).
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Node { args: Vec<String> },
+    /// Runs npm with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Npm { args: Vec<String> },
+    /// Runs npx with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Npx { args: Vec<String> },
+    /// Runs corepack with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Corepack { args: Vec<String> },
     /// Opens `php artisan tinker` in a site (default: the current folder's).
     Tinker {
         #[arg(long)]
@@ -235,16 +272,23 @@ enum Command {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args = as_hearth(std::env::args_os().collect());
-    // `php`, `composer` and `laravel` pass every argument to PHP as typed, so they skip the parser
-    // (which would, for one, eat a leading `--`).
-    if let Some(command) = args.get(1).and_then(|a| a.to_str()).filter(|c| matches!(*c, "php" | "composer" | "laravel"))
-    {
-        let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        return match HearthPaths::from_env() {
-            Ok(paths) => run_named(&paths, command, &rest),
-            Err(e) => fail(&e.to_string()),
+    // `php`, `composer`, `laravel` and the Node commands pass every argument on as typed, so they
+    // skip the parser (which would, for one, eat a leading `--`).
+    if let Some(command) = args.get(1).and_then(|a| a.to_str()).filter(|c| is_runner(c)) {
+        let paths = match HearthPaths::from_env() {
+            Ok(paths) => paths,
+            Err(e) => return fail(&e.to_string()),
         };
+        if NODE_COMMANDS.contains(&command) {
+            return run_node(&paths, command, &args[2..]);
+        }
+        let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        return run_named(&paths, command, &rest);
     }
+    let args = match nvm_as_hearth(args) {
+        Ok(args) => args,
+        Err(e) => return fail(&e),
+    };
     let cli = Cli::parse_from(args);
     let paths = match HearthPaths::from_env() {
         Ok(paths) => paths,
@@ -273,6 +317,27 @@ async fn main() -> ExitCode {
         Command::Php { args } => run_named(&paths, "php", &args),
         Command::Composer { args } => run_named(&paths, "composer", &args),
         Command::Laravel { args } => run_named(&paths, "laravel", &args),
+        Command::NodeList { json } => print_call(&paths, "node.list", Value::Null, json, print_node_list).await,
+        Command::NodeAvailable { json } => {
+            print_call(&paths, "node.available", Value::Null, json, print_node_available).await
+        }
+        Command::NodeInstall { spec } => install_node(&paths, &spec).await,
+        Command::NodeUninstall { spec } => {
+            print_call(&paths, "node.uninstall", json!({ "spec": spec }), false, |v| {
+                println!("Node {} is removed.", v["version"].as_str().unwrap_or_default())
+            })
+            .await
+        }
+        Command::NodeDefault { spec } => {
+            print_call(&paths, "node.default", json!({ "spec": spec }), false, |v| {
+                println!("Node {} is the default now.", v["version"].as_str().unwrap_or_default())
+            })
+            .await
+        }
+        Command::NodeWhich => node_which(&paths),
+        Command::Node { .. } | Command::Npm { .. } | Command::Npx { .. } | Command::Corepack { .. } => {
+            unreachable!("run before parsing")
+        }
         Command::Tinker { site } => tinker(&paths, site),
         Command::Park { dir } => {
             let dir = folder(dir);
@@ -715,7 +780,6 @@ fn missing(command: &str) -> String {
         "log" | "logs" | "insights" => "log and insights viewer",
         "processes" => "process manager",
         "workspace" | "workspaces" => "workspaces",
-        "node" => "Node version manager",
         "mcp" => "MCP server",
         "share" | "fetch-share-url" => "site sharing",
         "studio" => return "Hearth has no Studio, and none is planned".into(),
@@ -875,6 +939,59 @@ async fn print_call(
     }
 }
 
+fn print_node_list(value: &Value) {
+    let default = value["default"].as_str();
+    let rows = value["installed"].as_array().cloned().unwrap_or_default();
+    if rows.is_empty() {
+        println!("No Node version is installed. Install one with: hearth node:install 22");
+    }
+    for node in rows {
+        let version = node["version"].as_str().unwrap_or_default();
+        let mut line = format!("Node {version}");
+        if default == Some(version) {
+            line.push_str("  default");
+        }
+        if let Some(lts) = node["lts"].as_str() {
+            line.push_str(&format!("  LTS {lts}"));
+        }
+        println!("{line}");
+    }
+}
+
+fn print_node_available(value: &Value) {
+    for node in value.as_array().into_iter().flatten() {
+        let lts = node["lts"].as_str().map(|l| format!("LTS {l}")).unwrap_or_else(|| "current".into());
+        let installed = if node["installed"].as_bool() == Some(true) { "  installed" } else { "" };
+        println!("Node {:<9} {lts}{installed}", node["version"].as_str().unwrap_or_default());
+    }
+}
+
+/// The Node the current folder runs, and the file that asks for it (no core needed).
+fn node_which(paths: &HearthPaths) -> ExitCode {
+    use hearth_core::node::{resolve, store};
+    let cwd = folder(None);
+    let found = match resolve::find_spec(&cwd).transpose() {
+        Ok(found) => found,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let wanted = found.as_ref().map(|f| (&f.spec, f.file.as_path()));
+    match resolve::resolve(&store::installed(paths), store::default_version(paths).as_deref(), wanted) {
+        Ok(choice) => {
+            let why = match &found {
+                Some(f) if choice.why != resolve::Why::Default => format!(
+                    "{} in {}",
+                    f.file.file_name().unwrap_or_default().to_string_lossy(),
+                    f.file.parent().unwrap_or(&cwd).display()
+                ),
+                _ => "default".into(),
+            };
+            println!("Node {} ({why})", choice.version);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&e.to_string()),
+    }
+}
+
 fn print_list(value: &Value) {
     let default = value["default"].as_str();
     for php in value["installed"].as_array().into_iter().flatten() {
@@ -911,6 +1028,19 @@ async fn install(paths: &HearthPaths, minor: &str) -> ExitCode {
         Ok(v) => v["jobId"].as_u64().unwrap_or_default(),
         Err(e) => return fail(&message(e)),
     };
+    wait_for_job(paths, id, &format!("PHP {minor} is installed.")).await
+}
+
+async fn install_node(paths: &HearthPaths, spec: &str) -> ExitCode {
+    let (id, version) = match ipc::call(paths, "node.install", json!({ "spec": spec })).await {
+        Ok(v) => (v["jobId"].as_u64().unwrap_or_default(), v["version"].as_str().unwrap_or_default().to_string()),
+        Err(e) => return fail(&message(e)),
+    };
+    wait_for_job(paths, id, &format!("Node {version} is installed.")).await
+}
+
+/// Prints a job's progress until it ends, then `done` (or its error).
+async fn wait_for_job(paths: &HearthPaths, id: u64, done: &str) -> ExitCode {
     let mut last = String::new();
     loop {
         let job = match ipc::call(paths, "jobs.get", json!({ "id": id })).await {
@@ -919,7 +1049,7 @@ async fn install(paths: &HearthPaths, minor: &str) -> ExitCode {
         };
         match job["state"].as_str() {
             Some("done") => {
-                println!("PHP {minor} is installed.");
+                println!("{done}");
                 return ExitCode::SUCCESS;
             }
             Some("failed") => return fail(job["error"].as_str().unwrap_or("The install failed")),
@@ -956,11 +1086,48 @@ fn as_hearth(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
         .first()
         .and_then(|a| std::path::Path::new(a).file_stem().map(|s| s.to_string_lossy().to_lowercase()))
         .unwrap_or_default();
-    match name.as_str() {
-        "php" | "composer" | "laravel" => args.insert(1, name.into()),
-        _ => {}
+    if is_runner(&name) || name == "nvm" {
+        args.insert(1, name.into());
     }
     args
+}
+
+/// `hearth nvm <command> ...` (and the CLI started as `nvm`) as Hearth's own command, so habits
+/// from Herd's nvm keep working.
+fn nvm_as_hearth(args: Vec<std::ffi::OsString>) -> Result<Vec<std::ffi::OsString>, String> {
+    if args.get(1).and_then(|a| a.to_str()) != Some("nvm") {
+        return Ok(args);
+    }
+    let command = match args.get(2).and_then(|a| a.to_str()) {
+        Some("install") => "node:install",
+        Some("uninstall") => "node:uninstall",
+        Some("use") => "node:default",
+        Some("list" | "ls") => "node:list",
+        Some("current" | "which") => "node:which",
+        _ => return Err("Hearth's nvm knows install, uninstall, use, list, current and which".into()),
+    };
+    let rest = args.iter().skip(3).take(if command == "node:which" || command == "node:list" { 0 } else { 1 });
+    Ok([args[0].clone(), command.into()].into_iter().chain(rest.cloned()).collect())
+}
+
+/// The commands that run a program with every argument passed on as typed.
+fn is_runner(name: &str) -> bool {
+    matches!(name, "php" | "composer" | "laravel") || NODE_COMMANDS.contains(&name)
+}
+
+/// `node`, `npm`, `npx` or `corepack` with the Node the current folder asks for.
+fn run_node(paths: &HearthPaths, command: &str, args: &[std::ffi::OsString]) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let launch = match hearth_core::node::launch::launch(paths, command, &cwd) {
+        Ok(launch) => launch,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(std::iter::once(launch.path_first.clone()).chain(std::env::split_paths(&path)))
+        .unwrap_or(path);
+    let mut child = std::process::Command::new(&launch.program);
+    child.args(&launch.args).args(args).env("PATH", path);
+    run_and_wait(child, &format!("Node {}", launch.version))
 }
 
 /// `php`, `composer` or `laravel` with the PHP of the project (or of a leading `--site=<name>`).
@@ -1033,24 +1200,36 @@ fn run_php(
         command.current_dir(cwd);
     }
     command.args(args);
-    // On unix the CLI becomes PHP: signals (Ctrl+C) and the exit status are PHP's own.
+    run_and_wait(command, &format!("PHP {minor}"))
+}
+
+/// Runs `command` in place of this one: its exit code is passed on.
+fn run_and_wait(mut command: std::process::Command, what: &str) -> ExitCode {
+    // On unix the CLI becomes the program: signals (Ctrl+C) and the exit status are its own.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         let e = command.exec();
-        return fail(&format!("Could not start PHP {minor}: {e}"));
+        return fail(&format!("Could not start {what}: {e}"));
     }
-    // On Windows Ctrl+C reaches every program in the console: this one lets PHP decide and
-    // waits for it, so the prompt only returns once PHP has finished.
+    // On Windows Ctrl+C reaches every program in the console: this one lets the program decide
+    // and waits for it, so the prompt only returns once it has finished. A handler that swallows
+    // the event does this; `SetConsoleCtrlHandler(None, ..)` would also be inherited by the
+    // program, which then could not be stopped with Ctrl+C.
     #[cfg(windows)]
-    // SAFETY: removes no handler; only makes this process ignore Ctrl+C from now on.
-    unsafe {
-        windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1);
+    {
+        unsafe extern "system" fn swallow(_: u32) -> i32 {
+            1
+        }
+        // SAFETY: registers a handler that does nothing but report the event as handled.
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(swallow), 1);
+        }
     }
     #[allow(unreachable_code)]
     match command.status() {
         Ok(status) => ExitCode::from(exit_code(status.code())),
-        Err(e) => fail(&format!("Could not start PHP {minor}: {e}")),
+        Err(e) => fail(&format!("Could not start {what}: {e}")),
     }
 }
 
