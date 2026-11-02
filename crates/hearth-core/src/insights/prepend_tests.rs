@@ -30,7 +30,8 @@ fn run(php: &Path, d: &Path, paths: &HearthPaths, body: &str) -> Output {
     let project = d.join("project");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(project.join("s.php"), body).unwrap();
-    let prepend = format!("auto_prepend_file={}", script_path(paths).display());
+    // Quoted as in php.ini: unquoted, a `~` in a short Windows path (RUNNER~1) is an ini operator.
+    let prepend = format!("auto_prepend_file=\"{}\"", script_path(paths).display());
     Command::new(php).args(["-n", "-d", &prepend, "s.php"]).current_dir(&project).output().unwrap()
 }
 
