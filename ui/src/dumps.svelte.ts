@@ -27,10 +27,16 @@ export function fold(text: string): { text: string; hidden: number } {
 /** Folders a Laravel (or Composer) project has at its top. */
 const PROJECT_FOLDERS = ['app', 'bootstrap', 'config', 'database', 'public', 'resources', 'routes', 'src', 'storage', 'tests', 'vendor'];
 
-/** A file path from the project's top folder on ("app/Http/..."), or the whole path. */
-export function shortPath(file: string | null): string {
+/**
+ * A file path from inside the project on: after the site's own folder (its name on the command line,
+ * its host without `.test` on the web), else from a top folder like `app/`; otherwise the whole path.
+ */
+export function shortPath(file: string | null, site: string | null = null): string {
   if (!file) return '';
   const parts = file.replaceAll('\\', '/').split('/');
+  const folder = site?.replace(/\.test$/, '');
+  const own = folder ? parts.lastIndexOf(folder) : -1;
+  if (own >= 0 && own < parts.length - 1) return parts.slice(own + 1).join('/');
   const at = parts.findIndex((p, i) => i > 0 && PROJECT_FOLDERS.includes(p));
   return at > 0 ? parts.slice(at).join('/') : file;
 }

@@ -82,7 +82,7 @@
   <article class="card dump">
     <header>
       {#if d.site}<span class="tag">{d.site}</span>{/if}
-      <span class="where" title={d.file ?? ''}>{shortPath(d.file)}{d.line ? `:${d.line}` : ''}</span>
+      <span class="where" title={d.file ?? ''}>{shortPath(d.file, d.site)}{d.line ? `:${d.line}` : ''}</span>
       <span class="muted from">{d.uri ?? (d.sapi === 'cli' ? 'Command line' : '')}</span>
       <span class="muted when">{formatReceived(Math.floor(d.time / 1000))}</span>
     </header>

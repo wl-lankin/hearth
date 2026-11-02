@@ -113,5 +113,9 @@ describe('fold and shortPath', () => {
     expect(shortPath('/srv/shop/vendor/laravel/framework/src/X.php')).toBe('vendor/laravel/framework/src/X.php');
     expect(shortPath('/tmp/script.php')).toBe('/tmp/script.php');
     expect(shortPath(null)).toBe('');
+    // A file at the project's top: cut at the site's own folder (the CLI's folder, a site's host).
+    expect(shortPath(String.raw`C:\Users\you\Temp\m8-proj\demo.php`, 'm8-proj')).toBe('demo.php');
+    expect(shortPath('/Users/ann/Sites/shop/index.php', 'shop.test')).toBe('index.php');
+    expect(shortPath('/Users/ann/Sites/shop/app/X.php', 'shop.test')).toBe('app/X.php');
   });
 });
