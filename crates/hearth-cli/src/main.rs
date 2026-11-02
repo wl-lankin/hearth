@@ -75,7 +75,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Installs a Node version: `hearth node:install 22`, `lts/*`, `lts/jod`, `22.21.1`.
+    /// Installs a Node version: `hearth node:install 22`, `lts/*`, `lts/jod`, `22.21.1`. Versions the
+    /// catalog lacks come from nodejs.org.
     #[command(name = "node:install")]
     NodeInstall { spec: String },
     /// Removes a Node version.
@@ -1032,10 +1033,17 @@ async fn install(paths: &HearthPaths, minor: &str) -> ExitCode {
 }
 
 async fn install_node(paths: &HearthPaths, spec: &str) -> ExitCode {
-    let (id, version) = match ipc::call(paths, "node.install", json!({ "spec": spec })).await {
-        Ok(v) => (v["jobId"].as_u64().unwrap_or_default(), v["version"].as_str().unwrap_or_default().to_string()),
-        Err(e) => return fail(&message(e)),
-    };
+    // Up to three downloads (catalog, nodejs.org's index and checksums) come before the answer.
+    let (id, version, started) =
+        match ipc::call_waiting(paths, "node.install", json!({ "spec": spec }), Duration::from_secs(120)).await {
+            Ok(v) => {
+                (v["jobId"].as_u64().unwrap_or_default(), v["version"].as_str().unwrap_or_default().to_string(), v)
+            }
+            Err(e) => return fail(&message(e)),
+        };
+    if started["source"] == "nodejs.org" {
+        println!("Node {version} is not in Hearth's catalog; downloading it from nodejs.org.");
+    }
     wait_for_job(paths, id, &format!("Node {version} is installed.")).await
 }
 

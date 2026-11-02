@@ -111,8 +111,7 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
 
     // Node 22 (LTS "Jod") and 20 ("Iron") laid out like nodejs.org's archives, and a Node 21 whose
     // download does not match its hash.
-    let node = |version: &str| -> (Vec<u8>, String) {
-        let root = format!("node-v{version}");
+    let node_in = |version: &str, root: String| -> (Vec<u8>, String) {
         let archive = match Os::current() {
             Os::Windows => zip_with(&[
                 (&format!("{root}/node.exe"), version.as_bytes()),
@@ -125,6 +124,7 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
         };
         (archive, root)
     };
+    let node = |version: &str| node_in(version, format!("node-v{version}"));
     let (node22, node22_root) = node("22.21.1");
     let (node20, node20_root) = node("20.19.5");
 
@@ -146,6 +146,35 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
         ("/node/20".into(), node20.clone()),
         ("/node/21".into(), b"not the archive".to_vec()),
     ];
+
+    // nodejs.org under /dist, for versions the catalog lacks: 20.11.1 and 18.20.4 ("Hydrogen") are
+    // good, 20.10.0 does not match its checksum, 18.19.0 is missing from its SHASUMS256.txt,
+    // 22.22.0 must never be fetched (the catalog's 22 wins) and 14.21.3 has no build for this computer.
+    let (suffix, ext, key) = match (Os::current(), Arch::current()) {
+        (Os::Macos, Arch::Arm64) => ("darwin-arm64", "tar.gz", "osx-arm64-tar"),
+        (Os::Macos, _) => ("darwin-x64", "tar.gz", "osx-x64-tar"),
+        (Os::Windows, _) => ("win-x64", "zip", "win-x64-zip"),
+    };
+    let index = json!([
+        { "version": "v22.22.0", "lts": "Jod", "files": [key] },
+        { "version": "v20.11.1", "lts": "Iron", "files": [key] },
+        { "version": "v20.10.0", "lts": "Iron", "files": [key] },
+        { "version": "v18.20.4", "lts": "Hydrogen", "files": [key] },
+        { "version": "v18.19.0", "lts": "Hydrogen", "files": [key] },
+        { "version": "v14.21.3", "lts": "Fermium", "files": ["another-target"] },
+    ]);
+    files.push(("/dist/index.json".into(), serde_json::to_vec(&index).unwrap()));
+    for (version, good, listed) in
+        [("20.11.1", true, true), ("20.10.0", false, true), ("18.20.4", true, true), ("18.19.0", true, false)]
+    {
+        let (archive, root) = node_in(version, format!("node-v{version}-{suffix}"));
+        let file = format!("{root}.{ext}");
+        let hash = if good { hex(&archive) } else { hex(b"another archive") };
+        let listed_as = if listed { file.clone() } else { format!("node-v{version}-aix-ppc64.tar.gz") };
+        let shasums = format!("{}  node-v{version}.tar.gz\n{hash}  {listed_as}\n", hex(b"source"));
+        files.push((format!("/dist/v{version}/SHASUMS256.txt"), shasums.into_bytes()));
+        files.push((format!("/dist/v{version}/{file}"), archive));
+    }
     if serve_composer {
         files.push(("/composer.phar".into(), composer.clone()));
     }
@@ -230,6 +259,7 @@ pub(crate) fn fixture_with(damage_php: bool, serve_composer: bool) -> Fixture {
     paths.ensure().unwrap();
     let mut core = CoreState::new(paths);
     core.catalog = Catalog { url: format!("{base}/manifest.json"), public_key: TEST_PUBLIC_KEY.trim().into() };
+    core.node_dist = format!("{base}/dist");
     Fixture { _dir: dir, _server: server, core, hits }
 }
 
