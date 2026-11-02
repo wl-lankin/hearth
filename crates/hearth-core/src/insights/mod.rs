@@ -3,3 +3,6 @@
 pub mod collector;
 #[cfg(test)]
 mod collector_tests;
+pub mod prepend;
+#[cfg(test)]
+mod prepend_tests;

@@ -199,6 +199,7 @@ fn generated_ini(paths: &HearthPaths, minor: &str) -> Result<String, CoreError> 
         install_dir: install_dir(paths, minor),
         cacert: cacert_path(paths),
         extensions_on,
+        prepend: crate::insights::prepend::for_ini(paths)?,
     }))
 }
 
