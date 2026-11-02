@@ -340,3 +340,95 @@ export const servicesEnv = (id: string): Promise<string> =>
     ? Promise.resolve(['DB_CONNECTION=mysql', 'DB_HOST=127.0.0.1', 'DB_PORT=3307', 'DB_USERNAME=root', 'DB_PASSWORD='].join('\n'))
     : core('services.env', { id });
 export const servicesLog = (id: string): Promise<string> => (demo ? Promise.resolve('ready for connections') : core('services.log', { id }));
+
+export interface MailStatus {
+  port: number;
+  listening: boolean;
+  error: string | null;
+  /** The .env lines that send an app's mail to Hearth. */
+  env: string;
+}
+
+export interface MailSummary {
+  id: string;
+  /** The SMTP username the app sent with (`MAIL_USERNAME`), if any. */
+  site: string | null;
+  from: string;
+  to: string[];
+  subject: string;
+  /** Unix seconds. */
+  received: number;
+  size: number;
+  attachments: number;
+  seen: boolean;
+}
+
+export interface MailAttachment {
+  index: number;
+  name: string;
+  contentType: string;
+  size: number;
+}
+
+export interface Mail extends MailSummary {
+  cc: string[];
+  html: string | null;
+  text: string | null;
+  files: MailAttachment[];
+}
+
+const demoMailEnv = ['MAIL_MAILER=smtp', 'MAIL_HOST=127.0.0.1', 'MAIL_PORT=2525', 'MAIL_USERNAME="${APP_NAME}"', 'MAIL_PASSWORD=null'].join('\n');
+const demoNow = Math.floor(Date.now() / 1000);
+let demoMails: Mail[] = [
+  {
+    id: '1800000000003-0000', site: 'shop', from: 'Shop <hello@shop.test>', to: ['ann@example.test'], subject: 'Your order #1042 is on its way',
+    received: demoNow - 120, size: 48210, attachments: 1, seen: false, cc: [],
+    html: '<div style="font-family:sans-serif;max-width:520px;margin:24px auto;color:#2a2420"><h2 style="color:#e8642c">Thanks for your order, Ann</h2><p>Order #1042 left our warehouse today.</p><p><a href="https://shop.test/orders/1042" style="display:inline-block;padding:10px 18px;background:#e8642c;color:#fff;border-radius:8px;text-decoration:none">Track your parcel</a></p><p style="color:#7a6d64;font-size:13px">Questions? Visit <a href="https://shop.test/help">our help pages</a>.</p></div>',
+    text: 'Thanks for your order, Ann\n\nOrder #1042 left our warehouse today.\nTrack it: https://shop.test/orders/1042',
+    files: [{ index: 0, name: 'invoice-1042.pdf', contentType: 'application/pdf', size: 41230 }],
+  },
+  {
+    id: '1800000000002-0000', site: 'shop', from: 'Shop <hello@shop.test>', to: ['ann@example.test'], subject: 'Reset your password',
+    received: demoNow - 3600, size: 2210, attachments: 0, seen: true, cc: [],
+    html: '<p>Someone asked to reset your password.</p><p><a href="https://shop.test/reset/9f2c">Choose a new password</a></p>',
+    text: 'Someone asked to reset your password.\nhttps://shop.test/reset/9f2c', files: [],
+  },
+  {
+    id: '1800000000001-0000', site: null, from: 'cron@localhost', to: ['dev@example.test'], subject: 'Nightly import finished',
+    received: demoNow - 86400, size: 640, attachments: 0, seen: false, cc: [], html: null,
+    text: 'Imported 1,284 rows in 3.2 s.\nNo errors.', files: [],
+  },
+];
+const demoSummary = (m: Mail): MailSummary => {
+  const { cc: _cc, html: _html, text: _text, files: _files, ...summary } = m;
+  return summary;
+};
+
+export const mailStatus = (): Promise<MailStatus> =>
+  demo ? Promise.resolve({ port: 2525, listening: true, error: null, env: demoMailEnv }) : core('mail.status');
+export const mailList = (): Promise<MailSummary[]> => (demo ? Promise.resolve(demoMails.map(demoSummary)) : core('mail.list'));
+export const mailGet = (id: string): Promise<Mail> => {
+  if (!demo) return core('mail.get', { id });
+  demoMails = demoMails.map((m) => (m.id === id ? { ...m, seen: true } : m));
+  return Promise.resolve(structuredClone(demoMails.find((m) => m.id === id)!));
+};
+export const mailRaw = (id: string): Promise<{ text: string; truncated: boolean }> =>
+  demo ? Promise.resolve({ text: `Subject: ${demoMails.find((m) => m.id === id)?.subject}\r\n\r\n...`, truncated: false }) : core('mail.raw', { id });
+export const mailDelete = async (id: string): Promise<void> => {
+  if (demo) demoMails = demoMails.filter((m) => m.id !== id);
+  else await core('mail.delete', { id });
+};
+export const mailClear = async (site: string | null | undefined): Promise<void> => {
+  if (demo) demoMails = site === undefined ? [] : demoMails.filter((m) => m.site !== site);
+  else await core('mail.clear', site === undefined ? {} : { site });
+};
+export const mailPort = (port: number): Promise<MailStatus> =>
+  demo ? Promise.resolve({ port, listening: true, error: null, env: demoMailEnv.replace('2525', String(port)) }) : core('mail.port', { port });
+export const mailSaveAttachment = (id: string, index: number, path: string) => change('mail.saveAttachment', { id, index, path })();
+
+/** Where to save a file, picked in the system dialog; null when cancelled. */
+export async function pickSavePath(name: string): Promise<string | null> {
+  if (demo) return null;
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  return save({ defaultPath: name });
+}
