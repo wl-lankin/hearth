@@ -165,6 +165,13 @@ fn after<'a>(arg: &'a str, key: &str) -> Option<&'a str> {
     arg.get(..key.len()).filter(|k| k.eq_ignore_ascii_case(key)).map(|_| &arg[key.len()..])
 }
 
+/// An HTTP request line or header, as a browser sends it.
+fn looks_like_http(line: &str) -> bool {
+    let upper = line.to_ascii_uppercase();
+    let methods = ["GET ", "POST ", "PUT ", "HEAD ", "OPTIONS ", "DELETE ", "PATCH ", "CONNECT "];
+    methods.iter().any(|m| upper.starts_with(m)) || upper.contains(" HTTP/") || upper.starts_with("HOST:")
+}
+
 async fn session(stream: TcpStream, paths: HearthPaths, max: usize) {
     let (r, w) = stream.into_split();
     let mut c = Conn { r: BufReader::new(r), w };
@@ -175,6 +182,7 @@ async fn session(stream: TcpStream, paths: HearthPaths, max: usize) {
     let mut logged_in = false;
     let mut from: Option<String> = None;
     let mut to: Vec<String> = vec![];
+    let mut unknown = 0;
     loop {
         let line = match c.line().await {
             Line::Closed => return,
@@ -184,6 +192,12 @@ async fn session(stream: TcpStream, paths: HearthPaths, max: usize) {
             }
             Line::Text(t) => t,
         };
+        // A web page can post a form here with SMTP commands in its body: hang up at the request
+        // line, before the body is read.
+        if looks_like_http(&line) {
+            c.say("421 4.7.0 This is a mail catcher, not a web server").await;
+            return;
+        }
         let (verb, arg) = line.split_once(' ').unwrap_or((line.as_str(), ""));
         let reply = match verb.to_ascii_uppercase().as_str() {
             "EHLO" => {
@@ -294,7 +308,14 @@ async fn session(stream: TcpStream, paths: HearthPaths, max: usize) {
                 c.say("221 2.0.0 Bye").await;
                 return;
             }
-            _ => "502 5.5.2 Command not recognized".into(),
+            _ => {
+                unknown += 1;
+                if unknown >= 3 {
+                    c.say("421 4.7.0 Too many unknown commands").await;
+                    return;
+                }
+                "502 5.5.2 Command not recognized".into()
+            }
         };
         if !c.say(&reply).await {
             return;

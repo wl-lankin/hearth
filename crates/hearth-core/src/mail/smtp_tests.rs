@@ -1,5 +1,5 @@
 use base64::Engine;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -247,4 +247,27 @@ fn the_port_is_kept_in_config() {
     assert_eq!(smtp::configured_port(&paths), 2626);
     std::fs::write(paths.config.join("mail.json"), "garbage").unwrap();
     assert_eq!(smtp::configured_port(&paths), 2525);
+}
+
+/// A web page can post a form to 127.0.0.1:2525 with SMTP commands in its body; the catcher must
+/// hang up at the HTTP request line before the body is read.
+#[tokio::test]
+async fn a_browser_request_is_dropped_before_its_body() {
+    let (_d, paths, port) = catcher(smtp::MAX_SIZE).await;
+    let (mut c, _) = Client::connect(port).await;
+    let body = "HELO x\r\nMAIL FROM:<a@x.test>\r\nRCPT TO:<b@x.test>\r\nDATA\r\nSubject: forged\r\n\r\nx\r\n.\r\n";
+    let request = format!(
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    c.raw(request.as_bytes()).await;
+    let mut rest = String::new();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), c.r.read_to_string(&mut rest)).await;
+    assert!(!rest.contains("354"), "{rest}");
+    assert!(store::list(&paths).is_empty());
+
+    let (mut c, _) = Client::connect(port).await;
+    assert_eq!(code(&c.send("FOO").await), "502");
+    assert_eq!(code(&c.send("BAR").await), "502");
+    assert_eq!(code(&c.send("BAZ").await), "421", "the third unknown command ends the session");
 }
