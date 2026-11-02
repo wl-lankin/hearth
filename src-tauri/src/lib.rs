@@ -135,6 +135,12 @@ pub(crate) fn start_core(app: &AppHandle) -> Result<(), CoreError> {
     tauri::async_runtime::spawn(async move {
         let port = hearth_core::mail::smtp::configured_port(&state.paths);
         let _ = state.mail.start(&state.paths, port).await;
+        // The same for the dump collector; php.ini of every PHP gets (or loses) its dump script.
+        let _ = state.collector.start(hearth_core::insights::collector::config(&state.paths).port).await;
+        let _php = state.php_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if let Err(e) = hearth_core::insights::prepend::apply_all(&state.paths) {
+            eprintln!("Hearth could not set up dumps in php.ini: {e}");
+        }
     });
     Ok(())
 }
@@ -150,6 +156,7 @@ pub(crate) fn stop_core(app: &AppHandle) {
     let core = app.state::<CoreState>().inner().clone();
     tauri::async_runtime::block_on(hearth_core::services::run::stop_all(&core));
     core.mail.stop();
+    core.collector.stop();
     core.supervisor.stop_all();
 }
 

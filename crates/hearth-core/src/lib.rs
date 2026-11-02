@@ -5,6 +5,7 @@ pub mod cli_install;
 pub mod dns;
 pub mod error;
 pub mod herd;
+pub mod insights;
 pub mod ipc;
 pub mod jobs;
 pub mod mail;

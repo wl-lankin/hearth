@@ -36,6 +36,8 @@ pub struct IniContext {
     pub cacert: PathBuf,
     /// The optional extensions that are switched on, with where they come from.
     pub extensions_on: Vec<(String, ExtensionSource)>,
+    /// Hearth's dump script, loaded before every PHP run; `None` when dumps are off.
+    pub prepend: Option<PathBuf>,
 }
 
 fn quoted(path: &Path) -> String {
@@ -84,6 +86,9 @@ pub fn render_ini(ctx: &IniContext) -> String {
             let _ = writeln!(ini, "xdebug.mode = debug,develop");
             let _ = writeln!(ini, "xdebug.start_with_request = trigger");
         }
+    }
+    if let Some(prepend) = &ctx.prepend {
+        let _ = writeln!(ini, "\nauto_prepend_file = {}", quoted(prepend));
     }
     ini.push_str("\n; user.ini is appended below by Hearth\n");
     ini
@@ -137,7 +142,27 @@ mod tests {
             install_dir: Path::new(r"C:\Users\Jörg Müller\.config\hearth\data\php\versions\8.4").into(),
             cacert: Path::new(r"C:\Users\Jörg Müller\.config\hearth\data\php\cacert.pem").into(),
             extensions_on: on,
+            prepend: None,
         })
+    }
+
+    #[test]
+    fn the_prepend_line_is_written_when_dumps_are_on() {
+        let off = windows("8.4", vec![]);
+        assert!(!off.contains("auto_prepend_file"), "{off}");
+        let on = render_ini(&IniContext {
+            os: Os::Macos,
+            minor: "8.4".into(),
+            install_dir: "/h/php/8.4".into(),
+            cacert: "/h/cacert.pem".into(),
+            extensions_on: vec![],
+            prepend: Some("/h/data/collector/prepend.php".into()),
+        });
+        assert!(on.contains("\nauto_prepend_file = \"/h/data/collector/prepend.php\"\n"), "{on}");
+        assert!(
+            on.find("auto_prepend_file").unwrap() < on.find("; user.ini is appended").unwrap(),
+            "a prepend file in user.ini comes later and wins"
+        );
     }
 
     #[test]
@@ -187,6 +212,7 @@ mod tests {
                 ("redis".into(), ExtensionSource::Builtin),
                 ("xdebug".into(), ExtensionSource::ZendSo { file: "lib/xdebug.so".into() }),
             ],
+            prepend: None,
         });
         assert!(
             ini.contains("\nzend_extension=\"/Users/j/.config/hearth/data/php/versions/8.4/lib/xdebug.so\"\n"),
