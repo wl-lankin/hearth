@@ -143,6 +143,7 @@ pub(crate) fn stop_core(app: &AppHandle) {
     // core (they would also die with the process).
     let core = app.state::<CoreState>().inner().clone();
     tauri::async_runtime::block_on(hearth_core::services::run::stop_all(&core));
+    core.mail.stop();
     core.supervisor.stop_all();
 }
 
@@ -152,6 +153,12 @@ fn start_web(app: &AppHandle) {
     // Services marked to start with Hearth (problems show in the Services view).
     let services = core.clone();
     tauri::async_runtime::spawn(async move { hearth_core::services::run::start_autostart(&services).await });
+    // The mail catcher; a taken port shows on the Mail page.
+    let mail = core.clone();
+    tauri::async_runtime::spawn(async move {
+        let port = hearth_core::mail::smtp::configured_port(&mail.paths);
+        let _ = mail.mail.start(&mail.paths, port).await;
+    });
     // macOS asks this responder for every .test name (see /etc/resolver/test).
     #[cfg(target_os = "macos")]
     if core.dns_pipe.is_some() {

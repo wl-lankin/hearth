@@ -131,6 +131,9 @@ pub async fn handle(state: &CoreState, method: &str, params: &Value) -> Result<V
     if let Some(result) = crate::node::api::handle(state, method, params).await {
         return result;
     }
+    if let Some(result) = crate::mail::api::handle(state, method, params).await {
+        return result;
+    }
     Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {method}")))
 }
 
