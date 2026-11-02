@@ -432,3 +432,69 @@ export async function pickSavePath(name: string): Promise<string | null> {
   const { save } = await import('@tauri-apps/plugin-dialog');
   return save({ defaultPath: name });
 }
+
+export interface DumpsStatus {
+  port: number;
+  listening: boolean;
+  error: string | null;
+  /** Whether php.ini loads the dump script. */
+  enabled: boolean;
+}
+
+export interface Dump {
+  id: number;
+  /** Unix milliseconds. */
+  time: number;
+  site: string | null;
+  file: string | null;
+  line: number | null;
+  sapi: string;
+  uri: string | null;
+  text: string;
+  truncated: boolean;
+}
+
+const demoMs = Date.now();
+let demoDumps: Dump[] = [
+  {
+    id: 3, time: demoMs - 4000, site: 'shop.test', file: String.raw`C:\Users\you\Projects\shop\app\Http\Controllers\CartController.php`, line: 42,
+    sapi: 'cgi-fcgi', uri: '/cart?coupon=AUTUMN', truncated: false,
+    text: String.raw`App\Models\Cart {#1842
+  #attributes: array:4 [
+    "id" => 17
+    "user_id" => 3
+    "total" => "84.90"
+    "coupon" => "AUTUMN"
+  ]
+  #relations: array:1 [
+    "items" => Illuminate\Database\Eloquent\Collection {#1850 …2}
+  ]
+}`,
+  },
+  {
+    id: 2, time: demoMs - 65000, site: 'shop.test', file: String.raw`C:\Users\you\Projects\shop\app\Services\Pricing.php`, line: 18,
+    sapi: 'cgi-fcgi', uri: '/cart?coupon=AUTUMN', truncated: false, text: '84.9',
+  },
+  {
+    id: 1, time: demoMs - 3600000, site: 'notes', file: String.raw`C:\Users\you\Projects\notes\routes\console.php`, line: 9,
+    sapi: 'cli', uri: null, truncated: false, text: 'array:2 [\n  0 => "inbox"\n  1 => "archive"\n]',
+  },
+];
+let demoDumpsStatus: DumpsStatus = { port: 2306, listening: true, error: null, enabled: true };
+
+export const dumpsStatus = (): Promise<DumpsStatus> => (demo ? Promise.resolve({ ...demoDumpsStatus }) : core('dumps.status'));
+export const dumpsList = (): Promise<Dump[]> => (demo ? Promise.resolve(structuredClone(demoDumps)) : core('dumps.list'));
+export const dumpsClear = async (): Promise<void> => {
+  if (demo) demoDumps = [];
+  else await core('dumps.clear');
+};
+export const dumpsEnable = (on: boolean): Promise<DumpsStatus> => {
+  if (!demo) return core('dumps.enable', { on });
+  demoDumpsStatus = { ...demoDumpsStatus, enabled: on };
+  return Promise.resolve({ ...demoDumpsStatus });
+};
+export const dumpsPort = (port: number): Promise<DumpsStatus> => {
+  if (!demo) return core('dumps.port', { port });
+  demoDumpsStatus = { ...demoDumpsStatus, port };
+  return Promise.resolve({ ...demoDumpsStatus });
+};
