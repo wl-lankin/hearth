@@ -105,7 +105,14 @@ export function createMailStore(api: MailApi) {
         await refresh();
       });
     },
-    refresh: () => attempt(refresh),
+    /** The background poll: a failure shows, but an error from an action stays until the next one. */
+    async refresh() {
+      try {
+        await refresh();
+      } catch (e) {
+        error = asMessage(e);
+      }
+    },
     async open(id: string) {
       await attempt(async () => {
         current = await api.mailGet(id);

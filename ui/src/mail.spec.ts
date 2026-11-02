@@ -93,6 +93,22 @@ describe('Mail store', () => {
     expect(store.current).toBe(null);
   });
 
+  test('an error stays until the next action, not until the next refresh', async () => {
+    const api = fakeApi({
+      mailDelete: async () => {
+        throw new Error('This mail is gone');
+      },
+    });
+    const store = createMailStore(api);
+    await store.load();
+    await store.remove('3');
+    expect(store.error).toBe('This mail is gone');
+    await store.refresh();
+    expect(store.error).toBe('This mail is gone');
+    await store.open('2');
+    expect(store.error).toBe(null);
+  });
+
   test('a port error shows, and a port that works clears it', async () => {
     const store = createMailStore(
       fakeApi({
