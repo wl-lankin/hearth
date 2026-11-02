@@ -68,6 +68,8 @@ pub struct CoreState {
     pub service_errors: Arc<std::sync::Mutex<std::collections::HashMap<String, String>>>,
     /// One start, stop, delete or port change at a time per service instance.
     pub service_locks: Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    /// Where PHP sends dumps (the app starts it).
+    pub collector: Arc<crate::insights::collector::Collector>,
     /// The mail catcher (the app starts it; tests and the CLI leave it off).
     pub mail: Arc<crate::mail::smtp::Catcher>,
     /// Set while Hearth quits: no new syncs (they could start Caddy or PHP again).
@@ -96,6 +98,7 @@ impl CoreState {
             web_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             service_errors: Default::default(),
             service_locks: Default::default(),
+            collector: Arc::default(),
             mail: Arc::default(),
             quitting: Arc::default(),
         }
