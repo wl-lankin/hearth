@@ -58,7 +58,14 @@ async fn set_port(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
 pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Result<Value, RpcError>> {
     let result = match method {
         "dumps.status" => Ok(status(core)),
-        "dumps.list" => Ok(serde_json::to_value(core.collector.dumps()).unwrap_or(Value::Null)),
+        // `after`: only the dumps newer than that id (the page's poll).
+        "dumps.list" => {
+            let dumps = match params.get("after").and_then(Value::as_u64) {
+                Some(after) => core.collector.dumps_after(after),
+                None => core.collector.dumps(),
+            };
+            Ok(serde_json::to_value(dumps).unwrap_or(Value::Null))
+        }
         "dumps.clear" => {
             core.collector.clear();
             Ok(Value::Null)

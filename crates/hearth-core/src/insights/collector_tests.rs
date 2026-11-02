@@ -135,3 +135,35 @@ fn config_defaults_and_roundtrip() {
     std::fs::write(paths.config.join("collector.json"), "nope").unwrap();
     assert_eq!(collector::config(&paths), CollectorConfig { port: 2306, dumps: true });
 }
+
+#[tokio::test]
+async fn a_dump_mentioning_http_is_kept() {
+    let (c, port) = started().await;
+    send(port, line("[SERVER_PROTOCOL] => HTTP/1.1\nGET /x HTTP/1.1").as_bytes()).await;
+    wait_for(&c, 1).await;
+}
+
+/// PHP cuts at 256 KB before escaping; the escaped line (backslashes doubled) must still arrive,
+/// and PHP's own cut shows as truncated.
+#[tokio::test]
+async fn an_escaped_line_of_a_full_dump_arrives_and_php_cut_shows() {
+    let (c, port) = started().await;
+    let text = r"C:\a\".repeat(TEXT_MAX / 5);
+    let v = json!({"type": "dump", "text": text, "truncated": true});
+    let line = format!("{v}\n");
+    assert!(line.len() > 300 * 1024, "{}", line.len());
+    send(port, line.as_bytes()).await;
+    wait_for(&c, 1).await;
+    assert!(c.dumps()[0].truncated);
+}
+
+#[tokio::test]
+async fn dumps_after_an_id_are_only_the_newer_ones() {
+    let (c, port) = started().await;
+    send(port, format!("{}{}{}", line("a"), line("b"), line("c")).as_bytes()).await;
+    wait_for(&c, 3).await;
+    let first = c.dumps()[2].id;
+    let newer: Vec<String> = c.dumps_after(first).into_iter().map(|d| d.text).collect();
+    assert_eq!(newer, ["c", "b"]);
+    assert!(c.dumps_after(c.dumps()[0].id).is_empty());
+}

@@ -17,8 +17,8 @@ pub const DEFAULT_PORT: u16 = 2306;
 pub const KEEP: usize = 500;
 /// The most text one dump keeps.
 pub const TEXT_MAX: usize = 256 * 1024;
-/// A longer line is skipped whole.
-const LINE_MAX: usize = 300 * 1024;
+/// A longer line is skipped whole. JSON escaping can make 256 KB of text up to six times longer.
+const LINE_MAX: usize = 6 * TEXT_MAX + 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectorConfig {
@@ -78,6 +78,9 @@ struct Incoming {
     sapi: Option<String>,
     uri: Option<String>,
     text: String,
+    /// PHP already cut the text.
+    #[serde(default)]
+    truncated: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -104,7 +107,7 @@ struct Store {
 impl Store {
     fn add(&self, incoming: Incoming) {
         let mut text = incoming.text;
-        let truncated = text.len() > TEXT_MAX;
+        let truncated = incoming.truncated || text.len() > TEXT_MAX;
         if truncated {
             let mut cut = TEXT_MAX;
             while !text.is_char_boundary(cut) {
@@ -165,7 +168,8 @@ async fn session(stream: TcpStream, store: Arc<Store>) {
             }
             continue;
         }
-        if looks_like_http(&buf) {
+        // Dump lines are JSON objects; a browser's request line is not.
+        if !buf.starts_with(b"{") && looks_like_http(&buf) {
             return;
         }
         if let Ok(incoming) = serde_json::from_slice::<Incoming>(&buf) {
@@ -243,6 +247,12 @@ impl Collector {
     /// The kept dumps, newest first.
     pub fn dumps(&self) -> Vec<Dump> {
         self.store.dumps.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect()
+    }
+
+    /// The dumps newer than `id`, newest first (the page asks only for what it has not seen).
+    pub fn dumps_after(&self, id: u64) -> Vec<Dump> {
+        let dumps = self.store.dumps.lock().unwrap_or_else(|e| e.into_inner());
+        dumps.iter().take_while(|d| d.id > id).cloned().collect()
     }
 
     pub fn clear(&self) {

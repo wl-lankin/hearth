@@ -110,13 +110,68 @@ async fn dd_exits_with_1_after_sending() {
     collector.stop();
 }
 
+/// Windows waits out the whole connect timeout on a closed loopback port: only the first dump of a
+/// run may pay it.
 #[test]
 fn a_closed_port_costs_nothing() {
     let php = need_php!();
     let (d, paths) = home();
     write_prepend(&paths, free_port()).unwrap();
     let started = Instant::now();
-    let out = run(&php, d.path(), &paths, "<?php\nfor ($i = 0; $i < 5; $i++) { dump($i); }\necho 'done';\n");
-    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    let out = run(&php, d.path(), &paths, "<?php\nfor ($i = 0; $i < 50; $i++) { dump($i); }\necho 'done';\n");
+    assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
     assert!(String::from_utf8_lossy(&out.stdout).ends_with("done"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_huge_dump_arrives_cut() {
+    let php = need_php!();
+    let (d, paths) = home();
+    let (collector, port) = (Collector::default(), free_port());
+    collector.start(port).await.unwrap();
+    write_prepend(&paths, port).unwrap();
+    let (p, dir) = (paths.clone(), d.path().to_path_buf());
+    let body = r"<?php
+dump(str_repeat('C:\\path\\x.php ', 30000));
+";
+    tokio::task::spawn_blocking(move || run(&php, &dir, &p, body)).await.unwrap();
+    wait_for(&collector, 1).await;
+    assert!(collector.dumps()[0].truncated);
+    collector.stop();
+}
+
+/// Symfony's source link takes the first frame without a class after `VarDumper::dump`; Laravel
+/// looks for the frame in `symfony/var-dumper/Resources/functions/dump.php` and takes the next.
+/// Both must land on the app's own line, as without Hearth.
+#[test]
+fn the_source_is_the_apps_line_for_symfony_and_laravel() {
+    let php = need_php!();
+    let (d, paths) = home();
+    write_prepend(&paths, free_port()).unwrap();
+    let body = r#"<?php
+namespace Symfony\Component\VarDumper;
+class VarDumper {
+    public static function dump($var, $label = null) {
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS);
+        for ($i = 1; $i < count($trace); $i++) {
+            if (isset($trace[$i]['file']) && empty($trace[$i]['class'])) {
+                echo 'symfony=', basename($trace[$i]['file']), ':', $trace[$i]['line'], "\n";
+                break;
+            }
+        }
+        foreach ($trace as $k => $frame) {
+            if (isset($frame['file']) && str_ends_with(str_replace('\\', '/', $frame['file']), 'symfony/var-dumper/Resources/functions/dump.php')) {
+                $source = $trace[$k + 1];
+                echo 'laravel=', basename($source['file']), ':', $source['line'], "\n";
+                break;
+            }
+        }
+    }
+}
+namespace App;
+dump(1);
+"#;
+    let out = run(&php, d.path(), &paths, body);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("symfony=s.php:22\n") && stdout.contains("laravel=s.php:22\n"), "{stdout}");
 }

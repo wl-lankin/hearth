@@ -2,13 +2,17 @@ import type { Dump, DumpsStatus } from './api';
 
 export type DumpsApi = {
   dumpsStatus(): Promise<DumpsStatus>;
-  dumpsList(): Promise<Dump[]>;
+  /** With `after`: only the dumps newer than that id. */
+  dumpsList(after?: number): Promise<Dump[]>;
   dumpsClear(): Promise<void>;
   dumpsEnable(on: boolean): Promise<DumpsStatus>;
   dumpsPort(port: number): Promise<DumpsStatus>;
 };
 
 const asMessage = (e: unknown): string => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e));
+
+/** How many dumps the core keeps, and so the page. */
+const KEEP = 500;
 
 /** How many lines of a dump show before "Show all". */
 export const FOLD_LINES = 30;
@@ -86,7 +90,8 @@ export function createDumpsStore(api: DumpsApi) {
     /** The background poll: a failure shows, but an error from an action stays until the next one. */
     async refresh() {
       try {
-        all = await api.dumpsList();
+        const newer = await api.dumpsList(all[0]?.id);
+        if (newer.length > 0) all = [...newer, ...all].slice(0, KEEP);
       } catch (e) {
         error = asMessage(e);
       }

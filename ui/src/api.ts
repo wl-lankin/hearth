@@ -483,7 +483,10 @@ let demoDumps: Dump[] = [
 let demoDumpsStatus: DumpsStatus = { port: 2306, listening: true, error: null, enabled: true };
 
 export const dumpsStatus = (): Promise<DumpsStatus> => (demo ? Promise.resolve({ ...demoDumpsStatus }) : core('dumps.status'));
-export const dumpsList = (): Promise<Dump[]> => (demo ? Promise.resolve(structuredClone(demoDumps)) : core('dumps.list'));
+export const dumpsList = (after?: number): Promise<Dump[]> =>
+  demo
+    ? Promise.resolve(structuredClone(demoDumps.filter((d) => after === undefined || d.id > after)))
+    : core('dumps.list', after === undefined ? {} : { after });
 export const dumpsClear = async (): Promise<void> => {
   if (demo) demoDumps = [];
   else await core('dumps.clear');

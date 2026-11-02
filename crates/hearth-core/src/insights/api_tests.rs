@@ -59,6 +59,8 @@ async fn list_and_clear_through_the_core() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     assert_eq!((list[0]["site"].clone(), list[0]["text"].clone()), (json!("shop"), json!("1")));
+    let newest = list[0]["id"].clone();
+    assert_eq!(call(&core, "dumps.list", json!({ "after": newest })).await.unwrap(), json!([]), "only newer ones");
     call(&core, "dumps.clear", json!({})).await.unwrap();
     assert_eq!(call(&core, "dumps.list", json!({})).await.unwrap(), json!([]));
     core.collector.stop();

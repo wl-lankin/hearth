@@ -18,7 +18,7 @@ function fakeApi(over: Partial<DumpsApi> = {}) {
       dumps = [d, ...dumps];
     },
     dumpsStatus: async () => ({ ...status }),
-    dumpsList: async () => structuredClone(dumps),
+    dumpsList: async (after) => structuredClone(dumps.filter((d) => after === undefined || d.id > after)),
     dumpsClear: async () => {
       calls.push('clear');
       dumps = [];
@@ -47,6 +47,24 @@ describe('Dumps store', () => {
     api.push(dump(4, 'shop.test'));
     await store.refresh();
     expect(store.dumps.map((d) => d.id)).toEqual([4, 3, 1]);
+  });
+
+  test('the poll asks only for dumps newer than the newest it has', async () => {
+    const asked: (number | undefined)[] = [];
+    const api = fakeApi();
+    const list = api.dumpsList;
+    api.dumpsList = async (after) => {
+      asked.push(after);
+      const all = await list();
+      return after === undefined ? all : all.filter((d) => d.id > after);
+    };
+    const store = createDumpsStore(api);
+    await store.load();
+    api.push(dump(4, null));
+    await store.refresh();
+    await store.refresh();
+    expect(asked).toEqual([undefined, 3, 4]);
+    expect(store.dumps.map((d) => d.id)).toEqual([4, 3, 2, 1]);
   });
 
   test('clear empties the list', async () => {

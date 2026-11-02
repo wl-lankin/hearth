@@ -7,8 +7,10 @@ use crate::{atomic, CoreError, HearthPaths};
 
 const SCRIPT: &str = include_str!("prepend.php");
 
+/// Named like Symfony's own file with dump() in it: Laravel finds a dump's line by that name.
 pub fn script_path(paths: &HearthPaths) -> PathBuf {
-    paths.data.join("collector").join("prepend.php")
+    let parts = ["collector", "symfony", "var-dumper", "Resources", "functions", "dump.php"];
+    parts.iter().fold(paths.data.clone(), |p, part| p.join(part))
 }
 
 /// Writes the script for `port`; an unchanged script is left alone (PHP caches it by mtime).
