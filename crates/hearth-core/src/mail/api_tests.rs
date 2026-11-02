@@ -109,3 +109,15 @@ async fn port_change_moves_the_catcher_and_a_taken_port_keeps_the_old_one() {
     assert!(call(&core, "mail.port", json!({ "port": 0 })).await.is_err());
     core.mail.stop();
 }
+
+#[tokio::test]
+async fn an_opened_mail_has_one_attachments_key() {
+    let (_d, core) = home();
+    let raw =
+        "Subject: a\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nx\r\n\
+--b\r\nContent-Type: text/csv\r\nContent-Disposition: attachment; filename=\"r.csv\"\r\n\r\na,b\r\n--b--\r\n";
+    let id = keep(&core, None, raw);
+    let mail = call(&core, "mail.get", json!({ "id": id })).await.unwrap();
+    assert_eq!(mail["attachments"], json!(1));
+    assert_eq!(mail["files"][0]["name"], json!("r.csv"));
+}

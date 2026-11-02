@@ -51,8 +51,8 @@ fn save_then_list_and_get_a_multipart_mail() {
     assert_eq!(mail.cc, vec!["bob@example.test".to_string()]);
     assert_eq!(mail.text.as_deref().map(str::trim), Some("Thanks for your order."));
     assert!(mail.html.as_deref().unwrap().starts_with("<p>Thanks"));
-    assert_eq!(mail.attachments.len(), 1);
-    let a = &mail.attachments[0];
+    assert_eq!(mail.files.len(), 1);
+    let a = &mail.files[0];
     assert_eq!((a.index, a.name.as_str(), a.content_type.as_str(), a.size), (0, "invoice.pdf", "application/pdf", 13));
     assert_eq!(
         store::attachment(&paths, &saved.id, 0).unwrap(),

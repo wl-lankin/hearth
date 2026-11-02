@@ -61,7 +61,8 @@ pub struct Mail {
     pub html: Option<String>,
     /// The text body (made from the HTML when the mail has none).
     pub text: Option<String>,
-    pub attachments: Vec<Attachment>,
+    /// The attachment files (`attachments` is their count, from the summary).
+    pub files: Vec<Attachment>,
 }
 
 fn dir(paths: &HearthPaths) -> PathBuf {
@@ -235,7 +236,7 @@ pub fn get(paths: &HearthPaths, id: &str) -> Result<Mail, CoreError> {
     }
     let Some(message) = MessageParser::new().parse(&raw) else {
         let text = (!raw.is_empty()).then(|| String::from_utf8_lossy(&raw).into_owned());
-        return Ok(Mail { summary, cc: vec![], html: None, text, attachments: vec![] });
+        return Ok(Mail { summary, cc: vec![], html: None, text, files: vec![] });
     };
     let cc = message
         .cc()
@@ -250,7 +251,7 @@ pub fn get(paths: &HearthPaths, id: &str) -> Result<Mail, CoreError> {
         }
     }
     let text = message.body_text(0).map(|t| t.into_owned()).filter(|t| !t.trim().is_empty());
-    let attachments = attachments_of(&message, html_of(&message).as_deref())
+    let files = attachments_of(&message, html_of(&message).as_deref())
         .iter()
         .enumerate()
         .map(|(i, p)| Attachment {
@@ -260,7 +261,7 @@ pub fn get(paths: &HearthPaths, id: &str) -> Result<Mail, CoreError> {
             size: p.decoded_len() as u64,
         })
         .collect();
-    Ok(Mail { summary, cc, html, text, attachments })
+    Ok(Mail { summary, cc, html, text, files })
 }
 
 fn attachment_name(part: &MessagePart, index: usize) -> String {
@@ -278,7 +279,7 @@ pub fn raw(paths: &HearthPaths, id: &str) -> Result<(String, bool), CoreError> {
     Ok((String::from_utf8_lossy(&raw[..raw.len().min(RAW_LIMIT)]).into_owned(), cut))
 }
 
-/// The name and decoded bytes of attachment `index`, numbered as in `Mail::attachments`.
+/// The name and decoded bytes of attachment `index`, numbered as in `Mail::files`.
 pub fn attachment(paths: &HearthPaths, id: &str, index: u32) -> Result<(String, Vec<u8>), CoreError> {
     let raw = read(&file(paths, id, "eml")?)?;
     let message = MessageParser::new().parse(&raw);
