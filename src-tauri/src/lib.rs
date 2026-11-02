@@ -125,11 +125,17 @@ pub fn run() {
         .expect("Hearth could not start");
 }
 
-/// Starts the IPC server for this Hearth home and keeps its handle.
+/// Starts the IPC server for this Hearth home and keeps its handle, and the mail catcher.
 pub(crate) fn start_core(app: &AppHandle) -> Result<(), CoreError> {
     let state = app.state::<CoreState>().inner().clone();
     let server = tauri::async_runtime::block_on(ipc::serve(&state.paths, ipc::router(state.clone())))?;
     *app.state::<Server>().0.lock().unwrap() = Some(server);
+    // The mail catcher comes and goes with the core (also when a failed update brings it back);
+    // a taken port shows on the Mail page.
+    tauri::async_runtime::spawn(async move {
+        let port = hearth_core::mail::smtp::configured_port(&state.paths);
+        let _ = state.mail.start(&state.paths, port).await;
+    });
     Ok(())
 }
 
@@ -143,6 +149,7 @@ pub(crate) fn stop_core(app: &AppHandle) {
     // core (they would also die with the process).
     let core = app.state::<CoreState>().inner().clone();
     tauri::async_runtime::block_on(hearth_core::services::run::stop_all(&core));
+    core.mail.stop();
     core.supervisor.stop_all();
 }
 

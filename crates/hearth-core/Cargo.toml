@@ -16,6 +16,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "sy
 interprocess = { version = "2", features = ["tokio"] }
 base64 = "0.22"
 minisign-verify = "0.2"
+mail-parser = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 futures-util = "0.3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
@@ -28,6 +29,7 @@ x509-parser = { version = "0.18", features = ["verify"] }
 [dev-dependencies]
 tempfile = "3"
 tiny_http = "0.12"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder"] }
 minisign = "0.7"
 
 [target.'cfg(windows)'.dependencies]
