@@ -70,6 +70,53 @@ describe('Logs store', () => {
     expect(store.entries[0].message).toBe('New');
   });
 
+  test('the page follows the newest log: a first log, a new daily file, a deleted file', async () => {
+    let list: SiteLogs[] = [];
+    const reads: string[] = [];
+    let gone = '';
+    const api = fakeApi({
+      logsSites: async () => structuredClone(list),
+      logsRead: async (site, file) => {
+        if (file === gone) throw new Error(`${file} is gone`);
+        reads.push(`${site} ${file}`);
+        return { size: reads.length, entries: [entry('info', file)] };
+      },
+    });
+    const store = createLogsStore(api);
+    await store.load();
+    expect(store.site).toBe(null);
+    list = [{ site: 'shop', files: [{ name: 'laravel-2026-11-03.log', size: 1, modified: 1 }] }];
+    for (let i = 0; i < 5; i++) await store.poll();
+    expect([store.site, store.file]).toEqual(['shop', 'laravel-2026-11-03.log']);
+    list = [{ site: 'shop', files: [{ name: 'laravel-2026-11-04.log', size: 1, modified: 2 }, list[0].files[0]] }];
+    for (let i = 0; i < 5; i++) await store.poll();
+    expect(store.file).toBe('laravel-2026-11-04.log');
+    gone = 'laravel-2026-11-04.log';
+    list = [{ site: 'shop', files: [{ name: 'laravel-2026-11-03.log', size: 1, modified: 1 }] }];
+    await store.poll();
+    expect([store.file, store.error]).toEqual(['laravel-2026-11-03.log', null]);
+  });
+
+  test('a file picked by hand stays picked', async () => {
+    const api = fakeApi();
+    const store = createLogsStore(api);
+    await store.load();
+    await store.choose('shop', 'laravel-2026-11-02.log');
+    for (let i = 0; i < 6; i++) await store.poll();
+    expect(store.file).toBe('laravel-2026-11-02.log');
+  });
+
+  test('entry keys stay the same when newer lines arrive', async () => {
+    const api = fakeApi();
+    const store = createLogsStore(api);
+    await store.load();
+    const before = store.entries.map((e) => e.key);
+    expect(new Set(before).size).toBe(before.length);
+    api.append(entry('error', 'Newer'));
+    await store.poll();
+    expect(store.entries.slice(1).map((e) => e.key)).toEqual(before);
+  });
+
   test('emptying asks first, then clears', async () => {
     const api = fakeApi();
     const store = createLogsStore(api);

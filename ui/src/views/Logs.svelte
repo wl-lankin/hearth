@@ -4,7 +4,8 @@
   import { createLogsStore, type LevelFilter } from '../logs.svelte';
 
   const store = createLogsStore(api);
-  let open = $state<Record<number, boolean>>({});
+  // Opened entries, by their key (positions shift as new lines arrive on top).
+  let open = $state<Record<string, boolean>>({});
 
   store.load();
 
@@ -68,17 +69,17 @@
     {#if store.entries.length === 0}
       <p class="empty">{store.search || store.level !== 'all' ? 'No entries match.' : 'This log is empty.'}</p>
     {/if}
-    {#each store.entries as e, i (i)}
+    {#each store.entries as e (e.key)}
       <article class="entry">
-        <button class="head" onclick={() => (open[i] = !open[i])} aria-expanded={!!open[i]} disabled={!e.detail}>
+        <button class="head" onclick={() => (open[e.key] = !open[e.key])} aria-expanded={!!open[e.key]} disabled={!e.detail}>
           <span class="level {severity(e.level)}">{e.level}</span>
           <span class="time">{e.time}</span>
           <span class="message">{e.message}</span>
         </button>
-        {#if open[i] && e.detail}
+        {#if open[e.key] && e.detail}
           <pre>{e.detail}</pre>
         {/if}
-        {#if open[i] && e.truncated}<p class="hint">This entry was cut at 64 KB.</p>{/if}
+        {#if open[e.key] && e.truncated}<p class="hint">This entry was cut at 64 KB.</p>{/if}
       </article>
     {/each}
   </section>
