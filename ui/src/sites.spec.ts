@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import type { SitesList, WebStatus } from './api';
 import { createSitesStore, type SitesApi } from './sites.svelte';
 
-const shop = { name: 'shop', kind: 'linked' as const, path: 'C:\\x\\shop', upstream: null, docroot: 'C:\\x\\shop\\public', php: null, secured: false, problem: null };
+const shop = { name: 'shop', kind: 'linked' as const, path: 'C:\\x\\shop', upstream: null, docroot: 'C:\\x\\shop\\public', php: null, secured: false, debug: false, problem: null };
 
 function fakeApi(over: Partial<SitesApi> = {}) {
   let list: SitesList = { sites: [shop], parked: [], httpPort: 8080, httpsPort: 8443 };
@@ -28,6 +28,8 @@ function fakeApi(over: Partial<SitesApi> = {}) {
     sitesUnsecure: async (name) => void calls.push(`unsecure ${name}`),
     tlsTrust: async () => void calls.push('trust'),
     dnsSetup: async () => void calls.push('dns'),
+    sitesDebug: async (name, on) => void calls.push(`debug ${name} ${on}`),
+    debugStatus: async () => ({ port: 9003, listening: true, program: 'phpstorm64' }),
     ...over,
   };
   return api;
@@ -63,6 +65,35 @@ describe('sites store', () => {
     expect(store.node('shop')).toEqual({ text: 'Node 20.19.5', problem: null });
     expect(store.node('blog')).toEqual({ text: 'Node not installed', problem: 'This project wants Node 18 (C:/x/blog/.nvmrc), which is not installed' });
     expect(store.node('plain')).toBe(null);
+  });
+
+  test('the debug switch calls sites.debug, and a refusal rolls back with its reason', async () => {
+    const api = fakeApi();
+    const store = createSitesStore(api);
+    await store.load();
+    await store.debug('shop', true);
+    expect(api.calls).toContain('debug shop true');
+    const refusing = fakeApi({ sitesDebug: async () => { throw 'PHP 8.4 has no xdebug extension'; } });
+    const other = createSitesStore(refusing);
+    await other.load();
+    const pending = other.debug('shop', true);
+    expect(other.sites[0].debug).toBe(true);
+    await pending;
+    expect(other.sites[0].debug).toBe(false);
+    expect(other.errors.shop).toBe('PHP 8.4 has no xdebug extension');
+  });
+
+  test('the IDE line follows debug.status', async () => {
+    let status = { port: 9003, listening: true, program: 'phpstorm64' as string | null };
+    const store = createSitesStore(fakeApi({ debugStatus: async () => ({ ...status }) }));
+    await store.load();
+    expect(store.ide).toBe('phpstorm64 is listening for Xdebug on port 9003');
+    status = { port: 9003, listening: false, program: null };
+    await store.refreshStatus();
+    expect(store.ide).toBe('No IDE is listening on port 9003. Start listening for Xdebug in your IDE.');
+    status = { port: 9003, listening: true, program: null };
+    await store.refreshStatus();
+    expect(store.ide).toBe('A program is listening for Xdebug on port 9003');
   });
 
   test('choosing a PHP version applies at once and rolls back when refused', async () => {
