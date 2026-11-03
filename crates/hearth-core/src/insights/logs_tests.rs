@@ -141,3 +141,26 @@ fn non_utf8_bytes_do_not_fail() {
     let (entries, _) = logs::read(&paths, "shop", "laravel.log").unwrap();
     assert_eq!(entries[0].message, "caf\u{fffd}");
 }
+
+/// A project could hold `storage/logs/x.log` as a link to a file elsewhere: Hearth never lists,
+/// reads or empties it.
+#[test]
+fn a_linked_log_file_is_never_followed() {
+    let (d, paths) = home();
+    let logs = shop(&d, &paths);
+    let outside = d.path().join("precious.txt");
+    std::fs::write(&outside, "keep me").unwrap();
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_file(&outside, logs.join("evil.log"));
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&outside, logs.join("evil.log"));
+    if linked.is_err() {
+        return eprintln!("skipped: this account cannot create symlinks");
+    }
+    std::fs::write(logs.join("laravel.log"), "[2026-11-03 10:00:00] local.INFO: real\n").unwrap();
+    let names: Vec<String> = logs::sites(&paths)[0].files.iter().map(|f| f.name.clone()).collect();
+    assert_eq!(names, ["laravel.log"]);
+    assert!(logs::read(&paths, "shop", "evil.log").is_err());
+    assert!(logs::clear(&paths, "shop", "evil.log").is_err());
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep me");
+}

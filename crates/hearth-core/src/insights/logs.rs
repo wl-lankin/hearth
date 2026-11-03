@@ -128,22 +128,29 @@ pub fn parse(text: &str) -> Vec<Entry> {
         .collect()
 }
 
-/// The folder a site keeps its logs in, if it has one.
-fn logs_dir(paths: &HearthPaths, site: &str) -> Result<PathBuf, CoreError> {
+/// The site's folder, if it has one.
+fn site_folder(paths: &HearthPaths, site: &str) -> Result<PathBuf, CoreError> {
     let found = registry::list(paths).into_iter().find(|s| s.name == site);
-    let folder = found.and_then(|s| s.path).ok_or_else(|| CoreError::Php(format!("{site}.test has no folder")))?;
-    Ok(folder.join("storage").join("logs"))
+    found.and_then(|s| s.path).ok_or_else(|| CoreError::Php(format!("{site}.test has no folder")))
 }
 
-/// A log file of `site`; only a plain `*.log` name inside its logs folder.
+/// A log file of `site`: only a plain `*.log` name, a real file (not a link), whose real path stays
+/// inside the site's folder. A project could hold a link to a file elsewhere, which Empty would cut.
 fn log_file(paths: &HearthPaths, site: &str, name: &str) -> Result<PathBuf, CoreError> {
     let plain = name.ends_with(".log") && !name.contains(['/', '\\']) && !name.contains("..") && name.len() > 4;
     if !plain {
         return Err(CoreError::Php(format!("{name:?} is not a log file name")));
     }
-    let path = logs_dir(paths, site)?.join(name);
-    if !path.is_file() {
-        return Err(CoreError::Php(format!("{name} is gone")));
+    let folder = site_folder(paths, site)?;
+    let path = folder.join("storage").join("logs").join(name);
+    let gone = || CoreError::Php(format!("{name} is gone"));
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| gone())?;
+    if !meta.file_type().is_file() {
+        return Err(CoreError::Php(format!("{name} is not a plain file")));
+    }
+    let (real, root) = (path.canonicalize().map_err(|_| gone())?, folder.canonicalize().map_err(|_| gone())?);
+    if !real.starts_with(&root) {
+        return Err(CoreError::Php(format!("{name} is outside {site}'s folder")));
     }
     Ok(path)
 }
@@ -166,12 +173,12 @@ pub fn sites(paths: &HearthPaths) -> Vec<SiteLogs> {
             .filter_map(|e| e.ok())
             .filter_map(|e| {
                 let name = e.file_name().to_string_lossy().into_owned();
+                // Links are left out (see log_file); file_type does not follow them.
+                if !e.file_type().ok()?.is_file() {
+                    return None;
+                }
                 let meta = e.metadata().ok()?;
-                (meta.is_file() && name.ends_with(".log")).then(|| LogFile {
-                    name,
-                    size: meta.len(),
-                    modified: modified_ms(&meta),
-                })
+                (name.ends_with(".log")).then(|| LogFile { name, size: meta.len(), modified: modified_ms(&meta) })
             })
             .collect();
         if files.is_empty() {
