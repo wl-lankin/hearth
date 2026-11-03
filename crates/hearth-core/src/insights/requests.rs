@@ -205,7 +205,9 @@ fn short(sql: &str) -> String {
 pub fn analyse(queries: &[Query]) -> Vec<Finding> {
     let mut found = vec![];
     // N+1: one shape from one line, again and again.
-    let mut shapes: HashMap<(String, Option<&str>, Option<u32>), Vec<usize>> = HashMap::new();
+    // (shape, file, line) to the queries with it.
+    type Shape<'a> = (String, Option<&'a str>, Option<u32>);
+    let mut shapes: HashMap<Shape, Vec<usize>> = HashMap::new();
     for (i, q) in queries.iter().enumerate() {
         shapes.entry((normalize(&q.sql), q.file.as_deref(), q.line)).or_default().push(i);
     }
