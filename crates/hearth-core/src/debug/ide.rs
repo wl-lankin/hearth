@@ -101,9 +101,30 @@ mod imp {
 mod imp {
     use std::process::Command;
 
-    /// `lsof -Fpc` prints `p<pid>` and `c<command>` lines for each listener.
+    /// `lsof -Fpc` prints `p<pid>` and `c<command>` lines for each listener. `-b` keeps it from
+    /// blocking on kernel calls; after a second it is stopped and nothing counts as found.
     fn lsof(port: u16) -> Option<(u32, Option<String>)> {
-        let out = Command::new("lsof").args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"]).output().ok()?;
+        let mut child = Command::new("/usr/sbin/lsof")
+            .args(["-b", "-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok()?;
+        let started = std::time::Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if started.elapsed() < std::time::Duration::from_secs(1) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+            }
+        }
+        let out = child.wait_with_output().ok()?;
         let text = String::from_utf8_lossy(&out.stdout);
         let mut pid = None;
         let mut command = None;

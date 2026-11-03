@@ -177,3 +177,15 @@ async fn debug_status_reports_a_listener() {
     drop(socket);
     assert_eq!(call(&core, "debug.status", json!({ "port": port })).await.unwrap()["listening"], json!(false));
 }
+
+/// A site isolated to a removed PHP is served on the default one: that one gets Xdebug.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_site_on_a_removed_php_debugs_on_the_one_it_runs_on() {
+    let (_d, core, projects) = home();
+    fake_php(&core.paths, true);
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    call(&core, "sites.isolate", json!({ "name": "shop", "minor": "8.3" })).await.unwrap();
+    call(&core, "sites.debug", json!({ "name": "shop", "on": true })).await.unwrap();
+    let ini = std::fs::read_to_string(crate::php::ini::ini_dir(&core.paths, "8.4").join("php.ini")).unwrap();
+    assert!(ini.contains("zend_extension=xdebug"), "{ini}");
+}

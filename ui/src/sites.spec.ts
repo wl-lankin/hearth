@@ -96,6 +96,32 @@ describe('sites store', () => {
     expect(store.ide).toBe('A program is listening for Xdebug on port 9003');
   });
 
+  test('a slow IDE check is not asked again while it runs, and does not hold up the web status', async () => {
+    let asked = 0;
+    let finish: () => void = () => {};
+    const store = createSitesStore(
+      fakeApi({
+        debugStatus: () => {
+          asked += 1;
+          return new Promise((resolve) => (finish = () => resolve({ port: 9003, listening: false, program: null })));
+        },
+      }),
+    );
+    const loading = store.load();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(asked).toBe(1);
+    // The web status refreshes without waiting for the check that still runs, and asks no second one.
+    await store.refreshStatus();
+    await store.refreshStatus();
+    expect(asked).toBe(1);
+    finish();
+    await loading;
+    // Done: the next refresh starts a new check (left pending here).
+    void store.refreshStatus();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(asked).toBe(2);
+  });
+
   test('choosing a PHP version applies at once and rolls back when refused', async () => {
     const api = fakeApi({ sitesIsolate: async () => { throw 'There is no site shop'; } });
     const store = createSitesStore(api);

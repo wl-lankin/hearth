@@ -32,9 +32,27 @@ export function createSitesStore(api: SitesApi) {
   let error = $state<string | null>(null);
   let nodes = $state<Record<string, NodeWhich>>({});
   let ide = $state<DebugStatus | null>(null);
+  // One IDE check at a time: on macOS it runs lsof, which can be slow.
+  let ideBusy = false;
+
+  /** Starts an IDE check unless one runs; resolves when the one it started is done. */
+  function checkIde(): Promise<void> {
+    if (ideBusy) return Promise.resolve();
+    ideBusy = true;
+    return api
+      .debugStatus()
+      .then((s) => {
+        ide = s;
+      })
+      .catch(() => {})
+      .finally(() => {
+        ideBusy = false;
+      });
+  }
 
   async function reload() {
-    [list, status, php, ide] = await Promise.all([api.sitesList(), api.webStatus(), api.phpList(), api.debugStatus()]);
+    [list, status, php] = await Promise.all([api.sitesList(), api.webStatus(), api.phpList()]);
+    await checkIde();
     const found = await Promise.all(
       list.sites.map(async (site) => [site.name, site.path ? await api.nodeWhich?.(site.path).catch(() => undefined) : undefined] as const),
     );
@@ -128,7 +146,7 @@ export function createSitesStore(api: SitesApi) {
     },
     load: reload,
     async refreshStatus() {
-      [status, ide] = await Promise.all([api.webStatus(), api.debugStatus()]);
+      [status] = await Promise.all([api.webStatus(), checkIde()]);
     },
     /** Whether an IDE listens for Xdebug, in a sentence. */
     get ide() {

@@ -284,3 +284,16 @@ fn a_stopped_web_server_stays_stopped_until_started() {
     h.core.web_paused.store(true, std::sync::atomic::Ordering::Relaxed);
     assert!(!super::service::schedule_sync(&h.core), "the 30 s loop must not start Caddy again after `stop`");
 }
+
+/// A debugged site whose PHP has Xdebug off says so; the trigger alone starts nothing.
+#[test]
+fn a_debugged_site_without_xdebug_gets_a_note() {
+    let h = home();
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    registry::set_debug(&h.core.paths, "shop", true).unwrap();
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    let note = status.notes.get("shop").cloned().unwrap_or_default();
+    assert!(note.contains("Xdebug is off for PHP 8.4"), "{note:?}");
+    assert!(caddyfile(&h).contains("env XDEBUG_TRIGGER hearth"));
+    h.core.supervisor.stop_all();
+}
