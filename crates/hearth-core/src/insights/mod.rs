@@ -9,3 +9,6 @@ mod collector_tests;
 pub mod prepend;
 #[cfg(test)]
 mod prepend_tests;
+pub mod requests;
+#[cfg(test)]
+mod requests_tests;
