@@ -17,16 +17,21 @@ fn failed(e: CoreError) -> RpcError {
 
 fn status(core: &CoreState) -> Value {
     let mut value = serde_json::to_value(core.collector.status()).unwrap_or(Value::Null);
-    value["enabled"] = json!(collector::config(&core.paths).dumps);
+    let config = collector::config(&core.paths);
+    value["enabled"] = json!(config.dumps);
+    value["requests"] = json!(config.requests);
     value
 }
 
-/// Saves the setting, rewrites php.ini of every PHP and lets the pools restart with it.
-fn enable(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
+/// Switches dumps (`requests: false`) or requests on or off: saves the setting, rewrites php.ini of
+/// every PHP and lets the pools restart with it.
+fn enable(core: &CoreState, params: &Value, requests: bool) -> Result<Value, RpcError> {
     let on = params.get("on").and_then(Value::as_bool).ok_or_else(|| invalid("on must be true or false"))?;
     {
         let _php = core.php_lock.lock().unwrap_or_else(|e| e.into_inner());
-        let config = CollectorConfig { dumps: on, ..collector::config(&core.paths) };
+        let now = collector::config(&core.paths);
+        let config =
+            if requests { CollectorConfig { requests: on, ..now } } else { CollectorConfig { dumps: on, ..now } };
         collector::set_config(&core.paths, &config).map_err(failed)?;
         prepend::apply_all(&core.paths).map_err(failed)?;
     }
@@ -70,7 +75,25 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             core.collector.clear();
             Ok(Value::Null)
         }
-        "dumps.enable" => enable(core, params),
+        "dumps.enable" => enable(core, params, false),
+        "requests.enable" => enable(core, params, true),
+        // `after`: only the requests newer than that id (the page's poll); summaries without queries.
+        "requests.list" => {
+            let after = params.get("after").and_then(Value::as_u64).unwrap_or(0);
+            Ok(serde_json::to_value(core.collector.requests_after(after)).unwrap_or(Value::Null))
+        }
+        "requests.get" => match params.get("id").and_then(Value::as_u64) {
+            Some(id) => core
+                .collector
+                .request(id)
+                .map(|r| serde_json::to_value(r).unwrap_or(Value::Null))
+                .ok_or_else(|| failed(CoreError::Php("This request is gone".into()))),
+            None => Err(invalid("id must be a number")),
+        },
+        "requests.clear" => {
+            core.collector.clear_requests();
+            Ok(Value::Null)
+        }
         "dumps.port" => set_port(core, params).await,
         _ => return None,
     };
