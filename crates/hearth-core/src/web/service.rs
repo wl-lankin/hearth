@@ -73,7 +73,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
                     notes.insert(site.name.clone(), note);
                 }
                 match minor {
-                    Some(minor) => Route::Php { docroot: docroot.clone(), minor },
+                    Some(minor) => Route::Php { docroot: docroot.clone(), minor, xdebug: site.debug },
                     None => Route::Skip { reason: note.unwrap_or_default() },
                 }
             }
