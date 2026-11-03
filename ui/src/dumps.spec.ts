@@ -7,7 +7,7 @@ const dump = (id: number, site: string | null, text = `dump ${id}`): Dump => ({
   id, time: 1_800_000_000_000 + id, site, file: '/srv/shop/app/X.php', line: id, sapi: 'fpm-fcgi', uri: '/cart', text, truncated: false,
 });
 
-const status: DumpsStatus = { port: 2306, listening: true, error: null, enabled: true };
+const status: DumpsStatus = { port: 2306, listening: true, error: null, enabled: true, requests: true };
 
 function fakeApi(over: Partial<DumpsApi> = {}) {
   let dumps = [dump(3, 'shop.test'), dump(2, null), dump(1, 'shop.test')];

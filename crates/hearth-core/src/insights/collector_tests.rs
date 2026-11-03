@@ -129,11 +129,14 @@ fn config_defaults_and_roundtrip() {
     let d = tempfile::tempdir().unwrap();
     let paths = HearthPaths::at(d.path().join("hearth"));
     paths.ensure().unwrap();
-    assert_eq!(collector::config(&paths), CollectorConfig { port: 2306, dumps: true });
-    collector::set_config(&paths, &CollectorConfig { port: 2400, dumps: false }).unwrap();
-    assert_eq!(collector::config(&paths), CollectorConfig { port: 2400, dumps: false });
+    assert_eq!(collector::config(&paths), CollectorConfig { port: 2306, dumps: true, requests: true });
+    collector::set_config(&paths, &CollectorConfig { port: 2400, dumps: false, requests: false }).unwrap();
+    assert_eq!(collector::config(&paths), CollectorConfig { port: 2400, dumps: false, requests: false });
+    std::fs::write(paths.config.join("collector.json"), r#"{"port":2307,"dumps":false}"#).unwrap();
+    let older = CollectorConfig { port: 2307, dumps: false, requests: true };
+    assert_eq!(collector::config(&paths), older, "a file from before requests has them on");
     std::fs::write(paths.config.join("collector.json"), "nope").unwrap();
-    assert_eq!(collector::config(&paths), CollectorConfig { port: 2306, dumps: true });
+    assert_eq!(collector::config(&paths), CollectorConfig { port: 2306, dumps: true, requests: true });
 }
 
 #[tokio::test]

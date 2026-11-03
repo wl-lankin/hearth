@@ -73,6 +73,12 @@ async fn enable_off_removes_the_prepend_line_from_every_installed_php() {
     crate::php::service::apply_config(&core.paths, "8.4").unwrap();
     assert!(php_ini(&core.paths).contains("auto_prepend_file"), "on by default");
     assert!(script_path(&core.paths).is_file(), "php.ini never names a missing script");
+    // Requests keep the script loaded; with them off too, dumps off removes it.
+    let config = crate::insights::collector::CollectorConfig {
+        requests: false,
+        ..crate::insights::collector::config(&core.paths)
+    };
+    crate::insights::collector::set_config(&core.paths, &config).unwrap();
     let status = call(&core, "dumps.enable", json!({ "on": false })).await.unwrap();
     assert_eq!(status["enabled"], json!(false));
     assert!(!php_ini(&core.paths).contains("auto_prepend_file"));
@@ -99,6 +105,54 @@ async fn port_change_rewrites_the_prepend_and_a_taken_port_keeps_the_old_one() {
     assert!(script.contains(&format!("tcp://127.0.0.1:{first}")), "the script keeps the port that works");
     assert!(call(&core, "dumps.port", json!({ "port": 70000 })).await.is_err());
     core.collector.stop();
+}
+
+#[tokio::test]
+async fn list_get_and_clear_requests() {
+    let (_d, core) = home();
+    let port = free_port();
+    let status = call(&core, "dumps.port", json!({ "port": port })).await.unwrap();
+    assert_eq!(status["requests"], json!(true));
+    let line = json!({"type": "request", "site": "shop.test", "sapi": "fpm-fcgi", "method": "GET", "uri": "/cart",
+        "status": 200, "ms": 12.0, "memory": 1, "dropped": 0,
+        "queries": [{"sql": "select 1", "bindings": [], "ms": 150.0, "start": 1.0, "connection": "sqlite", "file": "/a.php", "line": 3}]});
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    s.write_all(format!("{line}\n").as_bytes()).await.unwrap();
+    s.shutdown().await.unwrap();
+    let mut list = Value::Null;
+    for _ in 0..100 {
+        list = call(&core, "requests.list", json!({})).await.unwrap();
+        if list.as_array().is_some_and(|a| !a.is_empty()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!((list[0]["uri"].clone(), list[0]["findings"].clone()), (json!("/cart"), json!(["slow"])));
+    assert!(list[0].get("queries").is_none(), "the list leaves the queries out");
+    let id = list[0]["id"].clone();
+    assert_eq!(call(&core, "requests.list", json!({ "after": id })).await.unwrap(), json!([]));
+    let full = call(&core, "requests.get", json!({ "id": id })).await.unwrap();
+    assert_eq!(full["queries"][0]["sql"], json!("select 1"));
+    assert!(call(&core, "requests.get", json!({ "id": 999 })).await.is_err());
+    call(&core, "requests.clear", json!({})).await.unwrap();
+    assert_eq!(call(&core, "requests.list", json!({})).await.unwrap(), json!([]));
+    core.collector.stop();
+}
+
+#[tokio::test]
+async fn requests_off_and_dumps_off_removes_the_prepend_line() {
+    let (_d, core) = home();
+    fake_php(&core.paths);
+    crate::php::service::apply_config(&core.paths, "8.4").unwrap();
+    call(&core, "dumps.enable", json!({ "on": false })).await.unwrap();
+    assert!(php_ini(&core.paths).contains("auto_prepend_file"), "requests still need the script");
+    let status = call(&core, "requests.enable", json!({ "on": false })).await.unwrap();
+    assert_eq!((status["requests"].clone(), status["enabled"].clone()), (json!(false), json!(false)));
+    assert!(!php_ini(&core.paths).contains("auto_prepend_file"));
+    call(&core, "requests.enable", json!({ "on": true })).await.unwrap();
+    assert!(php_ini(&core.paths).contains("auto_prepend_file"));
+    let script = std::fs::read_to_string(script_path(&core.paths)).unwrap();
+    assert!(script.contains("if (false && !function_exists('hearth_dump_text'))"), "dumps stay off in the script");
 }
 
 /// A linked site `shop` with `storage/logs/laravel.log`; returns the log file.

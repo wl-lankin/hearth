@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::insights::requests::{self, Request, RequestSummary};
 use crate::{atomic, CoreError, HearthPaths};
 
 pub const DEFAULT_PORT: u16 = 2306;
@@ -23,13 +24,20 @@ const LINE_MAX: usize = 6 * TEXT_MAX + 64 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectorConfig {
     pub port: u16,
-    /// Whether php.ini loads the prepend script that sends dumps.
+    /// Whether the prepend script defines dump() and dd().
     pub dumps: bool,
+    /// Whether the prepend script records Laravel requests and their queries.
+    #[serde(default = "on")]
+    pub requests: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 impl Default for CollectorConfig {
     fn default() -> Self {
-        CollectorConfig { port: DEFAULT_PORT, dumps: true }
+        CollectorConfig { port: DEFAULT_PORT, dumps: true, requests: true }
     }
 }
 
@@ -70,8 +78,6 @@ pub struct Dump {
 
 #[derive(Deserialize)]
 struct Incoming {
-    #[serde(rename = "type")]
-    kind: String,
     site: Option<String>,
     file: Option<String>,
     line: Option<u32>,
@@ -102,9 +108,23 @@ struct Listening {
 struct Store {
     dumps: Mutex<VecDeque<Dump>>,
     next: AtomicU64,
+    requests: Mutex<VecDeque<Request>>,
+    next_request: AtomicU64,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 impl Store {
+    fn add_request(&self, incoming: requests::Incoming) {
+        let id = self.next_request.fetch_add(1, Ordering::Relaxed) + 1;
+        let request = Request::from_incoming(id, now_ms(), incoming);
+        let mut all = self.requests.lock().unwrap_or_else(|e| e.into_inner());
+        all.push_front(request);
+        all.truncate(requests::KEEP_REQUESTS);
+    }
+
     fn add(&self, incoming: Incoming) {
         let mut text = incoming.text;
         let truncated = incoming.truncated || text.len() > TEXT_MAX;
@@ -172,10 +192,19 @@ async fn session(stream: TcpStream, store: Arc<Store>) {
         if !buf.starts_with(b"{") && looks_like_http(&buf) {
             return;
         }
-        if let Ok(incoming) = serde_json::from_slice::<Incoming>(&buf) {
-            if incoming.kind == "dump" {
-                store.add(incoming);
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&buf) else { continue };
+        match value.get("type").and_then(|t| t.as_str()) {
+            Some("dump") => {
+                if let Ok(incoming) = serde_json::from_value::<Incoming>(value) {
+                    store.add(incoming);
+                }
             }
+            Some("request") => {
+                if let Ok(incoming) = serde_json::from_value::<requests::Incoming>(value) {
+                    store.add_request(incoming);
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -253,6 +282,21 @@ impl Collector {
     pub fn dumps_after(&self, id: u64) -> Vec<Dump> {
         let dumps = self.store.dumps.lock().unwrap_or_else(|e| e.into_inner());
         dumps.iter().take_while(|d| d.id > id).cloned().collect()
+    }
+
+    /// The requests newer than `id`, newest first.
+    pub fn requests_after(&self, id: u64) -> Vec<RequestSummary> {
+        let all = self.store.requests.lock().unwrap_or_else(|e| e.into_inner());
+        all.iter().take_while(|r| r.id > id).map(Request::summary).collect()
+    }
+
+    pub fn request(&self, id: u64) -> Option<Request> {
+        let all = self.store.requests.lock().unwrap_or_else(|e| e.into_inner());
+        all.iter().find(|r| r.id == id).cloned()
+    }
+
+    pub fn clear_requests(&self) {
+        self.store.requests.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     pub fn clear(&self) {

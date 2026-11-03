@@ -437,8 +437,10 @@ export interface DumpsStatus {
   port: number;
   listening: boolean;
   error: string | null;
-  /** Whether php.ini loads the dump script. */
+  /** Whether dump() and dd() are sent to Hearth. */
   enabled: boolean;
+  /** Whether Laravel requests and their queries are recorded. */
+  requests: boolean;
 }
 
 export interface Dump {
@@ -480,7 +482,7 @@ let demoDumps: Dump[] = [
     sapi: 'cli', uri: null, truncated: false, text: 'array:2 [\n  0 => "inbox"\n  1 => "archive"\n]',
   },
 ];
-let demoDumpsStatus: DumpsStatus = { port: 2306, listening: true, error: null, enabled: true };
+let demoDumpsStatus: DumpsStatus = { port: 2306, listening: true, error: null, enabled: true, requests: true };
 
 export const dumpsStatus = (): Promise<DumpsStatus> => (demo ? Promise.resolve({ ...demoDumpsStatus }) : core('dumps.status'));
 export const dumpsList = (after?: number): Promise<Dump[]> =>
@@ -499,6 +501,102 @@ export const dumpsEnable = (on: boolean): Promise<DumpsStatus> => {
 export const dumpsPort = (port: number): Promise<DumpsStatus> => {
   if (!demo) return core('dumps.port', { port });
   demoDumpsStatus = { ...demoDumpsStatus, port };
+  return Promise.resolve({ ...demoDumpsStatus });
+};
+
+export interface RequestSummary {
+  id: number;
+  /** Unix milliseconds. */
+  time: number;
+  site: string | null;
+  sapi: string;
+  method: string | null;
+  uri: string | null;
+  /** The artisan command, for command-line runs. */
+  command: string | null;
+  status: number | null;
+  ms: number;
+  memory: number;
+  queryCount: number;
+  queryMs: number;
+  /** Queries over the 500 kept. */
+  dropped: number;
+  /** The kinds found: n+1, duplicate, slow. */
+  findings: string[];
+}
+
+export interface RequestQuery {
+  sql: string;
+  bindings: string[];
+  ms: number;
+  /** ms after the request started. */
+  startMs: number;
+  connection: string;
+  file: string | null;
+  line: number | null;
+}
+
+export interface RequestFinding {
+  kind: 'n+1' | 'duplicate' | 'slow';
+  text: string;
+  /** Indexes into the queries. */
+  queries: number[];
+}
+
+export interface RequestDetail extends Omit<RequestSummary, 'findings' | 'queryCount' | 'queryMs'> {
+  queries: RequestQuery[];
+  findings: RequestFinding[];
+}
+
+const demoCart = String.raw`C:\Users\you\Projects\shop\app\Http\Controllers\CartController.php`;
+const demoItems = 'select * from "items" where "items"."cart_id" = ? and "items"."cart_id" is not null';
+const demoUser = 'select * from "users" where "id" = ? limit 1';
+const demoRequestDetail: RequestDetail = {
+  id: 7, time: Date.now() - 20000, site: 'shop.test', sapi: 'cgi-fcgi', method: 'GET', uri: '/cart', command: null, status: 200,
+  ms: 186.4, memory: 18874368, dropped: 0,
+  queries: [
+    { sql: demoUser, bindings: ['3'], ms: 0.9, startMs: 12.1, connection: 'sqlite', file: demoCart, line: 18 },
+    { sql: 'select * from "carts" where "user_id" = ?', bindings: ['3'], ms: 1.2, startMs: 14.0, connection: 'sqlite', file: demoCart, line: 21 },
+    ...[17, 18, 19, 20, 21, 22].map((id, i) => ({
+      sql: demoItems, bindings: [String(id)], ms: 1.1, startMs: 18 + i * 4, connection: 'sqlite', file: demoCart, line: 26,
+    })),
+    { sql: demoUser, bindings: ['3'], ms: 0.8, startMs: 44.0, connection: 'sqlite', file: demoCart, line: 31 },
+    { sql: 'select sum("total") as aggregate from "orders" where "user_id" = ?', bindings: ['3'], ms: 128.5, startMs: 48.0, connection: 'sqlite', file: demoCart, line: 34 },
+  ],
+  findings: [
+    { kind: 'n+1', text: `Ran 6 times from CartController.php:26: ${demoItems}`, queries: [2, 3, 4, 5, 6, 7] },
+    { kind: 'duplicate', text: `The same query ran 2 times, first from CartController.php:18: ${demoUser}`, queries: [0, 8] },
+    { kind: 'slow', text: 'Took 129 ms at CartController.php:34: select sum("total") as aggregate from "orders" where "user_id" = ?', queries: [9] },
+  ],
+};
+const demoSummaryOf = (r: RequestDetail): RequestSummary => ({
+  ...r,
+  queryCount: r.queries.length,
+  queryMs: r.queries.reduce((n, q) => n + q.ms, 0),
+  findings: [...new Set(r.findings.map((f) => f.kind))],
+});
+let demoRequests: RequestDetail[] = [
+  demoRequestDetail,
+  { ...demoRequestDetail, id: 6, time: Date.now() - 90000, method: 'POST', uri: '/cart/items', status: 302, ms: 38.2, queries: demoRequestDetail.queries.slice(0, 2), findings: [] },
+  {
+    ...demoRequestDetail, id: 5, time: Date.now() - 400000, site: 'shop', sapi: 'cli', method: null, uri: null, command: 'migrate --seed',
+    status: null, ms: 912.7, queries: demoRequestDetail.queries.slice(0, 2), findings: [],
+  },
+];
+
+export const requestsList = (after?: number): Promise<RequestSummary[]> =>
+  demo
+    ? Promise.resolve(demoRequests.filter((r) => after === undefined || r.id > after).map(demoSummaryOf))
+    : core('requests.list', after === undefined ? {} : { after });
+export const requestsGet = (id: number): Promise<RequestDetail> =>
+  demo ? Promise.resolve(structuredClone(demoRequests.find((r) => r.id === id)!)) : core('requests.get', { id });
+export const requestsClear = async (): Promise<void> => {
+  if (demo) demoRequests = [];
+  else await core('requests.clear');
+};
+export const requestsEnable = (on: boolean): Promise<DumpsStatus> => {
+  if (!demo) return core('requests.enable', { on });
+  demoDumpsStatus = { ...demoDumpsStatus, requests: on };
   return Promise.resolve({ ...demoDumpsStatus });
 };
 
