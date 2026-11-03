@@ -37,6 +37,42 @@ fn change(core: &CoreState, f: impl FnOnce() -> Result<(), CoreError>) -> Result
     Ok(Value::Null)
 }
 
+/// Xdebug's port, where an IDE listens for debug sessions.
+const XDEBUG_PORT: u16 = 9003;
+
+/// Starts (or stops) an Xdebug session for every request of a site. Switching on also switches the
+/// Xdebug extension on for the site's PHP; switching off leaves the extension as it is.
+fn debug(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
+    let name = text(params, "name")?;
+    let on = params.get("on").and_then(Value::as_bool).ok_or_else(|| invalid("on must be true or false"))?;
+    let paths = &core.paths;
+    if !on {
+        return change(core, || registry::set_debug(paths, name, false));
+    }
+    let site = registry::list(paths).into_iter().find(|s| s.name == name);
+    let site = site.ok_or_else(|| failed(CoreError::Php(format!("No site named {name}.test"))))?;
+    if site.kind == registry::SiteKind::Proxy {
+        return Err(failed(CoreError::Php(format!("{name}.test is a proxy: it runs no PHP to debug"))));
+    }
+    let minor = site
+        .php
+        .or_else(|| crate::php::store::load(paths).default)
+        .ok_or_else(|| failed(CoreError::Php("No PHP version is installed".into())))?;
+    crate::php::service::set_extension(core, &minor, "xdebug", true).map_err(failed)?;
+    change(core, || registry::set_debug(paths, name, true))
+}
+
+/// Whether a program listens on Xdebug's port (or `port`, for tests), and which one.
+fn debug_status(params: &Value) -> Value {
+    let port = params.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(XDEBUG_PORT);
+    let found = crate::debug::ide::listener(port);
+    json!({
+        "port": port,
+        "listening": found.is_some(),
+        "program": found.and_then(|l| l.program),
+    })
+}
+
 /// The sites, parked folders and HTTP port.
 pub fn list(core: &CoreState) -> Value {
     let config = registry::load(&core.paths);
@@ -110,6 +146,8 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             (Ok(_), Some(_)) => Err(invalid("minor must be a string like \"8.4\" or null")),
             (Err(e), _) => Err(e),
         },
+        "sites.debug" => debug(core, params),
+        "debug.status" => Ok(debug_status(params)),
         "herd.import" => herd_import(core, params),
         "web.restart" | "web.start" => {
             core.web_paused.store(false, std::sync::atomic::Ordering::Relaxed);
