@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 use crate::insights::collector::{self, CollectorConfig};
-use crate::insights::prepend;
+use crate::insights::{logs, prepend};
 use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR, INVALID_PARAMS};
 use crate::CoreError;
 
@@ -59,7 +59,22 @@ async fn set_port(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
     Ok(status(core))
 }
 
-/// Answers a dumps.* method, or `None` when `method` is not one of them.
+fn text<'a>(params: &'a Value, key: &str) -> Result<&'a str, RpcError> {
+    params.get(key).and_then(Value::as_str).ok_or_else(|| invalid(format!("{key} must be a string")))
+}
+
+/// A log's entries; with the `size` the page already has, just `unchanged` when the file kept it.
+fn read_log(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
+    let (site, file) = (text(params, "site")?, text(params, "file")?);
+    let size = logs::size(&core.paths, site, file).map_err(failed)?;
+    if params.get("size").and_then(Value::as_u64) == Some(size) {
+        return Ok(json!({ "size": size, "unchanged": true }));
+    }
+    let (entries, size) = logs::read(&core.paths, site, file).map_err(failed)?;
+    Ok(json!({ "size": size, "entries": entries }))
+}
+
+/// Answers a dumps.* or logs.* method, or `None` when `method` is not one of them.
 pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Result<Value, RpcError>> {
     let result = match method {
         "dumps.status" => Ok(status(core)),
@@ -95,6 +110,12 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             Ok(Value::Null)
         }
         "dumps.port" => set_port(core, params).await,
+        "logs.sites" => Ok(serde_json::to_value(logs::sites(&core.paths)).unwrap_or(Value::Null)),
+        "logs.read" => read_log(core, params),
+        "logs.clear" => match (text(params, "site"), text(params, "file")) {
+            (Ok(site), Ok(file)) => logs::clear(&core.paths, site, file).map(|()| Value::Null).map_err(failed),
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        },
         _ => return None,
     };
     Some(result)

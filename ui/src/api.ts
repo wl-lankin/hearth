@@ -599,3 +599,64 @@ export const requestsEnable = (on: boolean): Promise<DumpsStatus> => {
   demoDumpsStatus = { ...demoDumpsStatus, requests: on };
   return Promise.resolve({ ...demoDumpsStatus });
 };
+
+export interface LogFile {
+  name: string;
+  size: number;
+  /** Unix milliseconds. */
+  modified: number;
+}
+
+export interface SiteLogs {
+  site: string;
+  /** Newest first. */
+  files: LogFile[];
+}
+
+export interface LogEntry {
+  time: string;
+  env: string;
+  /** Lowercase: debug to emergency. */
+  level: string;
+  /** The first line. */
+  message: string;
+  /** Context and stack trace. */
+  detail: string;
+  truncated: boolean;
+}
+
+export interface LogRead {
+  size: number;
+  entries?: LogEntry[];
+  unchanged?: boolean;
+}
+
+const demoLogSites: SiteLogs[] = [
+  { site: 'shop', files: [{ name: 'laravel.log', size: 48213, modified: Date.now() - 60000 }] },
+  { site: 'notes', files: [{ name: 'laravel-2026-11-03.log', size: 1200, modified: Date.now() - 3600000 }] },
+];
+let demoLogEntries: LogEntry[] = [
+  {
+    time: '2026-11-03 15:42:09', env: 'local', level: 'error', truncated: false,
+    message: 'Division by zero {"userId":3,"exception":"[object] (DivisionByZeroError(code: 0): Division by zero at C:\\Users\\you\\Projects\\shop\\app\\Services\\Pricing.php:18)',
+    detail: String.raw`[stacktrace]
+#0 C:\Users\you\Projects\shop\app\Http\Controllers\CartController.php(40): App\Services\Pricing->total(Object(App\Models\Cart))
+#1 C:\Users\you\Projects\shop\vendor\laravel\framework\src\Illuminate\Routing\Controller.php(54): App\Http\Controllers\CartController->show()
+#2 C:\Users\you\Projects\shop\public\index.php(20): Illuminate\Foundation\Application->handleRequest(Object(Illuminate\Http\Request))
+#3 {main}
+"}`,
+  },
+  { time: '2026-11-03 15:41:55', env: 'local', level: 'warning', truncated: false, message: 'Slow cart total {"userId":3,"ms":812}', detail: '' },
+  { time: '2026-11-03 15:40:12', env: 'local', level: 'info', truncated: false, message: 'User 3 logged in', detail: '' },
+  { time: '2026-11-03 15:40:11', env: 'local', level: 'debug', truncated: false, message: 'Session started', detail: '' },
+];
+
+export const logsSites = (): Promise<SiteLogs[]> => (demo ? Promise.resolve(structuredClone(demoLogSites)) : core('logs.sites'));
+export const logsRead = (site: string, file: string, size?: number): Promise<LogRead> =>
+  demo
+    ? Promise.resolve(size === 48213 ? { size, unchanged: true } : { size: 48213, entries: structuredClone(demoLogEntries) })
+    : core('logs.read', size === undefined ? { site, file } : { site, file, size });
+export const logsClear = async (site: string, file: string): Promise<void> => {
+  if (demo) demoLogEntries = [];
+  else await core('logs.clear', { site, file });
+};

@@ -154,3 +154,42 @@ async fn requests_off_and_dumps_off_removes_the_prepend_line() {
     let script = std::fs::read_to_string(script_path(&core.paths)).unwrap();
     assert!(script.contains("if (false && !function_exists('hearth_dump_text'))"), "dumps stay off in the script");
 }
+
+/// A linked site `shop` with `storage/logs/laravel.log`; returns the log file.
+fn shop_log(d: &tempfile::TempDir, paths: &HearthPaths) -> std::path::PathBuf {
+    let dir = d.path().join("shop");
+    let logs = dir.join("storage").join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    std::fs::create_dir_all(dir.join("public")).unwrap();
+    crate::sites::registry::link(paths, "shop", &dir).unwrap();
+    let file = logs.join("laravel.log");
+    std::fs::write(&file, "[2026-11-03 10:00:00] local.INFO: one\n[2026-11-03 10:00:01] local.ERROR: two\n").unwrap();
+    file
+}
+
+#[tokio::test]
+async fn sites_read_and_clear_logs_through_the_core() {
+    let (d, core) = home();
+    let file = shop_log(&d, &core.paths);
+    let sites = call(&core, "logs.sites", json!({})).await.unwrap();
+    assert_eq!((sites[0]["site"].clone(), sites[0]["files"][0]["name"].clone()), (json!("shop"), json!("laravel.log")));
+    let read = call(&core, "logs.read", json!({ "site": "shop", "file": "laravel.log" })).await.unwrap();
+    assert_eq!(read["entries"][0]["message"], json!("two"));
+    assert_eq!(read["size"], json!(std::fs::metadata(&file).unwrap().len()));
+    assert!(call(&core, "logs.read", json!({ "site": "shop", "file": "../x.log" })).await.is_err());
+    call(&core, "logs.clear", json!({ "site": "shop", "file": "laravel.log" })).await.unwrap();
+    assert_eq!(std::fs::metadata(&file).unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn an_unchanged_log_is_not_parsed_again() {
+    let (d, core) = home();
+    let file = shop_log(&d, &core.paths);
+    let size = std::fs::metadata(&file).unwrap().len();
+    let same = call(&core, "logs.read", json!({ "site": "shop", "file": "laravel.log", "size": size })).await.unwrap();
+    assert_eq!(same, json!({ "size": size, "unchanged": true }));
+    std::fs::write(&file, "[2026-11-03 10:00:02] local.INFO: three\n").unwrap();
+    let changed =
+        call(&core, "logs.read", json!({ "site": "shop", "file": "laravel.log", "size": size })).await.unwrap();
+    assert_eq!(changed["entries"][0]["message"], json!("three"));
+}
