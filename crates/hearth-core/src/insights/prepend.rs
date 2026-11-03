@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::insights::collector;
+use crate::insights::collector::{self, CollectorConfig};
 use crate::{atomic, CoreError, HearthPaths};
 
 const SCRIPT: &str = include_str!("prepend.php");
@@ -13,10 +13,15 @@ pub fn script_path(paths: &HearthPaths) -> PathBuf {
     parts.iter().fold(paths.data.clone(), |p, part| p.join(part))
 }
 
-/// Writes the script for `port`; an unchanged script is left alone (PHP caches it by mtime).
-pub fn write_prepend(paths: &HearthPaths, port: u16) -> Result<PathBuf, CoreError> {
+/// Writes the script for `config`'s port and switches; an unchanged script is left alone (PHP
+/// caches it by mtime).
+pub fn write_prepend(paths: &HearthPaths, config: &CollectorConfig) -> Result<PathBuf, CoreError> {
     let path = script_path(paths);
-    let content = SCRIPT.replace("__HEARTH_PORT__", &port.to_string());
+    let flag = |on: bool| if on { "true" } else { "false" };
+    let content = SCRIPT
+        .replace("__HEARTH_PORT__", &config.port.to_string())
+        .replace("__HEARTH_DUMPS__", flag(config.dumps))
+        .replace("__HEARTH_REQUESTS__", flag(config.requests));
     if std::fs::read_to_string(&path).ok().as_deref() != Some(content.as_str()) {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
@@ -26,13 +31,14 @@ pub fn write_prepend(paths: &HearthPaths, port: u16) -> Result<PathBuf, CoreErro
     Ok(path)
 }
 
-/// The script php.ini should load: written for the configured port when dumps are on, `None` when off.
+/// The script php.ini should load: written for the current settings when dumps or requests are on,
+/// `None` when both are off.
 pub fn for_ini(paths: &HearthPaths) -> Result<Option<PathBuf>, CoreError> {
     let config = collector::config(paths);
-    if !config.dumps {
+    if !config.dumps && !config.requests {
         return Ok(None);
     }
-    write_prepend(paths, config.port).map(Some)
+    write_prepend(paths, &config).map(Some)
 }
 
 /// Rewrites the script and the php.ini of every installed PHP after a dumps setting changed.

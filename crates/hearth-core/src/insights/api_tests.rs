@@ -73,6 +73,12 @@ async fn enable_off_removes_the_prepend_line_from_every_installed_php() {
     crate::php::service::apply_config(&core.paths, "8.4").unwrap();
     assert!(php_ini(&core.paths).contains("auto_prepend_file"), "on by default");
     assert!(script_path(&core.paths).is_file(), "php.ini never names a missing script");
+    // Requests keep the script loaded; with them off too, dumps off removes it.
+    let config = crate::insights::collector::CollectorConfig {
+        requests: false,
+        ..crate::insights::collector::config(&core.paths)
+    };
+    crate::insights::collector::set_config(&core.paths, &config).unwrap();
     let status = call(&core, "dumps.enable", json!({ "on": false })).await.unwrap();
     assert_eq!(status["enabled"], json!(false));
     assert!(!php_ini(&core.paths).contains("auto_prepend_file"));

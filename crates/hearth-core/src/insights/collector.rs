@@ -24,13 +24,20 @@ const LINE_MAX: usize = 6 * TEXT_MAX + 64 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectorConfig {
     pub port: u16,
-    /// Whether php.ini loads the prepend script that sends dumps.
+    /// Whether the prepend script defines dump() and dd().
     pub dumps: bool,
+    /// Whether the prepend script records Laravel requests and their queries.
+    #[serde(default = "on")]
+    pub requests: bool,
+}
+
+fn on() -> bool {
+    true
 }
 
 impl Default for CollectorConfig {
     fn default() -> Self {
-        CollectorConfig { port: DEFAULT_PORT, dumps: true }
+        CollectorConfig { port: DEFAULT_PORT, dumps: true, requests: true }
     }
 }
 

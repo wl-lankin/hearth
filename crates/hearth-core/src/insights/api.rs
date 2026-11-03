@@ -50,7 +50,7 @@ async fn set_port(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
     let config = CollectorConfig { port, ..collector::config(&core.paths) };
     collector::set_config(&core.paths, &config).map_err(failed)?;
     // The script names the port; php.ini only names the script, so it stays as it is.
-    prepend::write_prepend(&core.paths, port).map_err(failed)?;
+    prepend::write_prepend(&core.paths, &config).map_err(failed)?;
     Ok(status(core))
 }
 
