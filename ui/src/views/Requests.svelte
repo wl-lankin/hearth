@@ -3,10 +3,12 @@
   import type { RequestFinding, RequestSummary } from '../api';
   import { shortPath } from '../dumps.svelte';
   import { formatReceived, formatSize } from '../format';
-  import { createRequestsStore, timeline } from '../requests.svelte';
+  import { createRequestsStore, rows, timeline } from '../requests.svelte';
 
   const store = createRequestsStore(api);
   let showAll = $state(false);
+  // N+1 groups opened, by their first query's index.
+  let opened = $state<number[]>([]);
 
   // `?request=<id>` opens a request directly (used for screenshots in the browser demo).
   const requested = Number(new URLSearchParams(location.search).get('request'));
@@ -22,6 +24,7 @@
 
   async function open(id: number) {
     showAll = false;
+    opened = [];
     await store.open(id);
   }
 
@@ -42,7 +45,9 @@
     for (const f of store.current?.findings ?? []) for (const i of f.queries) kinds[i] ??= f.kind;
     return kinds;
   });
-  const shown = $derived(store.current ? (showAll ? store.current.queries : store.current.queries.slice(0, 50)) : []);
+  // N+1 groups fold into their first query until opened; long lists show 50 rows first.
+  const allRows = $derived(store.current ? rows(store.current.queries.length, store.current.findings, new Set(opened)) : []);
+  const shown = $derived(showAll ? allRows : allRows.slice(0, 50));
   const statusClass = (s: RequestSummary['status']) => (s === null ? '' : s >= 500 ? 'bad' : s >= 400 ? 'warn' : 'ok');
   const siteValue = $derived(store.filter === undefined ? '*' : (store.filter ?? ''));
 </script>
@@ -144,7 +149,9 @@
           </div>
           <p class="scale"><span>0 ms</span><span>{ms(Math.max(r.ms, ...r.queries.map((q) => q.startMs + q.ms)))}</span></p>
           <ol class="queries">
-            {#each shown as q, i (i)}
+            {#each shown as row (row.index)}
+              {@const q = r.queries[row.index]}
+              {@const i = row.index}
               <li class:flag={flagged[i] !== null}>
                 <div class="q-head">
                   <span class="muted">#{i + 1}</span>
@@ -154,11 +161,16 @@
                 </div>
                 <code class="sql">{q.sql}</code>
                 {#if q.bindings.length > 0}<code class="bindings">{q.bindings.join(', ')}</code>{/if}
+                {#if row.more > 0}
+                  <button class="more" onclick={() => (opened = [...opened, i])}>
+                    {row.more} more like this
+                  </button>
+                {/if}
               </li>
             {/each}
           </ol>
-          {#if r.queries.length > shown.length}
-            <button class="more" onclick={() => (showAll = true)}>Show all {r.queries.length} queries</button>
+          {#if allRows.length > shown.length}
+            <button class="more" onclick={() => (showAll = true)}>Show all {allRows.length} rows</button>
           {/if}
         {:else}
           <p class="empty">No queries.</p>

@@ -173,7 +173,7 @@ if (__HEARTH_REQUESTS__ && hearth_laravel_wanted() && !function_exists('hearth_l
     /** What this request has collected so far. */
     function &hearth_request_state(): array
     {
-        static $state = ['start' => null, 'queries' => [], 'dropped' => 0];
+        static $state = ['start' => null, 'queries' => [], 'dropped' => 0, 'bytes' => 0];
         if ($state['start'] === null) {
             $state['start'] = (float) ($_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true));
         }
@@ -203,8 +203,11 @@ if (__HEARTH_REQUESTS__ && hearth_laravel_wanted() && !function_exists('hearth_l
             }
             $done = true;
             hearth_request_state();
-            $app->make('events')->listen('Illuminate\Database\Events\QueryExecuted', 'hearth_record_query');
-            register_shutdown_function('hearth_send_request');
+            // A Closure: Laravel's dispatcher takes a string listener for a class to resolve.
+            $app->make('events')->listen('Illuminate\Database\Events\QueryExecuted', \Closure::fromCallable('hearth_record_query'));
+            // Registered from a shutdown function, so it runs after Laravel's own (registered later,
+            // while booting): error pages and their queries come first, and so does their status.
+            register_shutdown_function(static fn () => register_shutdown_function('hearth_send_request'));
         } catch (\Throwable) {
             $done = true;
         }
@@ -228,10 +231,16 @@ if (__HEARTH_REQUESTS__ && hearth_laravel_wanted() && !function_exists('hearth_l
     {
         try {
             $state = &hearth_request_state();
-            if (count($state['queries']) >= 500) {
+            $sql = (string) ($event->sql ?? '');
+            $sql = strlen($sql) > 2000 ? substr($sql, 0, 2000) : $sql;
+            $bindings = array_map('hearth_binding', array_slice(array_values((array) ($event->bindings ?? [])), 0, 50));
+            // At most 500 queries and about 700 KB of them, so the line stays under the collector's limit.
+            $size = strlen($sql) + array_sum(array_map('strlen', $bindings)) + 200;
+            if (count($state['queries']) >= 500 || $state['bytes'] + $size > 700000) {
                 $state['dropped']++;
                 return;
             }
+            $state['bytes'] += $size;
             $ms = (float) ($event->time ?? 0);
             $file = null;
             $line = null;
@@ -249,10 +258,9 @@ if (__HEARTH_REQUESTS__ && hearth_laravel_wanted() && !function_exists('hearth_l
                 $line = $frame['line'] ?? null;
                 break;
             }
-            $sql = (string) ($event->sql ?? '');
             $state['queries'][] = [
-                'sql' => strlen($sql) > 2000 ? substr($sql, 0, 2000) : $sql,
-                'bindings' => array_map('hearth_binding', array_slice(array_values((array) ($event->bindings ?? [])), 0, 50)),
+                'sql' => $sql,
+                'bindings' => $bindings,
                 'ms' => $ms,
                 'start' => max(0.0, (microtime(true) - $state['start']) * 1000 - $ms),
                 'connection' => (string) ($event->connectionName ?? ''),
@@ -267,7 +275,16 @@ if (__HEARTH_REQUESTS__ && hearth_laravel_wanted() && !function_exists('hearth_l
     function hearth_send_request(): void
     {
         try {
-            $state = hearth_request_state();
+            $state = &hearth_request_state();
+            $queries = $state['queries'];
+            $dropped = $state['dropped'];
+            // Out of memory: free the queries and send only the request, or PHP fails again here.
+            $error = error_get_last();
+            if ($error !== null && str_contains((string) $error['message'], 'Allowed memory size')) {
+                $dropped += count($queries);
+                $queries = [];
+                $state['queries'] = [];
+            }
             $cli = in_array(PHP_SAPI, ['cli', 'phpdbg'], true);
             $status = $cli ? null : http_response_code();
             hearth_send_line([
@@ -280,8 +297,8 @@ if (__HEARTH_REQUESTS__ && hearth_laravel_wanted() && !function_exists('hearth_l
                 'status' => is_int($status) ? $status : null,
                 'ms' => (microtime(true) - $state['start']) * 1000,
                 'memory' => memory_get_peak_usage(true),
-                'queries' => $state['queries'],
-                'dropped' => $state['dropped'],
+                'queries' => $queries,
+                'dropped' => $dropped,
             ]);
         } catch (\Throwable) {
             // Sending must never break the app.

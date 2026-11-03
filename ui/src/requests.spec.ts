@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, test } from 'vitest';
 import type { DumpsStatus, RequestDetail, RequestSummary } from './api';
-import { createRequestsStore, timeline, type RequestsApi } from './requests.svelte';
+import { createRequestsStore, rows, timeline, type RequestsApi } from './requests.svelte';
 
 const summary = (id: number, site: string | null, findings: string[] = []): RequestSummary => ({
   id, time: 1_800_000_000_000 + id, site, sapi: 'fpm-fcgi', method: 'GET', uri: `/r${id}`, command: null, status: 200,
@@ -72,6 +72,21 @@ describe('Requests store', () => {
     expect(store.current?.id).toBe(2);
     await store.setEnabled(false);
     expect(store.status?.requests).toBe(false);
+  });
+});
+
+describe('rows', () => {
+  test('an N+1 group shows its first query with the count of the rest, until it is opened', () => {
+    const findings = [
+      { kind: 'n+1' as const, text: '', queries: [1, 2, 3, 5] },
+      { kind: 'duplicate' as const, text: '', queries: [0, 4] },
+    ];
+    expect(rows(6, findings, new Set())).toEqual([
+      { index: 0, more: 0 },
+      { index: 1, more: 3 },
+      { index: 4, more: 0 },
+    ]);
+    expect(rows(6, findings, new Set([1]))).toEqual([0, 1, 2, 3, 4, 5].map((index) => ({ index, more: 0 })));
   });
 });
 

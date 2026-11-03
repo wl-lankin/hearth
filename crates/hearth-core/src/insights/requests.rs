@@ -201,6 +201,13 @@ fn short(sql: &str) -> String {
     s
 }
 
+/// A query that reads: only reads can be N+1 loops or needless duplicates (migrations and seeders
+/// write row after row on purpose).
+fn reads(sql: &str) -> bool {
+    let start = sql.trim_start().get(..6).unwrap_or("").to_ascii_lowercase();
+    start == "select" || start.starts_with("with")
+}
+
 /// N+1 loops, duplicate queries and slow queries, in that order.
 pub fn analyse(queries: &[Query]) -> Vec<Finding> {
     let mut found = vec![];
@@ -208,7 +215,7 @@ pub fn analyse(queries: &[Query]) -> Vec<Finding> {
     // (shape, file, line) to the queries with it.
     type Shape<'a> = (String, Option<&'a str>, Option<u32>);
     let mut shapes: HashMap<Shape, Vec<usize>> = HashMap::new();
-    for (i, q) in queries.iter().enumerate() {
+    for (i, q) in queries.iter().enumerate().filter(|(_, q)| reads(&q.sql)) {
         shapes.entry((normalize(&q.sql), q.file.as_deref(), q.line)).or_default().push(i);
     }
     let mut loops: Vec<(String, Vec<usize>)> =
@@ -224,7 +231,7 @@ pub fn analyse(queries: &[Query]) -> Vec<Finding> {
     }
     // Duplicates: the same query with the same values, outside the loops already named.
     let mut same: HashMap<(&str, &[String]), Vec<usize>> = HashMap::new();
-    for (i, q) in queries.iter().enumerate() {
+    for (i, q) in queries.iter().enumerate().filter(|(_, q)| reads(&q.sql)) {
         same.entry((q.sql.as_str(), q.bindings.as_slice())).or_default().push(i);
     }
     let mut dups: Vec<Vec<usize>> =

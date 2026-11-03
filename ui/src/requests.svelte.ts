@@ -1,4 +1,4 @@
-import type { DumpsStatus, RequestDetail, RequestQuery, RequestSummary } from './api';
+import type { DumpsStatus, RequestDetail, RequestFinding, RequestQuery, RequestSummary } from './api';
 
 export type RequestsApi = {
   dumpsStatus(): Promise<DumpsStatus>;
@@ -15,6 +15,25 @@ const asMessage = (e: unknown): string => (typeof e === 'string' ? e : e instanc
 const KEEP = 200;
 /** The thinnest a query shows on the timeline, in percent. */
 const HAIRLINE = 0.4;
+
+/**
+ * The query rows to show: an N+1 group folds into its first query, with the count of the others,
+ * unless that group (named by its first query's index) is in `open`.
+ */
+export function rows(count: number, findings: RequestFinding[], open: Set<number>): { index: number; more: number }[] {
+  const folded = new Map<number, number>();
+  const hidden = new Set<number>();
+  for (const f of findings) {
+    if (f.kind !== 'n+1' || f.queries.length < 2 || open.has(f.queries[0])) continue;
+    folded.set(f.queries[0], f.queries.length - 1);
+    for (const i of f.queries.slice(1)) hidden.add(i);
+  }
+  const out: { index: number; more: number }[] = [];
+  for (let index = 0; index < count; index++) {
+    if (!hidden.has(index)) out.push({ index, more: folded.get(index) ?? 0 });
+  }
+  return out;
+}
 
 /** Where each query sits on the request's timeline: left edge and width in percent. */
 export function timeline(queries: RequestQuery[], requestMs: number): { left: number; width: number }[] {

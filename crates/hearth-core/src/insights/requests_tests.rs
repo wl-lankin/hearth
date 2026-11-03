@@ -131,3 +131,16 @@ async fn only_the_newest_requests_are_kept() {
     assert!(c.requests_after(newest).is_empty());
     c.stop();
 }
+
+/// Migrations and seeders write row after row from one line: that is not an N+1 loop.
+#[test]
+fn writes_are_never_n_plus_one_or_duplicates() {
+    let insert = "insert into \"migrations\" (\"migration\", \"batch\") values (?, ?)";
+    let writes: Vec<Query> = (0..6).map(|_| q(insert, &["a", "1"], 1.0, 9)).collect();
+    assert!(analyse(&writes).is_empty(), "{:?}", analyse(&writes));
+    let update = "update \"users\" set \"seen\" = ? where \"id\" = ?";
+    assert!(analyse(&[q(update, &["1", "3"], 1.0, 4), q(update, &["1", "3"], 1.0, 5)]).is_empty());
+    let cte = "with recent as (select * from \"items\") select * from recent where \"id\" = ?";
+    let reads: Vec<Query> = (0..5).map(|i| q(cte, &[&i.to_string()], 1.0, 9)).collect();
+    assert_eq!(analyse(&reads)[0].kind, "n+1", "a query starting with WITH is a read");
+}

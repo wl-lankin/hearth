@@ -49,7 +49,11 @@ namespace Fake {
         public function listen($event, $listener) { $this->listeners[$event][] = $listener; }
         public function query(string $sql, array $bindings, float $ms) {
             $event = new \Illuminate\Database\Events\QueryExecuted($sql, $bindings, $ms);
-            foreach ($this->listeners[\Illuminate\Database\Events\QueryExecuted::class] ?? [] as $l) { $l($event); }
+            foreach ($this->listeners[\Illuminate\Database\Events\QueryExecuted::class] ?? [] as $l) {
+                // As Laravel's Dispatcher::makeListener: a string is a class to resolve, never a function.
+                if (is_string($l)) { throw new \RuntimeException("Target class [$l] does not exist."); }
+                $l($event);
+            }
         }
     }
     class App extends \Illuminate\Container\Container {
@@ -120,6 +124,87 @@ echo config() === null ? "no config\n" : "config\n";
     assert!(full.queries[1].start_ms >= 0.0 && full.queries[1].ms == 2.5);
     assert_eq!(summary.findings, vec!["slow".to_string()]);
     collector.stop();
+}
+
+/// Runs a fake-Laravel script and returns the one request the collector got.
+async fn one_request(body: &'static str) -> (crate::insights::requests::Request, String) {
+    let php = php().unwrap();
+    let (d, paths) = home();
+    let (collector, port) = (Collector::default(), free_port());
+    collector.start(port).await.unwrap();
+    write_prepend(&paths, &on(port)).unwrap();
+    let (p, dir) = (paths.clone(), d.path().to_path_buf());
+    let out = tokio::task::spawn_blocking(move || run_laravel(&php, &dir, &p, body, &["db:seed"])).await.unwrap();
+    let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    wait_for_requests(&collector, 1).await;
+    let id = collector.requests_after(0)[0].id;
+    let request = collector.request(id).unwrap();
+    collector.stop();
+    (request, said)
+}
+
+/// A seeder's big inserts: the line stays under the collector's limit, the rest is counted.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_seeder_stays_under_the_line_limit() {
+    if php().is_none() {
+        return eprintln!("skipped: no PHP 8.1+");
+    }
+    let body = r#"<?php
+require __DIR__ . '/vendor/fake.php';
+$events = new Fake\Events();
+new Fake\App($events);
+env('X');
+for ($i = 0; $i < 600; $i++) {
+    $events->query('insert into "posts" ("a", "b") values ' . str_repeat('(?, ?), ', 300), array_fill(0, 50, str_repeat('y', 100)), 0.5);
+}
+"#;
+    let (request, _) = one_request(body).await;
+    assert!(request.dropped > 0, "{}", request.dropped);
+    assert_eq!(request.queries.len() + request.dropped as usize, 600);
+}
+
+/// Laravel registers its own shutdown handler after Hearth's hook ran (error pages render there):
+/// Hearth's request goes out after it, with its queries and the status it set.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_request_is_sent_after_laravels_shutdown_handler() {
+    if php().is_none() {
+        return eprintln!("skipped: no PHP 8.1+");
+    }
+    let body = r#"<?php
+require __DIR__ . '/vendor/fake.php';
+$events = new Fake\Events();
+new Fake\App($events);
+env('X');
+register_shutdown_function(function () use ($events) {
+    $events->query('select * from "errors"', [], 1.0);
+});
+"#;
+    let (request, _) = one_request(body).await;
+    assert_eq!(request.queries.last().map(|q| q.sql.as_str()), Some("select * from \"errors\""));
+}
+
+/// Out of memory: Hearth sends what it can without its queries and never adds a fatal of its own.
+#[tokio::test(flavor = "multi_thread")]
+async fn out_of_memory_sends_without_queries_and_no_second_fatal() {
+    if php().is_none() {
+        return eprintln!("skipped: no PHP 8.1+");
+    }
+    let body = r#"<?php
+require __DIR__ . '/vendor/fake.php';
+ini_set('memory_limit', '32M');
+$events = new Fake\Events();
+new Fake\App($events);
+env('X');
+for ($i = 0; $i < 400; $i++) {
+    $events->query('select * from "items" where "id" = ?', [$i], 0.1);
+}
+$x = str_repeat('x', 64 * 1024 * 1024);
+"#;
+    let (request, said) = one_request(body).await;
+    assert!(said.contains("Allowed memory size"), "{said}");
+    assert!(!said.contains("dump.php"), "a second fatal blames Hearth: {said}");
+    assert!(request.queries.is_empty());
+    assert_eq!(request.dropped, 400);
 }
 
 #[test]
