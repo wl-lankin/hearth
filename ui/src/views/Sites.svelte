@@ -117,12 +117,15 @@
 
 <section class="card list" aria-label="Sites">
   {#if store.sites.length === 0}
-    <EmptyState
-      art={art.sites}
-      title="No sites yet"
-      line="Link a folder and Hearth serves it at name.test"
-      action={{ label: 'Link a folder', onclick: () => (adding = 'link') }}
-    />
+    <!-- A wrapper of this page: the list's grid rules below reach it, so it spans the card. -->
+    <div class="empty">
+      <EmptyState
+        art={art.sites}
+        title="No sites yet"
+        line="Link a folder and Hearth serves it at name.test"
+        action={{ label: 'Link a folder', onclick: () => (adding = 'link') }}
+      />
+    </div>
   {/if}
   {#each store.sites as site (site.name)}
     <div class="row">
@@ -347,6 +350,11 @@
 
   .list.card > :not(.row) {
     grid-column: 1 / -1;
+  }
+
+  .empty {
+    display: flex;
+    justify-content: center;
   }
 
   .row {
