@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{atomic, CoreError, HearthPaths};
 
+pub mod api;
+pub mod reports;
+
 #[derive(Serialize, Deserialize)]
 struct SpxConfig {
     key: String,
