@@ -110,7 +110,7 @@ async function core<T>(method: string, params: Record<string, unknown> = {}): Pr
 
 const demoPhp: PhpList = {
   default: '8.4',
-  installed: [{ minor: '8.4', version: '8.4.27', extensions: { redis: true, xdebug: false } }],
+  installed: [{ minor: '8.4', version: '8.4.27', extensions: { redis: true, xdebug: false, spx: true } }],
 };
 const demoAvailable: AvailableBuild[] = [
   { minor: '8.6', version: '8.6.0RC4', channel: 'rc', installedVersion: null, updateAvailable: false },
@@ -224,6 +224,8 @@ export interface Site {
   secured: boolean;
   /** Every request of this site starts an Xdebug session. */
   debug: boolean;
+  /** SPX profiles every request of this site. */
+  profile: boolean;
   problem: string | null;
 }
 
@@ -252,10 +254,10 @@ const demoSites: SitesList = {
   httpsPort: 8443,
   parked: [String.raw`C:\Users\you\Projects`],
   sites: [
-    { name: 'blog', kind: 'parked', path: String.raw`C:\Users\you\Projects\blog`, upstream: null, docroot: String.raw`C:\Users\you\Projects\blog\public`, php: null, secured: false, debug: false, problem: null },
-    { name: 'shop', kind: 'linked', path: String.raw`C:\Users\you\Code\shop`, upstream: null, docroot: String.raw`C:\Users\you\Code\shop\public`, php: '8.3', secured: true, debug: true, problem: null },
-    { name: 'app.shop', kind: 'proxy', path: null, upstream: 'http://localhost:5173', docroot: null, php: null, secured: false, debug: false, problem: null },
-    { name: 'notes', kind: 'parked', path: String.raw`C:\Users\you\Projects\notes`, upstream: null, docroot: null, php: null, secured: false, debug: false, problem: 'No index.php or index.html found' },
+    { name: 'blog', kind: 'parked', path: String.raw`C:\Users\you\Projects\blog`, upstream: null, docroot: String.raw`C:\Users\you\Projects\blog\public`, php: null, secured: false, debug: false, profile: false, problem: null },
+    { name: 'shop', kind: 'linked', path: String.raw`C:\Users\you\Code\shop`, upstream: null, docroot: String.raw`C:\Users\you\Code\shop\public`, php: '8.3', secured: true, debug: true, profile: true, problem: null },
+    { name: 'app.shop', kind: 'proxy', path: null, upstream: 'http://localhost:5173', docroot: null, php: null, secured: false, debug: false, profile: false, problem: null },
+    { name: 'notes', kind: 'parked', path: String.raw`C:\Users\you\Projects\notes`, upstream: null, docroot: null, php: null, secured: false, debug: false, profile: false, problem: 'No index.php or index.html found' },
   ],
 };
 
@@ -673,3 +675,47 @@ export interface DebugStatus {
 export const sitesDebug = (name: string, on: boolean) => change('sites.debug', { name, on })();
 export const debugStatus = (): Promise<DebugStatus> =>
   demo ? Promise.resolve({ port: 9003, listening: true, program: 'phpstorm64' }) : core('debug.status');
+
+export const sitesProfile = (name: string, on: boolean) => change('sites.profile', { name, on })();
+
+/** One profiled request or command (SPX report metadata). */
+export interface ProfileReport {
+  /** SPX's report key; its web UI opens the report by it. */
+  key: string;
+  /** Unix seconds. */
+  time: number;
+  /** The site's host without the port; empty for a command. */
+  host: string;
+  method: string;
+  /** The request URI, or the command line of a command-line profile. */
+  uri: string;
+  cli: boolean;
+  wallMs: number;
+  /** Bytes. */
+  peakMemory: number;
+  functions: number;
+}
+
+export interface ProfileStatus {
+  /** Whether any installed PHP has SPX (Hearth's macOS builds). */
+  available: boolean;
+  /** The key SPX's web UI asks for. */
+  key: string;
+}
+
+let demoReports: ProfileReport[] = [
+  { key: 'spx-full-20261104_102512-mac-41-1', time: 1793787912, host: 'shop.test', method: 'GET', uri: '/orders?page=2', cli: false, wallMs: 412, peakMemory: 18_874_368, functions: 2841 },
+  { key: 'spx-full-20261104_102455-mac-41-2', time: 1793787895, host: 'shop.test', method: 'POST', uri: '/cart/items', cli: false, wallMs: 96, peakMemory: 12_582_912, functions: 1907 },
+  { key: 'spx-full-20261104_101803-mac-40-3', time: 1793787483, host: '', method: '', uri: 'php artisan migrate', cli: true, wallMs: 2310, peakMemory: 33_554_432, functions: 4120 },
+];
+
+export const profileStatus = (): Promise<ProfileStatus> =>
+  demo ? Promise.resolve({ available: true, key: 'demo' }) : core('profile.status');
+export const profileList = (): Promise<{ reports: ProfileReport[] }> =>
+  demo ? Promise.resolve({ reports: structuredClone(demoReports) }) : core('profile.list');
+export const profileClear = async (): Promise<{ deleted: number }> => {
+  if (!demo) return core('profile.clear');
+  const deleted = demoReports.length;
+  demoReports = [];
+  return { deleted };
+};

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, test } from 'vitest';
-import type { SitesList, WebStatus } from './api';
+import type { PhpList, SitesList, WebStatus } from './api';
 import { createSitesStore, type SitesApi } from './sites.svelte';
 
-const shop = { name: 'shop', kind: 'linked' as const, path: 'C:\\x\\shop', upstream: null, docroot: 'C:\\x\\shop\\public', php: null, secured: false, debug: false, problem: null };
+const shop = { name: 'shop', kind: 'linked' as const, path: 'C:\\x\\shop', upstream: null, docroot: 'C:\\x\\shop\\public', php: null, secured: false, debug: false, profile: false, problem: null };
 
 function fakeApi(over: Partial<SitesApi> = {}) {
   let list: SitesList = { sites: [shop], parked: [], httpPort: 8080, httpsPort: 8443 };
@@ -29,6 +29,7 @@ function fakeApi(over: Partial<SitesApi> = {}) {
     tlsTrust: async () => void calls.push('trust'),
     dnsSetup: async () => void calls.push('dns'),
     sitesDebug: async (name, on) => void calls.push(`debug ${name} ${on}`),
+    sitesProfile: async (name, on) => void calls.push(`profile ${name} ${on}`),
     debugStatus: async () => ({ port: 9003, listening: true, program: 'phpstorm64' }),
     ...over,
   };
@@ -81,6 +82,26 @@ describe('sites store', () => {
     await pending;
     expect(other.sites[0].debug).toBe(false);
     expect(other.errors.shop).toBe('PHP 8.4 has no xdebug extension');
+  });
+
+  test('the profile switch is offered only where the site\'s PHP has SPX, and a refusal rolls back', async () => {
+    const api = fakeApi({
+      phpList: async (): Promise<PhpList> => ({ default: '8.4', installed: [{ minor: '8.4', version: '8.4.27', extensions: { spx: false } }, { minor: '8.3', version: '8.3.36', extensions: {} }] }),
+    });
+    api.setList({ sites: [shop, { ...shop, name: 'old', php: '8.3' }, { ...shop, name: 'gone', php: '8.2' }], parked: [], httpPort: 8080, httpsPort: 8443 });
+    const store = createSitesStore(api);
+    await store.load();
+    expect(store.sites.map((s) => store.canProfile(s))).toEqual([true, false, true]);
+    await store.profile('shop', true);
+    expect(api.calls).toContain('profile shop true');
+    const refusing = fakeApi({ sitesProfile: async () => { throw 'SPX is not available for PHP 8.4'; } });
+    const other = createSitesStore(refusing);
+    await other.load();
+    const pending = other.profile('shop', true);
+    expect(other.sites[0].profile).toBe(true);
+    await pending;
+    expect(other.sites[0].profile).toBe(false);
+    expect(other.errors.shop).toBe('SPX is not available for PHP 8.4');
   });
 
   test('the IDE line follows debug.status', async () => {
