@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '../Select.svelte';
   import * as api from '../api';
   import { createServicesStore } from '../services.svelte';
 
@@ -16,8 +17,7 @@
     return () => clearInterval(timer);
   });
 
-  async function pick(event: Event) {
-    const kind = (event.currentTarget as HTMLSelectElement).value;
+  async function pick(kind: string) {
     if (kind) await store.begin(kind);
   }
 
@@ -49,15 +49,22 @@
 {#if adding}
   <form class="card add" onsubmit={submit}>
     <label for="svc-kind">Service</label>
-    <select id="svc-kind" value={store.draft?.kind ?? ''} onchange={pick} required>
-      <option value="" disabled>Choose a service</option>
-      {#each store.kinds as k (k.kind)}<option value={k.kind}>{k.name}</option>{/each}
-    </select>
+    <Select
+      id="svc-kind"
+      label="Service"
+      value={store.draft?.kind ?? ''}
+      onchange={pick}
+      options={[...(store.draft ? [] : [{ value: '', label: 'Choose a service' }]), ...store.kinds.map((k) => ({ value: k.kind, label: k.name }))]}
+    />
     {#if store.draft}
       <label for="svc-line">Version</label>
-      <select id="svc-line" bind:value={store.draft.line}>
-        {#each store.lines(store.draft.kind) as line (line)}<option value={line}>{line === 'current' ? 'Current' : line}</option>{/each}
-      </select>
+      <Select
+        id="svc-line"
+        label="Version"
+        value={store.draft.line}
+        onchange={(line) => store.draft && (store.draft.line = line)}
+        options={store.lines(store.draft.kind).map((line) => ({ value: line, label: line === 'current' ? 'Current' : line }))}
+      />
       <label for="svc-port">Port</label>
       <input id="svc-port" type="number" min="1" max="65535" bind:value={store.draft.port} required />
       <label for="svc-name">Name</label>
@@ -179,8 +186,7 @@
     gap: 6px;
   }
 
-  input,
-  select {
+  input {
     min-width: 0;
     padding: 5px 8px;
     border: 1px solid var(--border);
@@ -285,21 +291,7 @@
     color: var(--muted);
   }
 
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
-  }
 
-  button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-text);
-    font-weight: 600;
-  }
 
   button.danger {
     border-color: var(--danger);
@@ -319,10 +311,6 @@
     font-weight: 600;
   }
 
-  button:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
 
   .error {
     color: var(--danger);

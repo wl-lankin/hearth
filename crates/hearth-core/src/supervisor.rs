@@ -38,6 +38,11 @@ pub struct ProcessSpec {
     /// After a crash, the process is only restarted while this port is free: when another program
     /// took it, restarting would fail forever, so the process is parked with that reason instead.
     pub guard_port: Option<u16>,
+    /// Windows: `args` reach the program exactly as written, unquoted (cmd reads its own quoting).
+    pub raw_args: bool,
+    /// A clean exit (code 0) starts the process again at once (php-cgi after PHP_FCGI_MAX_REQUESTS);
+    /// without this a finished process stays stopped.
+    pub restart_on_clean_exit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -48,11 +53,22 @@ pub struct ProcessStatus {
     pub pid: Option<u32>,
     pub restarts: u32,
     pub last_error: Option<String>,
+    /// Not running, but restarted after its back-off delay (it crashed).
+    pub waiting: bool,
 }
+
+/// What a stop has to end besides the child itself: on Windows the child's own Job Object, which also
+/// holds everything the child started (a shell's program); on macOS the process group does that.
+#[cfg(windows)]
+type Tree = job::Job;
+/// macOS: the child's process group id (its pid), to stop what survives the child.
+#[cfg(unix)]
+type Tree = u32;
 
 struct Entry {
     spec: ProcessSpec,
     child: Option<Child>,
+    tree: Option<Tree>,
     restarts: u32,
     last_error: Option<String>,
     started: Instant,
@@ -112,9 +128,18 @@ fn answers(port: u16) -> bool {
     TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(150)).is_ok()
 }
 
-/// The last lines of a log, for start errors.
+/// The last lines of a log, for start errors: only its end is read (logs grow long, and this runs
+/// under the supervisor's lock), bytes that are no UTF-8 are replaced.
 pub(crate) fn log_tail(path: &std::path::Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
+    use std::io::{Read, Seek, SeekFrom};
+    let mut bytes = Vec::new();
+    if let Ok(mut file) = std::fs::File::open(path) {
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file.seek(SeekFrom::Start(len.saturating_sub(4096))).is_ok() {
+            let _ = file.read_to_end(&mut bytes);
+        }
+    }
+    let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(3)..].join(" | ")
 }
@@ -163,7 +188,7 @@ impl Supervisor {
         })
     }
 
-    fn spawn(&self, spec: &ProcessSpec) -> Result<Child, CoreError> {
+    fn spawn(&self, spec: &ProcessSpec) -> Result<(Child, Tree), CoreError> {
         #[cfg(windows)]
         return spawn(spec, &self.job);
         #[cfg(unix)]
@@ -180,9 +205,7 @@ impl Supervisor {
                     return Ok(());
                 }
                 if let Some(mut entry) = table.remove(&spec.key) {
-                    if let Some(child) = entry.child.as_mut() {
-                        terminate(child);
-                    }
+                    end(&mut entry);
                 }
             }
         }
@@ -200,7 +223,7 @@ impl Supervisor {
             // A socket file left by a crash would look ready at once.
             let _ = std::fs::remove_file(socket);
         }
-        let child = self.spawn(&spec)?;
+        let (child, tree) = self.spawn(&spec)?;
         let key = spec.key.clone();
         let (ready_port, ready_socket, log) = (spec.ready_port, spec.ready_socket.clone(), spec.log.clone());
         {
@@ -210,6 +233,7 @@ impl Supervisor {
                 Entry {
                     spec,
                     child: Some(child),
+                    tree: Some(tree),
                     restarts: 0,
                     last_error: None,
                     started: Instant::now(),
@@ -253,8 +277,8 @@ impl Supervisor {
             persist(&table, &self.record);
             entry
         };
-        if let Some(mut child) = entry.and_then(|e| e.child) {
-            terminate(&mut child);
+        if let Some(mut entry) = entry {
+            end(&mut entry);
         }
     }
 
@@ -275,9 +299,7 @@ impl Supervisor {
             entries
         };
         for mut entry in entries {
-            if let Some(child) = entry.child.as_mut() {
-                terminate(child);
-            }
+            end(&mut entry);
         }
     }
 
@@ -297,6 +319,7 @@ impl Supervisor {
                     pid: e.child.as_ref().filter(|_| running).map(Child::id),
                     restarts: e.restarts,
                     last_error: e.last_error.clone(),
+                    waiting: !running && e.retry_at.is_some(),
                 }
             })
             .collect();
@@ -329,9 +352,17 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
         if let Some(child) = entry.child.as_mut() {
             if let Ok(Some(status)) = child.try_wait() {
                 entry.child = None;
-                if status.success() {
+                // What it started dies with it, or a restart finds its port taken.
+                end(entry);
+                if status.success() && entry.spec.restart_on_clean_exit {
                     // A clean exit is routine (php-cgi after PHP_FCGI_MAX_REQUESTS): back at once.
                     entry.retry_at = Some(now);
+                    continue;
+                }
+                if status.success() {
+                    // Finished: it stays stopped, its output stays readable.
+                    entry.retry_at = None;
+                    entry.last_error = None;
                     continue;
                 }
                 let tail = log_tail(&entry.spec.log);
@@ -360,8 +391,9 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
             #[cfg(unix)]
             let spawned = spawn(&entry.spec);
             match spawned {
-                Ok(child) => {
+                Ok((child, tree)) => {
                     entry.child = Some(child);
+                    entry.tree = Some(tree);
                     entry.restarts += 1;
                     entry.started = now;
                     entry.retry_at = None;
@@ -396,7 +428,23 @@ fn command(spec: &ProcessSpec) -> Result<Command, CoreError> {
     let out = open_log().map_err(|e| CoreError::io(&spec.log, e))?;
     let err = open_log().map_err(|e| CoreError::io(&spec.log, e))?;
     let mut cmd = Command::new(&spec.program);
-    cmd.args(&spec.args).envs(spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(out).stderr(err);
+    #[cfg(windows)]
+    if spec.raw_args {
+        use std::os::windows::process::CommandExt;
+        let mut joined = OsString::new();
+        for (i, arg) in spec.args.iter().enumerate() {
+            if i > 0 {
+                joined.push(" ");
+            }
+            joined.push(arg);
+        }
+        cmd.raw_arg(joined);
+    } else {
+        cmd.args(&spec.args);
+    }
+    #[cfg(unix)]
+    cmd.args(&spec.args);
+    cmd.envs(spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(out).stderr(err);
     if let Some(cwd) = &spec.cwd {
         cmd.current_dir(cwd);
     }
@@ -408,27 +456,56 @@ fn start_error(spec: &ProcessSpec, e: std::io::Error) -> CoreError {
 }
 
 #[cfg(windows)]
-fn spawn(spec: &ProcessSpec, job: &job::Job) -> Result<Child, CoreError> {
+fn spawn(spec: &ProcessSpec, job: &job::Job) -> Result<(Child, Tree), CoreError> {
     use std::os::windows::process::CommandExt;
     /// No console window for background programs.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut cmd = command(spec)?;
     cmd.creation_flags(CREATE_NO_WINDOW);
     let mut child = cmd.spawn().map_err(|e| start_error(spec, e))?;
-    if let Err(e) = job.assign(&child) {
-        let _ = child.kill();
-        return Err(CoreError::Php(format!("Could not supervise {}: {e}", spec.key)));
+    // Hearth's job first (everything dies with Hearth), then the child's own one inside it.
+    let tree = job.assign(&child).and_then(|()| job::Job::plain()).and_then(|tree| tree.assign(&child).map(|()| tree));
+    match tree {
+        Ok(tree) => Ok((child, tree)),
+        Err(e) => {
+            let _ = child.kill();
+            Err(CoreError::Php(format!("Could not supervise {}: {e}", spec.key)))
+        }
     }
-    Ok(child)
 }
 
 #[cfg(unix)]
-fn spawn(spec: &ProcessSpec) -> Result<Child, CoreError> {
+fn spawn(spec: &ProcessSpec) -> Result<(Child, Tree), CoreError> {
     use std::os::unix::process::CommandExt;
     let mut cmd = command(spec)?;
     // Own process group, so stopping it also stops its workers (php-fpm).
     cmd.process_group(0);
-    cmd.spawn().map_err(|e| start_error(spec, e))
+    cmd.spawn()
+        .map(|c| {
+            let group = c.id();
+            (c, group)
+        })
+        .map_err(|e| start_error(spec, e))
+}
+
+/// Stops an entry's child and everything it started.
+fn end(entry: &mut Entry) {
+    #[cfg(windows)]
+    if let Some(tree) = entry.tree.take() {
+        tree.terminate();
+    }
+    #[cfg(unix)]
+    let group = entry.tree.take();
+    if let Some(child) = entry.child.as_mut() {
+        terminate(child);
+    } else {
+        // The child is gone (crashed): what it started may still run in its group.
+        #[cfg(unix)]
+        if let Some(group) = group {
+            // SAFETY: a plain signal to the group; a pid is not reused while its group still has members.
+            unsafe { libc::kill(-(group as i32), libc::SIGKILL) };
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -443,8 +520,12 @@ pub(crate) fn terminate(child: &mut Child) {
     // SAFETY: plain signal calls on the child's process group.
     unsafe { libc::kill(group, libc::SIGTERM) };
     let deadline = Instant::now() + Duration::from_secs(2);
+    // Until the whole group is gone, not just the child: a program it started may ignore SIGTERM.
+    // SAFETY: signal 0 only asks whether the group still has members.
+    let group_left = || unsafe { libc::kill(group, 0) } == 0;
     while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        let child_done = matches!(child.try_wait(), Ok(Some(_)));
+        if child_done && !group_left() {
             return;
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -462,7 +543,7 @@ mod job {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
 
     /// A Job Object whose processes are killed when its last handle closes (Hearth exiting or crashing).
@@ -494,6 +575,23 @@ mod job {
                 }
                 Ok(job)
             }
+        }
+
+        /// A job without limits, nested in the job its first process is already in: closing it
+        /// kills nothing (a detached database shuts down on its own), `terminate` ends all of it.
+        pub fn plain() -> std::io::Result<Job> {
+            // SAFETY: anonymous job, no attributes.
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(Job(handle))
+        }
+
+        /// Ends every process in the job, also those its processes started.
+        pub fn terminate(&self) {
+            // SAFETY: valid handle; exit code 1 like a kill.
+            unsafe { TerminateJobObject(self.0, 1) };
         }
 
         pub fn assign(&self, child: &Child) -> std::io::Result<()> {

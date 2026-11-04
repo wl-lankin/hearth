@@ -166,6 +166,9 @@ fn start_web(app: &AppHandle) {
     // Services marked to start with Hearth (problems show in the Services view).
     let services = core.clone();
     tauri::async_runtime::spawn(async move { hearth_core::services::run::start_autostart(&services).await });
+    // The same for the sites' dev processes (a failed one shows on the Processes page).
+    let processes = core.clone();
+    tauri::async_runtime::spawn_blocking(move || hearth_core::processes::run::start_autostart(&processes));
     // macOS asks this responder for every .test name (see /etc/resolver/test).
     #[cfg(target_os = "macos")]
     if core.dns_pipe.is_some() {

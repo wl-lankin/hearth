@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '../Select.svelte';
   import * as api from '../api';
   import type { RequestFinding, RequestSummary } from '../api';
   import { shortPath } from '../dumps.svelte';
@@ -28,8 +29,7 @@
     await store.open(id);
   }
 
-  function pickSite(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
+  function pickSite(value: string) {
     store.filter = value === '*' ? undefined : value === '' ? null : value;
   }
 
@@ -80,12 +80,17 @@
 <section class="split" class:reading={!!store.current}>
   <div class="card list" aria-label="Requests">
     <div class="list-head">
-      <select aria-label="Site" value={siteValue} onchange={pickSite}>
-        <option value="*">All sites ({store.sites.reduce((n, s) => n + s.count, 0)})</option>
-        {#each store.sites as s (s.site ?? '')}
-          <option value={s.site ?? ''}>{s.label} ({s.count})</option>
-        {/each}
-      </select>
+      <span class="pick">
+        <Select
+          label="Site"
+          value={siteValue}
+          onchange={pickSite}
+          options={[
+            { value: '*', label: `All sites (${store.sites.reduce((n, s) => n + s.count, 0)})` },
+            ...store.sites.map((s) => ({ value: s.site ?? '', label: `${s.label} (${s.count})` })),
+          ]}
+        />
+      </span>
       <button onclick={() => store.clear()} disabled={store.requests.length === 0}>Clear</button>
     </div>
     {#if store.requests.length === 0}
@@ -235,8 +240,9 @@
     padding: 10px;
     border-bottom: 1px solid var(--border);
   }
-  .list-head select {
+  .list-head .pick {
     flex: 1;
+    min-width: 0;
   }
   ul,
   ol {
@@ -468,23 +474,6 @@
   }
   .muted {
     color: var(--muted);
-  }
-  select {
-    min-width: 0;
-    padding: 5px 8px;
-    border: 1px solid var(--border);
-    border-radius: 7px;
-    background: var(--surface);
-    color: var(--text);
-    font: inherit;
-  }
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
   }
   button:disabled {
     cursor: default;

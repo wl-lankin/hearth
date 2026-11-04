@@ -33,6 +33,11 @@ fn change(core: &CoreState, f: impl FnOnce() -> Result<(), CoreError>) -> Result
         let _guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
         f().map_err(failed)?;
     }
+    // A site that is gone (unlinked, unparked) takes its processes with it.
+    // The change itself happened: a failed cleanup must not keep the web server from following it.
+    if let Err(e) = crate::processes::run::prune(core) {
+        eprintln!("Hearth could not clean up the processes of a removed site: {e}");
+    }
     schedule_sync(core);
     Ok(Value::Null)
 }

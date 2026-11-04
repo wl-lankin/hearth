@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '../Select.svelte';
   import * as api from '../api';
   import { formatSize } from '../format';
   import { createLogsStore, type LevelFilter } from '../logs.svelte';
@@ -15,14 +16,14 @@
     return () => clearInterval(timer);
   });
 
-  async function pickSite(event: Event) {
+  async function pickSite(value: string) {
     open = {};
-    await store.choose((event.currentTarget as HTMLSelectElement).value);
+    await store.choose(value);
   }
 
-  async function pickFile(event: Event) {
+  async function pickFile(value: string) {
     open = {};
-    if (store.site) await store.choose(store.site, (event.currentTarget as HTMLSelectElement).value);
+    if (store.site) await store.choose(store.site, value);
   }
 
   const levels: { id: LevelFilter; label: string }[] = [
@@ -41,12 +42,17 @@
   <p class="card empty">No logs yet. Sites with a <code>storage/logs</code> folder show their Laravel logs here.</p>
 {:else}
   <section class="card bar">
-    <select aria-label="Site" value={store.site ?? ''} onchange={pickSite}>
-      {#each store.sites as s (s.site)}<option value={s.site}>{s.site}.test</option>{/each}
-    </select>
-    <select aria-label="Log file" value={store.file ?? ''} onchange={pickFile}>
-      {#each store.files as f (f.name)}<option value={f.name}>{f.name} ({formatSize(f.size)})</option>{/each}
-    </select>
+    <span class="pick">
+      <Select label="Site" value={store.site ?? ''} onchange={pickSite} options={store.sites.map((s) => ({ value: s.site, label: `${s.site}.test` }))} />
+    </span>
+    <span class="pick">
+      <Select
+        label="Log file"
+        value={store.file ?? ''}
+        onchange={pickFile}
+        options={store.files.map((f) => ({ value: f.name, label: `${f.name} (${formatSize(f.size)})` }))}
+      />
+    </span>
     <div class="levels" role="group" aria-label="Level">
       {#each levels as l (l.id)}
         <button class:on={store.level === l.id} aria-pressed={store.level === l.id} onclick={() => (store.level = l.id)}>{l.label}</button>
@@ -86,6 +92,10 @@
 {/if}
 
 <style>
+  .pick {
+    min-width: 180px;
+    max-width: 280px;
+  }
   h1 {
     margin: 0 0 16px;
     font-size: 22px;
@@ -221,8 +231,7 @@
     font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
     font-size: 12px;
   }
-  input,
-  select {
+  input {
     min-width: 0;
     padding: 5px 8px;
     border: 1px solid var(--border);
@@ -230,14 +239,6 @@
     background: var(--surface);
     color: var(--text);
     font: inherit;
-  }
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
   }
   button:disabled {
     cursor: default;

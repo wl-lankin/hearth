@@ -30,6 +30,8 @@ fn spec(dir: &tempfile::TempDir, key: &str, port: u16, crash_after_ms: Option<u6
         ready_port: Some(port),
         ready_socket: None,
         guard_port: None,
+        raw_args: false,
+        restart_on_clean_exit: true,
     }
 }
 
@@ -175,5 +177,127 @@ fn a_crashed_process_whose_port_was_taken_is_parked_not_restarted() {
     let status = &sup.status()[0];
     assert_eq!(status.restarts, 0, "no restart onto a taken port");
     assert_eq!(status.last_error.as_deref(), Some(format!("Port {port} is used by another program").as_str()));
+    sup.stop_all();
+}
+
+/// A shell and the program it started (as `npm run dev` starts node): stopping the shell's process
+/// must end the program too, or it keeps its port after Stop.
+fn shell_spec(dir: &tempfile::TempDir, key: &str, port: u16) -> ProcessSpec {
+    let (program, args): (PathBuf, Vec<std::ffi::OsString>) = if cfg!(windows) {
+        ("cmd.exe".into(), vec!["/d".into(), "/s".into(), "/c".into(), format!("{} {port}", helper().display()).into()])
+    } else {
+        ("/bin/sh".into(), vec!["-c".into(), format!("'{}' {port}; true", helper().display()).into()])
+    };
+    ProcessSpec {
+        key: key.into(),
+        program,
+        args,
+        env: vec![],
+        cwd: None,
+        log: dir.path().join(format!("{key}.log")),
+        ready_port: Some(port),
+        ready_socket: None,
+        guard_port: None,
+        raw_args: false,
+        restart_on_clean_exit: true,
+    }
+}
+
+#[test]
+fn stopping_a_shell_stops_what_it_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    let port = free_port();
+    sup.ensure(shell_spec(&dir, "dev", port)).unwrap();
+    assert!(answers(port));
+    sup.stop("dev");
+    eventually("the program the shell started stops", || !answers(port));
+}
+
+#[test]
+fn stop_all_stops_what_shells_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    let port = free_port();
+    sup.ensure(shell_spec(&dir, "dev", port)).unwrap();
+    sup.stop_all();
+    eventually("the program the shell started stops", || !answers(port));
+}
+
+/// A shell running `script` (no port): for processes that finish or crash on their own.
+fn script_spec(dir: &tempfile::TempDir, key: &str, script: &str) -> ProcessSpec {
+    let (program, args): (PathBuf, Vec<std::ffi::OsString>) = if cfg!(windows) {
+        ("cmd.exe".into(), vec!["/d".into(), "/s".into(), "/c".into(), format!("\"{script}\"").into()])
+    } else {
+        ("/bin/sh".into(), vec!["-c".into(), script.into()])
+    };
+    ProcessSpec {
+        key: key.into(),
+        program,
+        args,
+        env: vec![],
+        cwd: None,
+        log: dir.path().join(format!("{key}.log")),
+        ready_port: None,
+        ready_socket: None,
+        guard_port: None,
+        raw_args: cfg!(windows),
+        restart_on_clean_exit: false,
+    }
+}
+
+/// A user's command that finishes (`npm run build`, `migrate:fresh --seed`) runs once: run again
+/// and again, it would burn the CPU and seed the database over and over.
+#[test]
+fn a_command_that_finishes_is_not_run_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    sup.ensure(script_spec(&dir, "build", "echo built")).unwrap();
+    std::thread::sleep(Duration::from_millis(1500));
+    let s = &sup.status()[0];
+    assert_eq!((s.running, s.waiting, s.restarts, s.last_error.clone()), (false, false, 0, None));
+    let log = std::fs::read_to_string(dir.path().join("build.log")).unwrap();
+    assert_eq!(log.matches("built").count(), 1, "{log}");
+}
+
+/// A crashed command waits for its next try: the page must still offer Stop then.
+#[test]
+fn a_crashed_command_is_reported_waiting_for_its_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    sup.ensure(script_spec(&dir, "dev", "echo broken && exit 3")).unwrap();
+    eventually("the crash is noticed", || sup.status()[0].waiting);
+    let s = &sup.status()[0];
+    assert!(!s.running);
+    assert!(s.last_error.as_deref().is_some_and(|e| e.contains("broken")), "{s:?}");
+    sup.stop("dev");
+    assert!(sup.status().is_empty());
+}
+
+/// The reason in `last_error` comes from the end of a long log, also with non-UTF-8 bytes in it.
+#[test]
+fn the_log_tail_reads_only_the_end_and_survives_bad_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("x.log");
+    let mut bytes = "noise\n".repeat(400_000).into_bytes();
+    bytes.extend_from_slice(b"caf\xe9 broken\nreason here\n");
+    std::fs::write(&log, bytes).unwrap();
+    let tail = super::supervisor::log_tail(&log);
+    assert!(tail.ends_with("reason here"), "{tail}");
+    assert!(tail.contains("broken"), "{tail}");
+}
+
+/// macOS: a crashed shell's surviving program is stopped before the restart, or it keeps its port.
+#[cfg(unix)]
+#[test]
+fn a_crashed_shell_takes_its_programs_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    let port = free_port();
+    let script = format!("'{}' {port} & sleep 1; exit 3", helper().display());
+    sup.ensure(script_spec(&dir, "dev", &script)).unwrap();
+    eventually("the program listens", || answers(port));
+    eventually("the crash is noticed", || sup.status()[0].waiting);
+    eventually("the program is stopped with the shell", || !answers(port));
     sup.stop_all();
 }

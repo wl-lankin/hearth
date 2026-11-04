@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '../Select.svelte';
   import * as api from '../api';
   import { createSitesStore } from '../sites.svelte';
 
@@ -131,14 +132,17 @@
       </div>
       <div class="php">
         {#if site.kind !== 'proxy'}
-          <label class="sr-only" for="php-{site.name}">PHP for {site.name}</label>
-          <select id="php-{site.name}" value={site.php ?? ''} onchange={(e) => store.isolate(site.name, e.currentTarget.value || null)}>
-            <option value="">Default{store.defaultPhp ? ` (${store.defaultPhp})` : ''}</option>
-            {#each store.phpChoices as minor (minor)}<option value={minor}>PHP {minor}</option>{/each}
-            {#if site.php && !store.phpChoices.includes(site.php)}
-              <option value={site.php}>PHP {site.php} (not installed)</option>
-            {/if}
-          </select>
+          <Select
+            id="php-{site.name}"
+            label="PHP for {site.name}"
+            value={site.php ?? ''}
+            onchange={(minor) => store.isolate(site.name, minor || null)}
+            options={[
+              { value: '', label: `Default${store.defaultPhp ? ` (${store.defaultPhp})` : ''}` },
+              ...store.phpChoices.map((minor) => ({ value: minor, label: `PHP ${minor}` })),
+              ...(site.php && !store.phpChoices.includes(site.php) ? [{ value: site.php, label: `PHP ${site.php} (not installed)` }] : []),
+            ]}
+          />
         {/if}
       </div>
       <div class="more">
@@ -266,8 +270,7 @@
     gap: 6px;
   }
 
-  input,
-  select {
+  input {
     min-width: 0;
     padding: 5px 8px;
     border: 1px solid var(--border);
@@ -275,10 +278,6 @@
     background: var(--surface);
     color: var(--text);
     font: inherit;
-  }
-
-  .php select {
-    width: 100%;
   }
 
   .folder-field input,
@@ -323,12 +322,39 @@
     font-weight: 600;
   }
 
+  /* Name and controls on top, the full path and its notes below: nothing is cut off. */
+  /* One grid for the whole list (rows are subgrids): the PHP pickers and buttons line up. */
+  .list.card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 200px auto;
+  }
+
+  .list.card > :not(.row) {
+    grid-column: 1 / -1;
+  }
+
   .row {
     display: grid;
-    grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 190px auto;
-    gap: 6px 16px;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    grid-template-areas:
+      'name php more'
+      'where where where';
+    gap: 6px 14px;
     align-items: center;
-    padding: 10px 20px;
+    padding: 12px 20px;
+  }
+
+  .name {
+    grid-area: name;
+  }
+
+  .php {
+    grid-area: php;
+  }
+
+  .more {
+    grid-area: more;
   }
 
   .row + .row {
@@ -355,17 +381,23 @@
   }
 
   .where {
+    grid-area: where;
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px 14px;
     min-width: 0;
     font-size: 13px;
   }
 
-  .path {
-    overflow: hidden;
-    text-overflow: ellipsis;
+  /* A note moves to the next line as a whole rather than breaking inside. */
+  .where > :not(.path) {
     white-space: nowrap;
+  }
+
+  .path {
+    min-width: 0;
+    overflow-wrap: anywhere;
     color: var(--muted);
     font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
     font-size: 12.5px;
@@ -398,21 +430,7 @@
     color: var(--muted);
   }
 
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
-  }
 
-  button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-text);
-    font-weight: 600;
-  }
 
   .error {
     color: var(--danger);
@@ -446,26 +464,16 @@
     color: var(--muted);
   }
 
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-  }
+  @media (max-width: 860px) {
+    .list.card {
+      grid-template-columns: minmax(0, 1fr) 180px;
+    }
 
-  @media (max-width: 1000px) {
     .row {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-
-    .where {
-      grid-column: 1 / -1;
-      grid-row: 2;
-    }
-
-    .more {
-      grid-column: 1 / -1;
+      grid-template-areas:
+        'name php'
+        'where where'
+        'more more';
     }
   }
 </style>
