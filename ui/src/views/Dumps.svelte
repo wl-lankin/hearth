@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '../Select.svelte';
   import * as api from '../api';
   import { createDumpsStore, fold, shortPath } from '../dumps.svelte';
   import { formatReceived } from '../format';
@@ -15,8 +16,7 @@
     return () => clearInterval(timer);
   });
 
-  function pickSite(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
+  function pickSite(value: string) {
     store.filter = value === '*' ? undefined : value === '' ? null : value;
   }
 
@@ -64,12 +64,17 @@
 {#if store.error}<p class="error banner" role="alert">{store.error}</p>{/if}
 
 <section class="bar">
-  <select aria-label="Site" value={siteValue} onchange={pickSite}>
-    <option value="*">All sites ({store.sites.reduce((n, s) => n + s.count, 0)})</option>
-    {#each store.sites as s (s.site ?? '')}
-      <option value={s.site ?? ''}>{s.label} ({s.count})</option>
-    {/each}
-  </select>
+  <span class="pick">
+    <Select
+      label="Site"
+      value={siteValue}
+      onchange={pickSite}
+      options={[
+        { value: '*', label: `All sites (${store.sites.reduce((n, s) => n + s.count, 0)})` },
+        ...store.sites.map((s) => ({ value: s.site ?? '', label: `${s.label} (${s.count})` })),
+      ]}
+    />
+  </span>
   <button onclick={() => store.clear()} disabled={store.dumps.length === 0}>Clear</button>
 </section>
 
@@ -148,8 +153,9 @@
     max-width: 960px;
     margin-bottom: 12px;
   }
-  .bar select {
+  .bar .pick {
     flex: 1;
+    min-width: 0;
     max-width: 320px;
   }
   .dump {
@@ -237,8 +243,7 @@
     font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
     font-size: 12px;
   }
-  input,
-  select {
+  input {
     min-width: 0;
     padding: 5px 8px;
     border: 1px solid var(--border);
@@ -246,14 +251,6 @@
     background: var(--surface);
     color: var(--text);
     font: inherit;
-  }
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
   }
   button:disabled {
     cursor: default;

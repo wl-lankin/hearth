@@ -16,7 +16,7 @@ function fakeApi(over: Partial<ProcessesApi> = {}) {
     processesList: async () => structuredClone(list),
     processesOutput: async (site, name, offset) => {
       calls.push(`output ${site} ${name} ${offset ?? '-'}`);
-      return outputs.shift() ?? { offset: offset ?? 0, text: '', reset: false };
+      return outputs.shift() ?? { offset: offset ?? 0, text: '', reset: false, run: 1 };
     },
     processesStart: async (site, name) => void calls.push(`start ${site} ${name}`),
     processesStop: async (site, name) => void calls.push(`stop ${site} ${name}`),
@@ -31,6 +31,17 @@ function fakeApi(over: Partial<ProcessesApi> = {}) {
 }
 
 describe('processes store', () => {
+  test('a restart shows the new run even when its log is exactly as long as the old one', async () => {
+    const api = fakeApi();
+    const store = createProcessesStore(api);
+    await store.load();
+    api.queue({ offset: 6, text: 'ready\n', reset: false, run: 1 }, { offset: 6, text: '', reset: false, run: 2 }, { offset: 6, text: 'ready\n', reset: false, run: 2 });
+    await store.select('shop', 'vite');
+    await store.act('restart', 'shop', 'vite');
+    expect(api.calls).toContain('output shop vite 0');
+    expect(store.output).toBe('ready\n');
+  });
+
   test('a crashed process waiting for its restart reads restarting and can be stopped', async () => {
     const api = fakeApi();
     api.setList({ sites: [{ site: 'shop', processes: [{ ...row('vite', false), waiting: true, lastError: 'exited (exit code: 1): boom' }, row('queue', false), { ...row('old', false), lastError: 'exited (exit code: 1): x' }] }] });
@@ -45,7 +56,7 @@ describe('processes store', () => {
     const api = fakeApi();
     const store = createProcessesStore(api);
     await store.load();
-    api.queue({ offset: 6, text: 'ready\n', reset: false }, { offset: 10, text: 'hmr\n', reset: false }, { offset: 10, text: 'hmr\n', reset: false });
+    api.queue({ offset: 6, text: 'ready\n', reset: false, run: 1 }, { offset: 10, text: 'hmr\n', reset: false, run: 1 }, { offset: 10, text: 'hmr\n', reset: false, run: 1 });
     await store.select('shop', 'vite');
     await Promise.all([store.poll(), store.act('restart', 'shop', 'vite')]);
     expect(store.output).toBe('ready\nhmr\n');
@@ -55,7 +66,7 @@ describe('processes store', () => {
     const api = fakeApi();
     const store = createProcessesStore(api);
     await store.load();
-    api.queue({ offset: 10, text: 'ready\n', reset: false }, { offset: 15, text: 'hmr\n', reset: false }, { offset: 4, text: 'new\n', reset: true });
+    api.queue({ offset: 10, text: 'ready\n', reset: false, run: 1 }, { offset: 15, text: 'hmr\n', reset: false, run: 1 }, { offset: 4, text: 'new\n', reset: true, run: 1 });
     await store.select('shop', 'vite');
     expect(store.output).toBe('ready\n');
     await store.poll();
@@ -69,7 +80,7 @@ describe('processes store', () => {
     const api = fakeApi();
     const store = createProcessesStore(api);
     await store.load();
-    api.queue({ offset: 1, text: Array.from({ length: 2500 }, (_, i) => `line ${i}`).join('\n') + '\n', reset: false });
+    api.queue({ offset: 1, text: Array.from({ length: 2500 }, (_, i) => `line ${i}`).join('\n') + '\n', reset: false, run: 1 });
     await store.select('shop', 'vite');
     const lines = store.output.split('\n').filter(Boolean);
     expect(lines.length).toBe(2000);
@@ -118,7 +129,7 @@ describe('processes store', () => {
     const api = fakeApi();
     const store = createProcessesStore(api);
     await store.load();
-    api.queue({ offset: 3, text: 'hi\n', reset: false });
+    api.queue({ offset: 3, text: 'hi\n', reset: false, run: 1 });
     await store.select('shop', 'vite');
     await store.remove('shop', 'vite');
     expect(api.calls).toContain('remove shop vite');

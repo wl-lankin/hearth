@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '../Select.svelte';
   import * as api from '../api';
   import { formatReceived, formatSize } from '../format';
   import { createMailStore, links } from '../mail.svelte';
@@ -38,8 +39,7 @@
     if (next === 'raw' && !raw) raw = await store.raw();
   }
 
-  function pickInbox(event: Event) {
-    const value = (event.currentTarget as HTMLSelectElement).value;
+  function pickInbox(value: string) {
     store.filter = value === '*' ? undefined : value === '' ? null : value;
   }
 
@@ -113,12 +113,17 @@
 <section class="mailbox" class:reading={!!store.current}>
   <div class="card list" aria-label="Mails">
     <div class="list-head">
-      <select aria-label="Inbox" value={inboxValue} onchange={pickInbox}>
-        <option value="*">All inboxes ({store.unread} unread)</option>
-        {#each store.inboxes as inbox (inbox.site ?? '')}
-          <option value={inbox.site ?? ''}>{inbox.label} ({inbox.count})</option>
-        {/each}
-      </select>
+      <span class="pick">
+        <Select
+          label="Inbox"
+          value={inboxValue}
+          onchange={pickInbox}
+          options={[
+            { value: '*', label: `All inboxes (${store.unread} unread)` },
+            ...store.inboxes.map((inbox) => ({ value: inbox.site ?? '', label: `${inbox.label} (${inbox.count})` })),
+          ]}
+        />
+      </span>
       <button onclick={() => store.clear()} disabled={store.mails.length === 0}>Clear</button>
     </div>
     {#if store.mails.length === 0}
@@ -293,8 +298,9 @@
     padding: 10px;
     border-bottom: 1px solid var(--border);
   }
-  .list-head select {
+  .list-head .pick {
     flex: 1;
+    min-width: 0;
   }
   ul {
     margin: 0;
@@ -498,8 +504,7 @@
     font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
     font-size: 12px;
   }
-  input,
-  select {
+  input {
     min-width: 0;
     padding: 5px 8px;
     border: 1px solid var(--border);
@@ -507,14 +512,6 @@
     background: var(--surface);
     color: var(--text);
     font: inherit;
-  }
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
   }
   button:disabled {
     cursor: default;

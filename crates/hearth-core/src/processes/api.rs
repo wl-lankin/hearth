@@ -100,7 +100,9 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             // Only a saved process's log: the names become a path.
             store::get(paths, &site, &name).map_err(failed)?;
             let offset = params.get("offset").and_then(Value::as_u64);
-            Ok(json!(output::read(&log_path(paths, &site, &name), offset)))
+            let mut read = json!(output::read(&log_path(paths, &site, &name), offset));
+            read["run"] = json!(run::current_run(paths, &site, &name));
+            Ok(read)
         }),
         "processes.suggest" => text(params, "site").and_then(|site| {
             let dir = run::site_dir(paths, site).map_err(failed)?;

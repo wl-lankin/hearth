@@ -228,21 +228,7 @@
     transition: width 200ms ease-out;
   }
 
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
-  }
 
-  button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-text);
-    font-weight: 600;
-  }
 
   button.danger {
     border-color: var(--danger);

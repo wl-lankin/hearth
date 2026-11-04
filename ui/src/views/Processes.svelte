@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Select from '../Select.svelte';
   import { tick } from 'svelte';
   import * as api from '../api';
   import { createProcessesStore } from '../processes.svelte';
@@ -82,21 +83,42 @@
     <div class="add">
       {#if adding}
         <form onsubmit={submit}>
-          <label>
-            Site
-            <select bind:value={store.form.site} onchange={() => store.suggest(store.form.site)}>
-              {#each store.siteNames as name (name)}<option value={name}>{name}.test</option>{/each}
-            </select>
-          </label>
+          <div class="field">
+            <span>Site</span>
+            <Select
+              label="Site"
+              value={store.form.site}
+              onchange={(site) => {
+                store.form.site = site;
+                store.suggest(site);
+              }}
+              options={store.siteNames.map((name) => ({ value: name, label: `${name}.test` }))}
+            />
+          </div>
           {#if store.suggestions.length}
-            <div class="chips" aria-label="Suggestions">
-              {#each store.suggestions as s (s.name)}
-                <button type="button" class="chip" title={s.command} onclick={() => store.useSuggestion(s)}>{s.name}</button>
-              {/each}
+            <div class="field">
+              <span>Suggested for this project</span>
+              <div class="chips">
+                {#each store.suggestions as s (s.name)}
+                  <button
+                    type="button"
+                    class="chip"
+                    class:on={store.form.name === s.name && store.form.command === s.command}
+                    title={s.command}
+                    onclick={() => store.useSuggestion(s)}>{s.name}</button
+                  >
+                {/each}
+              </div>
             </div>
           {/if}
-          <label>Name <input bind:value={store.form.name} placeholder="vite" autocomplete="off" spellcheck="false" /></label>
-          <label>Command <input class="mono" bind:value={store.form.command} placeholder="npm run dev" autocomplete="off" spellcheck="false" /></label>
+          <label class="field">
+            <span>Name</span>
+            <input bind:value={store.form.name} placeholder="vite" autocomplete="off" spellcheck="false" />
+          </label>
+          <label class="field">
+            <span>Command</span>
+            <input class="mono" bind:value={store.form.command} placeholder="npm run dev" autocomplete="off" spellcheck="false" />
+          </label>
           <label class="check"><input type="checkbox" bind:checked={store.form.autostart} /> Start with Hearth</label>
           {#if store.formError}<p class="error small">{store.formError}</p>{/if}
           <div class="buttons">
@@ -256,14 +278,26 @@
     gap: 8px;
     font-size: 13px;
   }
-  label {
+  .field {
     display: flex;
     flex-direction: column;
     gap: 4px;
   }
+  .field > span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .field input {
+    width: 100%;
+  }
   label.check {
-    flex-direction: row;
+    display: flex;
     align-items: center;
+    gap: 8px;
+  }
+  label.check input {
+    accent-color: var(--accent);
   }
   .chips {
     display: flex;
@@ -271,14 +305,34 @@
     gap: 6px;
   }
   .chip {
-    padding: 2px 10px;
+    padding: 2px 11px;
+    border: 1px solid var(--border);
     border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted);
     font-size: 12px;
+    font-weight: 600;
+  }
+  .chip:hover {
+    border-color: var(--accent);
+    background: var(--surface);
+    color: var(--accent);
+  }
+  .chip.on {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
   }
   .buttons {
     display: flex;
-    justify-content: flex-end;
     gap: 6px;
+    margin-top: 4px;
+  }
+  .buttons button {
+    flex: 1;
+  }
+  .add > button {
+    width: 100%;
   }
   header {
     padding: 14px 16px 10px;

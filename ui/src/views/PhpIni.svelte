@@ -108,22 +108,6 @@
     color: var(--muted);
   }
 
-  button {
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
-    cursor: pointer;
-  }
 
-  button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-text);
-    font-weight: 600;
-  }
 
-  button:disabled {
-    opacity: 0.55;
-  }
 </style>

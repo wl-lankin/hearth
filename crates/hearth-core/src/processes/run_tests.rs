@@ -121,8 +121,14 @@ async fn start_read_restart_and_stop_a_process() {
         (list["sites"][0]["site"].as_str(), row["name"].as_str(), row["running"].as_bool()),
         (Some("shop"), Some("app"), Some(true))
     );
+    // Each start is a new run: a page reading from an offset starts over even when the new log is
+    // as long as the old one (the same lines again).
+    let read = || call(&core, "processes.output", json!({ "site": "shop", "name": "app" }));
+    let first_run = read().await.unwrap()["run"].as_u64().unwrap();
+    assert!(first_run > 0);
     call(&core, "processes.restart", json!({ "site": "shop", "name": "app" })).await.unwrap();
     until("the restarted process writes again", async || output(&core).await.trim_end() == "hi from shop").await;
+    assert_ne!(read().await.unwrap()["run"].as_u64().unwrap(), first_run);
     call(&core, "processes.stop", json!({ "site": "shop", "name": "app" })).await.unwrap();
     let list = call(&core, "processes.list", Value::Null).await.unwrap();
     assert_eq!(list["sites"][0]["processes"][0]["running"], json!(false));

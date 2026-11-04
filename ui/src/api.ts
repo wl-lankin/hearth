@@ -742,6 +742,8 @@ export interface ProcessOutput {
   text: string;
   /** The log was emptied (a restart): the text replaces what is shown. */
   reset: boolean;
+  /** Which start the log belongs to: a new one means the shown text is from an old run. */
+  run: number;
 }
 
 export interface ProcessSuggestion {
@@ -787,7 +789,7 @@ export const processesList = (): Promise<ProcessList> =>
   demo ? Promise.resolve(structuredClone(demoProcesses)) : core('processes.list');
 export const processesOutput = (site: string, name: string, offset?: number): Promise<ProcessOutput> =>
   demo
-    ? Promise.resolve(offset === undefined && site === 'shop' && name === 'vite' ? { offset: demoOutput.length, text: demoOutput, reset: false } : { offset: offset ?? 0, text: '', reset: false })
+    ? Promise.resolve(offset === undefined && site === 'shop' && name === 'vite' ? { offset: demoOutput.length, text: demoOutput, reset: false, run: 1 } : { offset: offset ?? 0, text: '', reset: false, run: 1 })
     : core('processes.output', offset === undefined ? { site, name } : { site, name, offset });
 export const processesStart = async (site: string, name: string): Promise<void> => {
   if (demo) return demoAct(site, name, true);

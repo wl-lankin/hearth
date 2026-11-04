@@ -17,6 +17,15 @@ pub fn log_path(paths: &HearthPaths, site: &str, name: &str) -> PathBuf {
     paths.logs.join("processes").join(site).join(format!("{name}.log"))
 }
 
+fn run_path(paths: &HearthPaths, site: &str, name: &str) -> PathBuf {
+    log_path(paths, site, name).with_extension("run")
+}
+
+/// Which start the log belongs to (0 before the first one).
+pub fn current_run(paths: &HearthPaths, site: &str, name: &str) -> u64 {
+    std::fs::read_to_string(run_path(paths, site, name)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
+}
+
 /// The platform shell running `proc.command` as typed in `dir`, with Hearth's commands first on
 /// PATH: `php`, `composer`, `node` and `npm` pick the site's own versions there.
 pub fn spec_for(paths: &HearthPaths, site: &str, dir: &Path, proc: &Proc) -> ProcessSpec {
@@ -71,6 +80,12 @@ pub fn start(core: &CoreState, site: &str, name: &str) -> Result<(), CoreError> 
         std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
     }
     std::fs::write(&spec.log, b"").map_err(|e| CoreError::io(&spec.log, e))?;
+    // A new run id: the page starts its output over when it changes (the new log can be exactly
+    // as long as the old one, so its length tells nothing).
+    let previous = current_run(&core.paths, site, name);
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let run = run_path(&core.paths, site, name);
+    std::fs::write(&run, now.max(previous + 1).to_string()).map_err(|e| CoreError::io(&run, e))?;
     let key = spec.key.clone();
     core.supervisor.ensure(spec)?;
     // A typo or missing node_modules ends within a moment: say so here, not only on the page. The

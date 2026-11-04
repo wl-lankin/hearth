@@ -72,24 +72,6 @@
     color: var(--danger);
   }
 
-  button {
-    padding: 6px 14px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface-2);
-    cursor: pointer;
-    white-space: nowrap;
-  }
 
-  button:disabled {
-    opacity: 0.55;
-    cursor: default;
-  }
 
-  button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
-    color: var(--accent-text);
-    font-weight: 600;
-  }
 </style>

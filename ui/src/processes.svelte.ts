@@ -31,6 +31,7 @@ export function createProcessesStore(api: ProcessesApi) {
   let selected = $state<{ site: string; name: string } | null>(null);
   let output = $state('');
   let offset: number | undefined;
+  let run: number | undefined;
   let errors = $state<Record<string, string | null>>({});
   let error = $state<string | null>(null);
   let suggestions = $state<ProcessSuggestion[]>([]);
@@ -60,11 +61,18 @@ export function createProcessesStore(api: ProcessesApi) {
     if (!selected) return;
     const { site, name } = selected;
     const from = offset;
-    const got = await api.processesOutput(site, name, from);
+    let got = await api.processesOutput(site, name, from);
     // The pick (or the read position) may have changed while this read ran.
     if (selected?.site !== site || selected?.name !== name || offset !== from) return;
+    if (from !== undefined && got.run !== run) {
+      // Restarted (here or from the CLI): the offset belongs to the old log, read the new one whole.
+      got = await api.processesOutput(site, name, 0);
+      if (selected?.site !== site || selected?.name !== name || offset !== from) return;
+      output = '';
+    }
     output = capped(got.reset || from === undefined ? got.text : output + got.text);
     offset = got.offset;
+    run = got.run;
   }
 
   const rowKey = (site: string, name: string) => `${site}/${name}`;
