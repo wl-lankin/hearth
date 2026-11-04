@@ -105,16 +105,10 @@ fn herds_node_in_the_machine_environment_goes_through_the_helper() {
         [
             Request::MachineEnv {
                 remove_path: vec![nvm.clone(), r"C:\Program Files\nodejs".into()],
-                add_path: vec![],
                 remove_vars: vec!["NVM_HOME".into()],
-                set_vars: vec![],
             },
-            Request::MachineEnv {
-                remove_path: vec![],
-                add_path: vec![nvm.clone(), r"C:\Program Files\nodejs".into()],
-                remove_vars: vec![],
-                set_vars: vec![("NVM_HOME".into(), nvm)],
-            },
+            // Undo names nothing: the helper restores what it recorded.
+            Request::MachineEnvRestore,
         ]
     );
 }

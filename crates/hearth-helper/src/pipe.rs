@@ -7,7 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use hearth_core::dns::protocol::{handle, CLIENT_ACCESS, MAX_REQUEST};
+use hearth_core::dns::machine_env::RealMachineEnv;
+use hearth_core::dns::protocol::{handle_with, CLIENT_ACCESS, MAX_REQUEST};
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, LocalFree, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE,
 };
@@ -162,7 +163,9 @@ pub fn serve(name: &str, hosts: &Path, stop: &AtomicBool) {
             });
             let request = read_request(&pipe, deadline);
             set(client, false);
-            let mut answer = serde_json::to_vec(&handle(&request, hosts)).unwrap_or_default();
+            let mut env =
+                RealMachineEnv { store: crate::folders::program_files().join("Hearth").join("machine-env.json") };
+            let mut answer = serde_json::to_vec(&handle_with(&request, hosts, &mut env)).unwrap_or_default();
             answer.push(b'\n');
             set(client, true);
             write_answer(&pipe, &answer);

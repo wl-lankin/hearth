@@ -40,9 +40,7 @@ pub fn apply_outside(m: &mut dyn MachineWrite, step: &Done) -> Result<(), CoreEr
         }
         Done::MachineEnv { path_removed, vars_removed } => m.helper(&Request::MachineEnv {
             remove_path: path_removed.clone(),
-            add_path: vec![],
             remove_vars: vars_removed.iter().map(|(name, _)| name.clone()).collect(),
-            set_vars: vec![],
         }),
         Done::Autostart { name, .. } => m.set_run(name, None),
         Done::Mcp { hearth, .. } => {
@@ -74,12 +72,8 @@ pub fn undo_outside(m: &mut dyn MachineWrite, step: &Done) -> Result<(), CoreErr
             }
             m.set_user_path(&next.join(";"))
         }
-        Done::MachineEnv { path_removed, vars_removed } => m.helper(&Request::MachineEnv {
-            remove_path: vec![],
-            add_path: path_removed.clone(),
-            remove_vars: vec![],
-            set_vars: vars_removed.clone(),
-        }),
+        // The helper puts back exactly what it recorded taking out; nothing is named here.
+        Done::MachineEnv { .. } => m.helper(&Request::MachineEnvRestore),
         Done::Autostart { name, value } => m.set_run(name, Some(value)),
         Done::Mcp { herd_entry, .. } => {
             m.claude(&args(&["mcp", "remove", "--scope", "user", "herd"]))?;

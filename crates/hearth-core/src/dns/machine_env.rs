@@ -1,9 +1,39 @@
 //! The machine environment (`HKLM\...\Session Manager\Environment`), as the helper service changes it
 //! for the move from Herd. Only reachable through `protocol::handle`, which checks every value first.
 
-use super::protocol::MachineEnv;
+use std::path::PathBuf;
 
-pub struct RealMachineEnv;
+use super::protocol::{MachineEnv, Removed};
+
+/// The machine environment, with the record of what was taken out in `store`: a file the helper
+/// keeps next to itself, where only administrators can write.
+pub struct RealMachineEnv {
+    pub store: PathBuf,
+}
+
+/// No machine environment: every change is refused (for callers without the helper's record).
+pub struct NoMachineEnv;
+
+impl MachineEnv for NoMachineEnv {
+    fn path(&self) -> String {
+        String::new()
+    }
+    fn set_path(&mut self, _: &str) -> Result<(), String> {
+        Err("The machine environment is only changed by Hearth's helper service".into())
+    }
+    fn var(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn set_var(&mut self, _: &str, _: Option<&str>) -> Result<(), String> {
+        Err("The machine environment is only changed by Hearth's helper service".into())
+    }
+    fn removed(&self) -> Removed {
+        Removed::default()
+    }
+    fn set_removed(&mut self, _: &Removed) -> Result<(), String> {
+        Err("The machine environment is only changed by Hearth's helper service".into())
+    }
+}
 
 #[cfg(windows)]
 mod win {
@@ -46,7 +76,11 @@ mod win {
     }
 
     pub fn path() -> String {
-        let (path, name) = (wide(KEY), wide("Path"));
+        get("Path").unwrap_or_default()
+    }
+
+    pub fn get(value_name: &str) -> Option<String> {
+        let (path, name) = (wide(KEY), wide(value_name));
         let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
         let mut size = 0u32;
         // SAFETY: a size query with a null buffer.
@@ -54,7 +88,7 @@ mod win {
             RegGetValueW(HKEY_LOCAL_MACHINE, path.as_ptr(), name.as_ptr(), flags, null_mut(), null_mut(), &mut size)
         };
         if status != ERROR_SUCCESS {
-            return String::new();
+            return None;
         }
         let mut buf = vec![0u16; (size as usize).div_ceil(2) + 1];
         // SAFETY: the buffer holds `size` bytes.
@@ -70,10 +104,10 @@ mod win {
             )
         };
         if status != ERROR_SUCCESS {
-            return String::new();
+            return None;
         }
         let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-        String::from_utf16_lossy(&buf[..len])
+        Some(String::from_utf16_lossy(&buf[..len]))
     }
 
     pub fn set(name: &str, value: Option<&str>) -> Result<(), String> {
@@ -139,6 +173,16 @@ impl MachineEnv for RealMachineEnv {
         }
     }
 
+    fn var(&self, name: &str) -> Option<String> {
+        #[cfg(windows)]
+        return win::get(name);
+        #[cfg(not(windows))]
+        {
+            let _ = name;
+            None
+        }
+    }
+
     fn set_var(&mut self, name: &str, value: Option<&str>) -> Result<(), String> {
         #[cfg(windows)]
         return win::set(name, value);
@@ -147,5 +191,14 @@ impl MachineEnv for RealMachineEnv {
             let _ = (name, value);
             Err("Only on Windows".into())
         }
+    }
+
+    fn removed(&self) -> Removed {
+        std::fs::read(&self.store).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+    }
+
+    fn set_removed(&mut self, removed: &Removed) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(removed).map_err(|e| e.to_string())?;
+        std::fs::write(&self.store, bytes).map_err(|e| format!("Could not keep the record of Herd's entries: {e}"))
     }
 }

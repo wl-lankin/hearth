@@ -26,66 +26,94 @@ pub enum Request {
     Hosts {
         names: Vec<String>,
     },
-    /// Herd's Node manager in the machine environment: its PATH entries and variables, out or back.
+    /// Takes Herd's Node manager out of the machine environment: these PATH entries and variables,
+    /// remembered by the helper itself.
     #[serde(rename_all = "camelCase")]
     MachineEnv {
         #[serde(default)]
         remove_path: Vec<String>,
         #[serde(default)]
-        add_path: Vec<String>,
-        #[serde(default)]
         remove_vars: Vec<String>,
-        #[serde(default)]
-        set_vars: Vec<(String, String)>,
     },
+    /// Puts back exactly what `MachineEnv` took out (the client names nothing: nothing to inject).
+    MachineEnvRestore,
+}
+
+/// What the helper took out of the machine environment, kept where only administrators can write.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Removed {
+    pub path: Vec<String>,
+    pub vars: Vec<(String, String)>,
 }
 
 /// The machine environment, as the helper changes it (the real one is the registry).
 pub trait MachineEnv {
     fn path(&self) -> String;
     fn set_path(&mut self, value: &str) -> Result<(), String>;
+    fn var(&self, name: &str) -> Option<String>;
     fn set_var(&mut self, name: &str, value: Option<&str>) -> Result<(), String>;
+    fn removed(&self) -> Removed;
+    fn set_removed(&mut self, removed: &Removed) -> Result<(), String>;
 }
 
-/// The only variables the helper touches.
+/// The only variables the helper takes out.
 const HERD_VARS: [&str; 2] = ["NVM_HOME", "NVM_SYMLINK"];
 
-/// A PATH entry or variable value the helper may touch: inside a `.config\herd` folder, or Herd's
-/// Node link `C:\Program Files\nodejs`.
+/// A machine PATH entry the helper may take out: in a user's Herd folder
+/// (`X:\Users\<name>\.config\herd` or below), or Herd's Node link `C:\Program Files\nodejs`. Anchored,
+/// no network paths, no `%`, `..`, `;`, quotes or control characters.
 pub fn herds_entry(value: &str) -> bool {
-    let v = value.trim().trim_end_matches('\\').to_ascii_lowercase();
-    let in_herd = v.contains(r"\.config\herd") && !v.contains("..") && !v.contains(';');
-    in_herd || v == r"c:\program files\nodejs"
+    let v = value.trim().trim_end_matches('\\');
+    if v.starts_with(r"\\") || v.contains("..") || v.contains(|c: char| c.is_control() || matches!(c, '%' | ';' | '"'))
+    {
+        return false;
+    }
+    let lower = v.to_ascii_lowercase();
+    if lower == r"c:\program files\nodejs" {
+        return true;
+    }
+    let mut parts = lower.split('\\');
+    let drive = parts.next().unwrap_or_default();
+    let drive_ok = drive.len() == 2 && drive.as_bytes()[0].is_ascii_alphabetic() && drive.ends_with(':');
+    let (users, name, config, herd) = (parts.next(), parts.next(), parts.next(), parts.next());
+    drive_ok
+        && users == Some("users")
+        && name.is_some_and(|n| !n.is_empty())
+        && config == Some(".config")
+        && herd == Some("herd")
 }
 
-fn machine_env(
-    env: &mut dyn MachineEnv,
-    remove_path: &[String],
-    add_path: &[String],
-    remove_vars: &[String],
-    set_vars: &[(String, String)],
-) -> Response {
-    let bad_entry = remove_path.iter().chain(add_path).find(|e| !herds_entry(e));
-    let bad_var = remove_vars
-        .iter()
-        .chain(set_vars.iter().map(|(name, _)| name))
-        .find(|n| !HERD_VARS.contains(&n.as_str()))
-        .or_else(|| set_vars.iter().find(|(_, value)| !herds_entry(value)).map(|(name, _)| name));
+/// Takes Herd's entries out, recording first what was there.
+fn take_out(env: &mut dyn MachineEnv, remove_path: &[String], remove_vars: &[String]) -> Response {
+    let bad_entry = remove_path.iter().find(|e| !herds_entry(e));
+    let bad_var = remove_vars.iter().find(|n| !HERD_VARS.contains(&n.as_str()));
     if let Some(bad) = bad_entry.or(bad_var) {
         return Response::error(format!("Not one of Herd's entries: {bad:?}"));
     }
     let current = env.path();
-    let mut entries: Vec<String> = current
-        .split(';')
-        .filter(|e| !e.is_empty() && !remove_path.iter().any(|r| r.eq_ignore_ascii_case(e)))
-        .map(str::to_string)
-        .collect();
-    for entry in add_path {
-        if !entries.iter().any(|e| e.eq_ignore_ascii_case(entry)) {
-            entries.push(entry.clone());
+    let present = |e: &String| current.split(';').any(|c| c.eq_ignore_ascii_case(e));
+    let mut removed = env.removed();
+    for entry in remove_path.iter().filter(|e| present(e)) {
+        if !removed.path.iter().any(|r| r.eq_ignore_ascii_case(entry)) {
+            removed.path.push(entry.clone());
         }
     }
-    let next = entries.join(";");
+    for name in remove_vars {
+        if let Some(value) = env.var(name) {
+            if !removed.vars.iter().any(|(n, _)| n == name) {
+                removed.vars.push((name.clone(), value));
+            }
+        }
+    }
+    // Recorded before anything changes, so a crash halfway can still be restored.
+    if let Err(e) = env.set_removed(&removed) {
+        return Response::error(e);
+    }
+    let next: Vec<&str> = current
+        .split(';')
+        .filter(|c| !c.is_empty() && !remove_path.iter().any(|r| r.eq_ignore_ascii_case(c)))
+        .collect();
+    let next = next.join(";");
     if next != current {
         if let Err(e) = env.set_path(&next) {
             return Response::error(e);
@@ -96,12 +124,34 @@ fn machine_env(
             return Response::error(e);
         }
     }
-    for (name, value) in set_vars {
+    Response::default()
+}
+
+/// Puts back what `take_out` recorded, then forgets it.
+fn put_back(env: &mut dyn MachineEnv) -> Response {
+    let removed = env.removed();
+    let current = env.path();
+    let mut entries: Vec<String> = current.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect();
+    for entry in &removed.path {
+        if !entries.iter().any(|e| e.eq_ignore_ascii_case(entry)) {
+            entries.push(entry.clone());
+        }
+    }
+    let next = entries.join(";");
+    if next != current {
+        if let Err(e) = env.set_path(&next) {
+            return Response::error(e);
+        }
+    }
+    for (name, value) in &removed.vars {
         if let Err(e) = env.set_var(name, Some(value)) {
             return Response::error(e);
         }
     }
-    Response::default()
+    match env.set_removed(&Removed::default()) {
+        Ok(()) => Response::default(),
+        Err(e) => Response::error(e),
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,9 +170,10 @@ impl Response {
     }
 }
 
-/// Answers one request line against the hosts file at `hosts` and this machine's environment.
+/// Answers one request line against the hosts file at `hosts` (machine environment requests are
+/// refused here: they need `handle_with` and the helper's own record).
 pub fn handle(line: &[u8], hosts: &Path) -> Response {
-    handle_with(line, hosts, &mut super::machine_env::RealMachineEnv)
+    handle_with(line, hosts, &mut super::machine_env::NoMachineEnv)
 }
 
 /// Answers one request line against the hosts file at `hosts` and the environment `env`.
@@ -133,8 +184,10 @@ pub fn handle_with(line: &[u8], hosts: &Path, env: &mut dyn MachineEnv) -> Respo
     let Ok(request) = serde_json::from_slice::<Request>(line) else {
         return Response::error("Unknown request");
     };
-    if let Request::MachineEnv { remove_path, add_path, remove_vars, set_vars } = &request {
-        return machine_env(env, remove_path, add_path, remove_vars, set_vars);
+    match &request {
+        Request::MachineEnv { remove_path, remove_vars } => return take_out(env, remove_path, remove_vars),
+        Request::MachineEnvRestore => return put_back(env),
+        _ => {}
     }
     let current = match std::fs::read(hosts) {
         Ok(bytes) => bytes,
@@ -146,7 +199,7 @@ pub fn handle_with(line: &[u8], hosts: &Path, env: &mut dyn MachineEnv) -> Respo
             names: Some(names_in_block(&current).into_iter().collect()),
             error: None,
         },
-        Request::MachineEnv { .. } => Response::default(),
+        Request::MachineEnv { .. } | Request::MachineEnvRestore => Response::default(),
         Request::Hosts { names } => {
             if names.len() > MAX_NAMES {
                 return Response::error("Too many names");
@@ -225,6 +278,7 @@ mod tests {
     struct FakeEnv {
         path: String,
         vars: std::collections::BTreeMap<String, String>,
+        removed: Removed,
     }
 
     impl MachineEnv for FakeEnv {
@@ -235,6 +289,9 @@ mod tests {
             self.path = value.into();
             Ok(())
         }
+        fn var(&self, name: &str) -> Option<String> {
+            self.vars.get(name).cloned()
+        }
         fn set_var(&mut self, name: &str, value: Option<&str>) -> Result<(), String> {
             match value {
                 Some(v) => self.vars.insert(name.into(), v.into()),
@@ -242,46 +299,68 @@ mod tests {
             };
             Ok(())
         }
+        fn removed(&self) -> Removed {
+            self.removed.clone()
+        }
+        fn set_removed(&mut self, removed: &Removed) -> Result<(), String> {
+            self.removed = removed.clone();
+            Ok(())
+        }
     }
 
     const NVM: &str = r"C:\Users\x\.config\herd\bin\nvm";
 
     #[test]
-    fn machine_env_changes_herds_node_entries_and_back() {
+    fn herds_node_entries_go_and_only_the_recorded_ones_come_back() {
         let (_d, p) = hosts_file(BASE);
         let mut env =
             FakeEnv { path: format!(r"C:\Windows\System32;{NVM};C:\Program Files\nodejs"), ..FakeEnv::default() };
         env.vars.insert("NVM_HOME".into(), NVM.into());
-        let remove = serde_json::json!({
-            "op": "machineenv", "removePath": [NVM, r"C:\Program Files\nodejs"], "removeVars": ["NVM_HOME"]
+        let out = serde_json::json!({
+            "op": "machineenv", "removePath": [NVM, r"C:\Program Files\nodejs", r"C:\Users\x\.config\herd\absent"],
+            "removeVars": ["NVM_HOME", "NVM_SYMLINK"]
         });
-        assert_eq!(handle_with(remove.to_string().as_bytes(), &p, &mut env), Response::default());
+        assert_eq!(handle_with(out.to_string().as_bytes(), &p, &mut env), Response::default());
         assert_eq!(env.path, r"C:\Windows\System32");
         assert!(env.vars.is_empty());
-        let restore = serde_json::json!({
-            "op": "machineenv", "addPath": [NVM, r"C:\Program Files\nodejs"], "setVars": [["NVM_HOME", NVM]]
-        });
-        assert_eq!(handle_with(restore.to_string().as_bytes(), &p, &mut env), Response::default());
+        assert_eq!(env.removed.path, [NVM, r"C:\Program Files\nodejs"], "only what was there is recorded");
+        assert_eq!(env.removed.vars, [("NVM_HOME".to_string(), NVM.to_string())]);
+
+        assert_eq!(handle_with(br#"{"op":"machineenvrestore"}"#, &p, &mut env), Response::default());
         assert_eq!(env.path, format!(r"C:\Windows\System32;{NVM};C:\Program Files\nodejs"));
         assert_eq!(env.vars.get("NVM_HOME").map(String::as_str), Some(NVM));
+        assert_eq!(env.removed, Removed::default(), "the record is forgotten");
+        // A second restore has nothing to put back.
+        assert_eq!(handle_with(br#"{"op":"machineenvrestore"}"#, &p, &mut env), Response::default());
+        assert_eq!(env.path, format!(r"C:\Windows\System32;{NVM};C:\Program Files\nodejs"));
     }
 
     #[test]
-    fn machine_env_refuses_anything_that_is_not_herds() {
+    fn nothing_but_herds_own_entries_can_be_taken_out_and_nothing_can_be_put_in() {
         let (_d, p) = hosts_file(BASE);
-        let mut env = FakeEnv { path: r"C:\Windows\System32".into(), ..FakeEnv::default() };
+        let mut env = FakeEnv { path: r"C:\Windows\System32;C:\Tools".into(), ..FakeEnv::default() };
         for bad in [
-            serde_json::json!({ "op": "machineenv", "removePath": [r"C:\Windows\System32"] }),
-            serde_json::json!({ "op": "machineenv", "addPath": [r"C:\evil"] }),
-            serde_json::json!({ "op": "machineenv", "removeVars": ["PATHEXT"] }),
-            serde_json::json!({ "op": "machineenv", "setVars": [["NVM_HOME", r"C:\evil"]] }),
-            serde_json::json!({ "op": "machineenv", "setVars": [["ComSpec", NVM]] }),
+            r"C:\Windows\System32",
+            r"C:\Tools\.config\herd",
+            r"\\server\share\Users\x\.config\herd",
+            r"C:\Users\x\.config\herd\..\..\Windows",
+            r"%USERPROFILE%\.config\herd",
+            r"C:\Users\\.config\herd",
         ] {
-            let answer = handle_with(bad.to_string().as_bytes(), &p, &mut env);
+            let line = serde_json::json!({ "op": "machineenv", "removePath": [bad] }).to_string();
+            let answer = handle_with(line.as_bytes(), &p, &mut env);
             assert!(answer.error.as_deref().is_some_and(|e| e.starts_with("Not one of Herd's")), "{bad}: {answer:?}");
         }
-        assert_eq!(env.path, r"C:\Windows\System32");
-        assert!(env.vars.is_empty());
+        let line = serde_json::json!({ "op": "machineenv", "removeVars": ["PATHEXT"] }).to_string();
+        assert!(handle_with(line.as_bytes(), &p, &mut env).error.is_some());
+        // The old shape that named values to add is no request at all.
+        let add = serde_json::json!({ "op": "machineenv", "addPath": [r"C:\Users\x\.config\herd\evil"] }).to_string();
+        assert_eq!(handle_with(add.as_bytes(), &p, &mut env), Response::default(), "unknown fields add nothing");
+        assert_eq!(env.path, r"C:\Windows\System32;C:\Tools");
+        assert_eq!(env.removed, Removed::default());
+        // Without the helper's own record, a plain `handle` refuses environment changes.
+        let line = serde_json::json!({ "op": "machineenv", "removePath": [NVM] }).to_string();
+        assert!(handle(line.as_bytes(), &p).error.is_some());
     }
 
     #[test]
