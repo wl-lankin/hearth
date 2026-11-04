@@ -262,12 +262,8 @@ impl Mover for RealMover {
             .output()
             .ok()?;
         String::from_utf8_lossy(&out.stdout).lines().find_map(|line| {
-            let line = line.trim();
-            let program = match line.strip_prefix('"') {
-                Some(rest) => rest.split('"').next()?,
-                None => line.split_whitespace().next()?,
-            };
-            let dir = Path::new(program).parent()?.to_path_buf();
+            let program = stop::database_server(line, |p| p.is_file())?;
+            let dir = program.parent()?.to_path_buf();
             dir.join("mysql.exe").is_file().then_some(dir)
         })
     }

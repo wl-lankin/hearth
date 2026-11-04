@@ -1,7 +1,7 @@
 //! Finding and stopping Herd's processes, and who holds a port. Processes are picked by the folder
 //! their program lives in (Herd's install and home folders), and stopped by their process id.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn output(program: &str, args: &[&str]) -> String {
     crate::workspaces::command(program)
@@ -58,6 +58,25 @@ pub fn listener(port: u16) -> Option<u32> {
     })
 }
 
+/// The database server a Windows service command (`PathName`) runs: quoted, or unquoted with
+/// spaces (a space-joined prefix that is a file). Only `mysqld.exe` or `mariadbd.exe`, and never in
+/// the root of a drive, so a planted `C:\Program.exe` is passed over.
+pub fn database_server(command: &str, is_file: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let server = |p: &Path| {
+        let name = p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+        let in_root = p.parent().is_none_or(|dir| dir.parent().is_none());
+        matches!(name.as_str(), "mysqld.exe" | "mariadbd.exe") && !in_root
+    };
+    let command = command.trim();
+    match command.strip_prefix('"') {
+        Some(rest) => Some(PathBuf::from(rest.split('"').next()?)).filter(|p| server(p)),
+        None => {
+            let words: Vec<&str> = command.split(' ').collect();
+            (1..=words.len()).map(|n| PathBuf::from(words[..n].join(" "))).find(|p| server(p) && is_file(p))
+        }
+    }
+}
+
 /// The process listening on `port`: its id and, if known, its program.
 pub fn holder(port: u16) -> Option<(u32, Option<String>)> {
     let pid = listener(port)?;
@@ -80,7 +99,22 @@ pub fn foreign(holder: (u32, Option<String>), own_pid: u32, ours: &[&Path]) -> O
 mod tests {
     use std::path::Path;
 
-    use super::{foreign, inside};
+    use super::{database_server, foreign, inside};
+
+    #[test]
+    fn a_service_command_names_its_database_server_only() {
+        let real = r"C:\Program Files\MariaDB 11.4\bin\mysqld.exe";
+        let is_file = |p: &Path| p == Path::new(real);
+        // Unquoted, with spaces: the shortest prefix that is a file, never "C:\Program".
+        let unquoted = format!(r#"{real} "--defaults-file=C:\Program Files\MariaDB 11.4\data\my.ini" MariaDB"#);
+        assert_eq!(database_server(&unquoted, is_file).as_deref(), Some(Path::new(real)));
+        assert_eq!(database_server(&format!(r#""{real}" MariaDB"#), is_file).as_deref(), Some(Path::new(real)));
+        // A planted C:\Program.exe is not a database server.
+        let planted = |p: &Path| p == Path::new(r"C:\Program") || p == Path::new(real);
+        assert_eq!(database_server(&unquoted, planted).as_deref(), Some(Path::new(real)));
+        assert_eq!(database_server(r"C:\Tools\evil.exe --mysqld", |_| true), None, "not mysqld or mariadbd");
+        assert_eq!(database_server(r"C:\mysqld.exe", |_| true), None, "never the root of a drive");
+    }
 
     #[test]
     fn hearths_own_programs_may_hold_a_port() {
