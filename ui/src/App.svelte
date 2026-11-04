@@ -4,7 +4,7 @@
   import Rail from './Rail.svelte';
   import { createSettingsStore } from './settings.svelte';
   import TitleBar, { platformOf } from './TitleBar.svelte';
-  import Dashboard from './views/Dashboard.svelte';
+  import Home from './views/Home.svelte';
   import Inspect from './views/Inspect.svelte';
   import Logs from './views/Logs.svelte';
   import Mail from './views/Mail.svelte';
@@ -21,12 +21,15 @@
   const start = resolveView(new URLSearchParams(location.search).get('view'));
   let view = $state<View>(start.view);
   let tab = $state<string | null>(start.tab);
+  // Home's Get started opens Sites with its link form.
+  let link = $state(false);
 
   settings.load();
 
-  function navigate(next: View, opts: { tab?: string } = {}) {
+  function navigate(next: View, opts: { tab?: string; link?: boolean } = {}) {
     view = next;
     tab = opts.tab ?? null;
+    link = opts.link ?? false;
   }
 </script>
 
@@ -38,9 +41,9 @@
     {#key view}
       <div class="page">
         {#if view === 'home'}
-          <Dashboard />
+          <Home onnavigate={navigate} />
         {:else if view === 'sites'}
-          <Sites />
+          <Sites startLinking={link} />
         {:else if view === 'workspaces'}
           <Workspaces />
         {:else if view === 'services'}
