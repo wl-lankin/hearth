@@ -234,6 +234,60 @@ enum Command {
     /// Restarts a site's process (its output starts over).
     #[command(name = "processes:restart")]
     ProcessesRestart { site: String, name: String },
+    /// Makes a workspace of the current folder's site: the branch `name` in its own git worktree,
+    /// served at `<name>.<site>.test` (inside an existing worktree: serves that one).
+    Workspace {
+        name: Option<String>,
+        #[arg(long, conflicts_with = "no_secure")]
+        secure: bool,
+        #[arg(long = "no-secure")]
+        no_secure: bool,
+        #[arg(long)]
+        json: bool,
+        /// shared (default), empty or clone.
+        #[arg(long)]
+        database: Option<String>,
+        #[arg(long = "no-migrate")]
+        no_migrate: bool,
+        /// Accepted for Herd's scripts: a worktree always starts from the local branch.
+        #[arg(long, hide = true)]
+        local: bool,
+    },
+    /// Lists the workspaces (of `--site`, or all).
+    Workspaces {
+        #[arg(long)]
+        site: Option<String>,
+        #[arg(long, hide = true)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prints a workspace's folder (the current one's when no name is given).
+    #[command(name = "workspace:switch")]
+    WorkspaceSwitch { name: Option<String> },
+    /// Opens a workspace in the browser.
+    #[command(name = "workspace:open")]
+    WorkspaceOpen { name: Option<String> },
+    /// Deletes a workspace; its branch stays in the repository.
+    #[command(name = "workspace:delete")]
+    WorkspaceDelete {
+        name: Option<String>,
+        #[arg(long)]
+        force: bool,
+        #[arg(long = "keep-database")]
+        keep_database: bool,
+        #[arg(long = "keep-files")]
+        keep_files: bool,
+    },
+    /// Merges a workspace's branch into the branch it came from.
+    #[command(name = "workspace:merge")]
+    WorkspaceMerge {
+        name: Option<String>,
+        #[arg(long)]
+        push: bool,
+        #[arg(long)]
+        delete: bool,
+    },
     /// Anything else, e.g. a Herd command for a feature Hearth does not have yet.
     #[command(external_subcommand)]
     Other(Vec<String>),
@@ -285,8 +339,23 @@ enum Command {
     },
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> ExitCode {
+/// The commands run on a thread with room to spare: one `match` over every command is a large
+/// future, and Windows gives the main thread only 1 MB (debug builds overflowed it).
+fn main() -> ExitCode {
+    let worker = std::thread::Builder::new().stack_size(8 * 1024 * 1024).spawn(|| {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
+        match runtime {
+            Ok(runtime) => runtime.block_on(run()),
+            Err(e) => fail(&format!("Hearth could not start: {e}")),
+        }
+    });
+    match worker.map(|w| w.join()) {
+        Ok(Ok(code)) => code,
+        _ => ExitCode::FAILURE,
+    }
+}
+
+async fn run() -> ExitCode {
     let args = as_hearth(std::env::args_os().collect());
     // `php`, `composer`, `laravel` and the Node commands pass every argument on as typed, so they
     // skip the parser (which would, for one, eat a leading `--`).
@@ -430,6 +499,45 @@ async fn main() -> ExitCode {
         Command::ServicesStart { id } => service_call(&paths, &["services.start"], &id).await,
         Command::ServicesStop { id } => service_call(&paths, &["services.stop"], &id).await,
         Command::ServicesDelete { id, force } => services_delete(&paths, &id, force).await,
+        Command::Workspace { name, secure, no_secure, json, database, no_migrate, local: _ } => {
+            let secure = if secure {
+                Some(true)
+            } else if no_secure {
+                Some(false)
+            } else {
+                None
+            };
+            workspace_create(&paths, name, secure, json, database, no_migrate).await
+        }
+        Command::Workspaces { site, all: _, json } => workspaces_list(&paths, site, json).await,
+        Command::WorkspaceSwitch { name } => match workspace_record(&paths, name).await {
+            Ok(w) => {
+                println!("{}", w["path"].as_str().unwrap_or_default());
+                ExitCode::SUCCESS
+            }
+            Err(code) => code,
+        },
+        Command::WorkspaceOpen { name } => match workspace_record(&paths, name).await {
+            Ok(w) => open_url(w["url"].as_str().unwrap_or_default()),
+            Err(code) => code,
+        },
+        Command::WorkspaceDelete { name, force, keep_database, keep_files } => {
+            workspace_delete(&paths, name, force, keep_database, keep_files).await
+        }
+        Command::WorkspaceMerge { name, push, delete } => match workspace_record(&paths, name).await {
+            Ok(w) => {
+                let params = json!({ "name": w["site"], "push": push, "delete": delete });
+                match ipc::call_waiting(&paths, "workspaces.merge", params, Duration::from_secs(600)).await {
+                    Ok(done) => {
+                        println!("{}", done["message"].as_str().unwrap_or_default());
+                        print_notes(&done["notes"]);
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => fail(&message(e)),
+                }
+            }
+            Err(code) => code,
+        },
         Command::Processes { json } => processes_list(&paths, json).await,
         Command::ProcessesStart { site, name } => process_call(&paths, "processes.start", &site, &name).await,
         Command::ProcessesStop { site, name } => process_call(&paths, "processes.stop", &site, &name).await,
@@ -705,6 +813,174 @@ async fn services_available(paths: &HearthPaths, kind: Option<&str>, as_json: bo
     }
 }
 
+fn print_notes(notes: &Value) {
+    for note in notes.as_array().into_iter().flatten().filter_map(Value::as_str) {
+        println!("  {note}");
+    }
+}
+
+/// The sentence about a workspace's database.
+fn database_line(w: &Value) -> String {
+    let name = w["databaseName"].as_str().unwrap_or_default();
+    match w["databaseMode"].as_str() {
+        Some("clone") => format!("It uses its own database {name}, a copy of the parent's."),
+        Some("empty") => format!("It uses its own empty database {name}."),
+        _ => "It shares the parent's database. Use --database=clone or --database=empty for its own.".into(),
+    }
+}
+
+/// Makes a workspace of the current folder's site, or serves the worktree the folder is in.
+async fn workspace_create(
+    paths: &HearthPaths,
+    name: Option<String>,
+    secure: Option<bool>,
+    as_json: bool,
+    database: Option<String>,
+    no_migrate: bool,
+) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let known = ipc::call(paths, "workspaces.find", json!({ "cwd": cwd })).await;
+    if let Ok(found) = &known {
+        if !found["workspace"].is_null() {
+            return fail(&format!(
+                "This folder is already the workspace {}",
+                found["workspace"]["site"].as_str().unwrap_or_default()
+            ));
+        }
+    }
+    let mut params =
+        json!({ "name": name, "database": database, "secure": secure, "migrate": !no_migrate, "by": "cli" });
+    // Inside a worktree made with `git worktree add`: serve that one, as Herd does.
+    let method = if hearth_core::workspaces::git::linked_worktree_parent(&cwd).is_some() {
+        if name.is_some() {
+            println!("This folder is a git worktree: it is served as it is, the name is not used.");
+        }
+        params["path"] = json!(cwd);
+        "workspaces.adopt"
+    } else {
+        match hearth_core::sites::locate::site_for_dir(paths, &cwd) {
+            Some(site) => {
+                params["site"] = json!(site.name);
+                "workspaces.create"
+            }
+            None => return fail("The current folder is not inside a Hearth site. Link it first with `hearth link`."),
+        }
+    };
+    match ipc::call_waiting(paths, method, params, Duration::from_secs(1800)).await {
+        Ok(made) if as_json => {
+            println!("{}", made["workspace"]);
+            ExitCode::SUCCESS
+        }
+        Ok(made) => {
+            let w = &made["workspace"];
+            println!(
+                "Workspace {} is ready at {}",
+                w["name"].as_str().unwrap_or_default(),
+                w["url"].as_str().unwrap_or_default()
+            );
+            println!("{}", database_line(w));
+            print_notes(&made["notes"]);
+            println!("cd \"{}\"", w["path"].as_str().unwrap_or_default());
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// The workspace `name` names, or the one the current folder is in.
+async fn workspace_record(paths: &HearthPaths, name: Option<String>) -> Result<Value, ExitCode> {
+    let list = ipc::call(paths, "workspaces.list", Value::Null).await.map_err(|e| fail(&message(e)))?;
+    let all = list["workspaces"].as_array().cloned().unwrap_or_default();
+    match name {
+        Some(name) => {
+            let wanted = name.trim().to_lowercase();
+            let wanted = wanted.strip_suffix(".test").unwrap_or(&wanted).to_string();
+            let hits: Vec<Value> = all
+                .into_iter()
+                .filter(|w| {
+                    let site = w["site"].as_str().unwrap_or_default();
+                    let parent = w["parentSite"].as_str().unwrap_or_default();
+                    w["name"].as_str().is_some_and(|n| n.to_lowercase() == wanted)
+                        || site == wanted
+                        || site.strip_suffix(&format!(".{parent}")) == Some(wanted.as_str())
+                })
+                .collect();
+            match hits.len() {
+                1 => Ok(hits.into_iter().next().unwrap_or_default()),
+                0 => Err(fail(&format!("There is no workspace named {name}"))),
+                _ => Err(fail(&format!("Several workspaces are named {name}: use the host"))),
+            }
+        }
+        None => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let found =
+                ipc::call(paths, "workspaces.find", json!({ "cwd": cwd })).await.map_err(|e| fail(&message(e)))?;
+            if found["workspace"].is_null() {
+                Err(fail("The current folder is no workspace: name one (see `hearth workspaces`)"))
+            } else {
+                Ok(found["workspace"].clone())
+            }
+        }
+    }
+}
+
+async fn workspaces_list(paths: &HearthPaths, site: Option<String>, as_json: bool) -> ExitCode {
+    let params = site.map_or(Value::Null, |s| json!({ "site": s.trim_end_matches(".test") }));
+    print_call(paths, "workspaces.list", params, as_json, |list| {
+        let rows = list["workspaces"].as_array().cloned().unwrap_or_default();
+        if rows.is_empty() {
+            println!("No workspaces yet. Make one in a site's folder with: hearth workspace <branch>");
+        }
+        for w in rows {
+            let db = match w["databaseMode"].as_str() {
+                Some("clone") => format!("copy ({})", w["databaseName"].as_str().unwrap_or_default()),
+                Some("empty") => format!("empty ({})", w["databaseName"].as_str().unwrap_or_default()),
+                _ => "shared".into(),
+            };
+            println!(
+                "{}  {}  branch {}  database {db}",
+                w["site"].as_str().unwrap_or_default(),
+                w["url"].as_str().unwrap_or_default(),
+                w["branch"].as_str().unwrap_or_default()
+            );
+        }
+    })
+    .await
+}
+
+async fn workspace_delete(
+    paths: &HearthPaths,
+    name: Option<String>,
+    force: bool,
+    keep_database: bool,
+    keep_files: bool,
+) -> ExitCode {
+    let w = match workspace_record(paths, name).await {
+        Ok(w) => w,
+        Err(code) => return code,
+    };
+    let label = w["name"].as_str().unwrap_or_default().to_string();
+    if !force {
+        print!("Delete the workspace {label}? Uncommitted changes in it are lost. [y/N] ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let mut answer = String::new();
+        let _ = std::io::stdin().read_line(&mut answer);
+        if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+            println!("Kept {label}");
+            return ExitCode::SUCCESS;
+        }
+    }
+    let params = json!({ "name": w["site"], "keepDatabase": keep_database, "keepFiles": keep_files });
+    match ipc::call_waiting(paths, "workspaces.delete", params, Duration::from_secs(600)).await {
+        Ok(done) => {
+            println!("Workspace {label} is deleted; its branch {} stays", w["branch"].as_str().unwrap_or_default());
+            print_notes(&done["notes"]);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
 async fn processes_list(paths: &HearthPaths, as_json: bool) -> ExitCode {
     print_call(paths, "processes.list", Value::Null, as_json, |list| {
         let sites = list["sites"].as_array().cloned().unwrap_or_default();
@@ -836,7 +1112,6 @@ fn missing(command: &str) -> String {
         "db" => "database tools",
         "debug" | "coverage" => "one-click Xdebug",
         "log" | "logs" | "insights" => "log and insights viewer",
-        "workspace" | "workspaces" => "workspaces",
         "mcp" => "MCP server",
         "share" | "fetch-share-url" => "site sharing",
         "studio" => return "Hearth has no Studio, and none is planned".into(),

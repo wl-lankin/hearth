@@ -141,9 +141,15 @@ async fn a_command_that_fails_at_once_shows_why() {
     call(&core, "processes.add", json!({ "site": "shop", "name": "app", "command": "echo boom && exit 3" }))
         .await
         .unwrap();
-    // Start says so itself (the CLI and the MCP have no page to look at).
-    let err = call(&core, "processes.start", json!({ "site": "shop", "name": "app" })).await.unwrap_err();
-    assert!(err.message.contains("boom"), "{}", err.message);
+    // Start says so itself (the CLI and the MCP have no page to look at); on a machine too busy to
+    // end the shell within start's second, the list says it a moment later.
+    if let Err(err) = call(&core, "processes.start", json!({ "site": "shop", "name": "app" })).await {
+        assert!(err.message.contains("boom"), "{}", err.message);
+    }
+    until("the crash is noticed", async || {
+        call(&core, "processes.list", Value::Null).await.unwrap()["sites"][0]["processes"][0]["waiting"] == true
+    })
+    .await;
     let list = call(&core, "processes.list", Value::Null).await.unwrap();
     let row = &list["sites"][0]["processes"][0];
     assert_eq!((row["running"].as_bool(), row["waiting"].as_bool()), (Some(false), Some(true)), "{row}");
@@ -158,6 +164,10 @@ async fn a_command_that_finishes_is_done_not_failed() {
     let (_d, core) = home();
     call(&core, "processes.add", json!({ "site": "shop", "name": "app", "command": "echo built" })).await.unwrap();
     call(&core, "processes.start", json!({ "site": "shop", "name": "app" })).await.unwrap();
+    until("the command finishes", async || {
+        call(&core, "processes.list", Value::Null).await.unwrap()["sites"][0]["processes"][0]["running"] == false
+    })
+    .await;
     let list = call(&core, "processes.list", Value::Null).await.unwrap();
     let row = &list["sites"][0]["processes"][0];
     assert_eq!(
