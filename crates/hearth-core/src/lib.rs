@@ -14,6 +14,7 @@ pub mod node;
 pub mod path_env;
 pub mod paths;
 pub mod php;
+pub mod processes;
 pub mod profile;
 pub mod services;
 pub mod settings;
