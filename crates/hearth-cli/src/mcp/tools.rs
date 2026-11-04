@@ -275,3 +275,23 @@ impl Tool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::TOOLS;
+
+    #[test]
+    fn every_required_parameter_is_in_its_tools_schema_and_named_in_the_description() {
+        for tool in TOOLS {
+            let schema = tool.schema();
+            for action in tool.actions {
+                for param in action.required {
+                    assert!(schema["properties"][param].is_object(), "{} {} needs {param}", tool.name, action.name);
+                }
+            }
+        }
+        let site = super::find("site").unwrap().description();
+        assert!(site.contains("\n- isolate (phpVersion): "), "{site}");
+        assert!(site.contains("\n- info: "), "{site}");
+    }
+}
