@@ -17,8 +17,6 @@
   const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(2)} s` : `${n} ms`);
 </script>
 
-<h1>Profiles</h1>
-
 <section class="card strip">
   <span class="muted">
     Switch <strong>Profile</strong> on for a site on the Sites page: SPX then profiles each of its requests. Open a profile to see its flame graph and timeline in SPX. To profile a command, run it with <code>SPX_ENABLED=1 SPX_REPORT=full</code>.
@@ -66,11 +64,6 @@
 </section>
 
 <style>
-  h1 {
-    margin: 0 0 16px;
-    font-size: 22px;
-    font-weight: 650;
-  }
   .card {
     background: var(--surface);
     border: 1px solid var(--border);

@@ -52,8 +52,6 @@
   const siteValue = $derived(store.filter === undefined ? '*' : (store.filter ?? ''));
 </script>
 
-<h1>Requests</h1>
-
 <section class="card strip">
   <div class="status">
     <span class="dot" class:ok={store.status?.listening && store.status?.requests} class:bad={!!store.status?.error} aria-hidden="true"></span>
@@ -188,11 +186,6 @@
 </section>
 
 <style>
-  h1 {
-    margin: 0 0 16px;
-    font-size: 22px;
-    font-weight: 650;
-  }
   h2 {
     flex: 1;
     min-width: 0;

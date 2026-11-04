@@ -42,8 +42,6 @@
   const label: Record<string, string> = { redis: 'Redis', xdebug: 'Xdebug' };
 </script>
 
-<h1>PHP</h1>
-
 {#if php.catalogError}
   <p class="notice">Could not load the list of PHP versions: {php.catalogError}</p>
 {/if}
@@ -117,11 +115,6 @@
 </section>
 
 <style>
-  h1 {
-    margin: 0 0 20px;
-    font-size: 22px;
-    font-weight: 650;
-  }
 
   h2 {
     margin: 0 0 8px;
