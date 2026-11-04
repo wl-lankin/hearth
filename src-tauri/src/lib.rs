@@ -1,4 +1,5 @@
 mod commands;
+mod panel;
 mod startup;
 mod tray;
 mod updates;
@@ -67,6 +68,7 @@ pub fn run() {
         .manage(state.clone())
         .manage(Server::default())
         .manage(updates::Updates::new(installed))
+        .manage(panel::PanelState::default())
         .invoke_handler(tauri::generate_handler![
             commands::core_status,
             commands::settings_get,
@@ -76,8 +78,18 @@ pub fn run() {
             commands::update_install_now,
             commands::core_call,
             commands::open_url,
+            commands::panel_fit,
+            commands::panel_hide,
+            commands::app_open,
+            commands::app_quit,
         ])
         .on_window_event(|window, event| {
+            // A click outside the tray panel closes it.
+            if let WindowEvent::Focused(false) = event {
+                if window.label() == panel::LABEL {
+                    panel::blurred(window.app_handle());
+                }
+            }
             // Closing the window keeps Hearth running in the tray.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == window::MAIN {

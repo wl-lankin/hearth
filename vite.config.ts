@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
@@ -11,7 +12,19 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1440, strictPort: true },
   envPrefix: ['VITE_', 'TAURI_ENV_'],
-  build: { outDir: '../dist', emptyOutDir: true, target: 'chrome120', modulePreload: { polyfill: false } },
+  build: {
+    outDir: '../dist',
+    emptyOutDir: true,
+    target: 'chrome120',
+    modulePreload: { polyfill: false },
+    // Two pages: the app and the tray panel.
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./ui/index.html', import.meta.url)),
+        panel: fileURLToPath(new URL('./ui/panel.html', import.meta.url)),
+      },
+    },
+  },
   // Under vitest, resolve Svelte's browser build: the server build turns $effect, flushSync and untrack into no-ops.
   resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
   test: {

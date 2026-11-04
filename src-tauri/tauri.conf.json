@@ -23,6 +23,21 @@
         "visible": false,
         "theme": "Dark",
         "backgroundColor": "#120e0c"
+      },
+      {
+        "label": "panel",
+        "url": "panel.html",
+        "title": "Hearth",
+        "width": 300,
+        "height": 420,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": true
       }
     ],
     "security": {
@@ -36,7 +51,8 @@
       "dangerousDisableAssetCspModification": [
         "style-src"
       ]
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,

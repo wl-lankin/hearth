@@ -1,0 +1,94 @@
+<h2>The tray panel</h2>
+<p class="subtitle">Right-click Hearth's tray icon and this panel opens above it, in the Ember look. Left: everything at rest. Right: the PHP list open. Tell me in the terminal what is wrong or missing.</p>
+
+<style>
+  .desk { position: relative; height: 560px; border-radius: 14px; overflow: hidden; background: linear-gradient(160deg, #3b4a63, #1f2635 60%, #151a24); font-family: Inter, "Segoe UI", system-ui, sans-serif; }
+  .taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: rgba(20, 22, 28, .92); display: flex; justify-content: flex-end; align-items: center; gap: 14px; padding-right: 16px; color: #ddd; font-size: 11px; }
+  .taskbar .tray { width: 18px; height: 18px; }
+  .panel { position: absolute; right: 30px; bottom: 50px; width: 300px; border-radius: 14px; background: rgba(24, 19, 16, .96); border: 1px solid rgba(255,255,255,.1); box-shadow: 0 24px 60px rgba(0,0,0,.55); color: #f3e9e1; font-size: 12.5px; overflow: hidden; }
+  .panel::before { content: ""; position: absolute; inset: 0; background: radial-gradient(80% 50% at 80% 110%, rgba(240,122,64,.3), transparent 70%); pointer-events: none; }
+  .head { position: relative; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.07); }
+  .head img { width: 26px; height: 26px; }
+  .head .t { font-weight: 700; font-size: 13.5px; }
+  .head .s { color: #a8998f; font-size: 11px; }
+  .head .dot { width: 7px; height: 7px; border-radius: 50%; background: #5cc58a; display: inline-block; margin-right: 5px; }
+  .sec { position: relative; padding: 8px 8px 6px; border-bottom: 1px solid rgba(255,255,255,.07); }
+  .lbl { color: #a8998f; font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; padding: 2px 8px 5px; }
+  .row { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 8px; }
+  .row:hover, .row.hl { background: rgba(255,255,255,.06); }
+  .row .grow { flex: 1; }
+  .row .muted { color: #a8998f; font-size: 11px; }
+  .chev { color: #a8998f; }
+  .sw { width: 28px; height: 16px; border-radius: 999px; background: rgba(255,255,255,.14); position: relative; }
+  .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #d9cbc1; }
+  .sw.on { background: linear-gradient(180deg, #f6904f, #e8642c); }
+  .sw.on::after { left: 14px; background: #1a1310; }
+  .sdot { width: 7px; height: 7px; border-radius: 50%; background: #5a4a40; }
+  .sdot.on { background: #5cc58a; box-shadow: 0 0 6px #5cc58a; }
+  .pill { font-size: 10px; padding: 1px 7px; border-radius: 999px; background: rgba(240,122,64,.18); color: #f6a66f; }
+  .upd { margin: 8px; padding: 8px 10px; border-radius: 9px; background: linear-gradient(180deg, rgba(240,122,64,.28), rgba(240,122,64,.12)); border: 1px solid rgba(240,122,64,.35); display: flex; align-items: center; gap: 8px; position: relative; }
+  .btn { font-size: 11px; padding: 3px 10px; border-radius: 7px; background: linear-gradient(180deg, #f6904f, #e8642c); color: #1a1310; font-weight: 600; }
+  .foot { position: relative; display: flex; gap: 6px; padding: 8px; }
+  .foot div { flex: 1; text-align: center; padding: 7px 0; border-radius: 8px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08); font-size: 12px; }
+  .sub { position: absolute; right: 340px; bottom: 300px; width: 190px; border-radius: 12px; background: rgba(28,22,19,.97); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 16px 40px rgba(0,0,0,.5); padding: 6px; color: #f3e9e1; font-size: 12.5px; }
+  .check { width: 14px; color: #f07a40; font-weight: 700; }
+</style>
+
+<div class="split">
+  <div class="desk">
+    <div class="panel">
+      <div class="head"><img src="../../../assets/logo.svg"><div><div class="t">Hearth</div><div class="s"><span class="dot"></span>Serving 4 sites</div></div></div>
+      <div class="sec">
+        <div class="lbl">PHP</div>
+        <div class="row"><span class="grow">Default version</span><span class="muted">8.4</span><span class="chev">›</span></div>
+      </div>
+      <div class="sec">
+        <div class="lbl">Services</div>
+        <div class="row"><span class="sdot on"></span><span class="grow">MySQL 8.4</span><span class="sw on"></span></div>
+        <div class="row"><span class="sdot on"></span><span class="grow">Redis 8</span><span class="sw on"></span></div>
+        <div class="row"><span class="sdot"></span><span class="grow">PostgreSQL 18</span><span class="sw"></span></div>
+      </div>
+      <div class="sec">
+        <div class="lbl">Sites</div>
+        <div class="row"><span class="grow">shop.test</span><span class="pill">HTTPS</span><span class="chev">↗</span></div>
+        <div class="row"><span class="grow">blog.test</span><span class="chev">↗</span></div>
+        <div class="row"><span class="grow">notes.test</span><span class="chev">↗</span></div>
+        <div class="row"><span class="muted grow">All 4 sites...</span></div>
+      </div>
+      <div class="upd"><span class="grow" style="flex:1">Hearth 0.2.0 is ready</span><span class="btn">Restart to update</span></div>
+      <div class="foot"><div>Open Hearth</div><div>Quit Hearth</div></div>
+    </div>
+    <div class="taskbar"><span>DE</span><span>21:58</span><img class="tray" src="../../../assets/logo.svg"></div>
+  </div>
+
+  <div class="desk">
+    <div class="sub">
+      <div class="row hl"><span class="check">✓</span><span class="grow">PHP 8.4</span><span class="muted">8.4.27</span></div>
+      <div class="row"><span class="check"></span><span class="grow">PHP 8.3</span><span class="muted">8.3.19</span></div>
+      <div class="row"><span class="check"></span><span class="grow">PHP 8.2</span><span class="muted">8.2.28</span></div>
+      <div class="row" style="border-top:1px solid rgba(255,255,255,.07);margin-top:4px;border-radius:0 0 8px 8px"><span class="check"></span><span class="muted grow">Install another...</span></div>
+    </div>
+    <div class="panel">
+      <div class="head"><img src="../../../assets/logo.svg"><div><div class="t">Hearth</div><div class="s"><span class="dot"></span>Serving 4 sites</div></div></div>
+      <div class="sec">
+        <div class="lbl">PHP</div>
+        <div class="row hl"><span class="grow">Default version</span><span class="muted">8.4</span><span class="chev">‹</span></div>
+      </div>
+      <div class="sec">
+        <div class="lbl">Services</div>
+        <div class="row"><span class="sdot on"></span><span class="grow">MySQL 8.4</span><span class="sw on"></span></div>
+        <div class="row"><span class="sdot on"></span><span class="grow">Redis 8</span><span class="sw on"></span></div>
+        <div class="row"><span class="sdot"></span><span class="grow">PostgreSQL 18</span><span class="sw"></span></div>
+      </div>
+      <div class="sec">
+        <div class="lbl">Sites</div>
+        <div class="row"><span class="grow">shop.test</span><span class="pill">HTTPS</span><span class="chev">↗</span></div>
+        <div class="row"><span class="grow">blog.test</span><span class="chev">↗</span></div>
+        <div class="row"><span class="grow">notes.test</span><span class="chev">↗</span></div>
+        <div class="row"><span class="muted grow">All 4 sites...</span></div>
+      </div>
+      <div class="foot"><div>Open Hearth</div><div>Quit Hearth</div></div>
+    </div>
+    <div class="taskbar"><span>DE</span><span>21:58</span><img class="tray" src="../../../assets/logo.svg"></div>
+  </div>
+</div>
