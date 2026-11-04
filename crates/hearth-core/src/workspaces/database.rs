@@ -185,6 +185,8 @@ fn sqlite(worktree: &Path, parent: &Path, env: &str, mode: Mode) -> Prepared {
         return Prepared { mode, name: None, driver: Some("sqlite".into()), env: vec![], notes: vec![] };
     }
     let path = PathBuf::from(value.unwrap_or_else(|| "database/database.sqlite".into()));
+    // Rebuilt from its parts: `database/database.sqlite` gets the platform's separator.
+    let path: PathBuf = path.components().collect();
     // Inside the project (relative, or an absolute path into the parent): the same place in the worktree.
     let relative =
         if path.is_absolute() { path.strip_prefix(parent).ok().map(Path::to_path_buf) } else { Some(path.clone()) };

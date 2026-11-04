@@ -49,6 +49,9 @@ fn sqlite_in_the_project_is_copied_emptied_or_shared() {
     let shared = database::prepare(&paths, &worktree, &parent, env, Mode::Shared, "feature");
     let pointed = PathBuf::from(env_db(&shared).unwrap());
     assert_eq!(pointed, parent.join("database").join("database.sqlite"), "shared means the parent's file");
+    // One kind of separator in what the .env gets (`database/database.sqlite` is Laravel's default).
+    let written = env_db(&shared).unwrap();
+    assert!(!(cfg!(windows) && written.contains('/')), "{written}");
 }
 
 #[test]
