@@ -1,38 +1,12 @@
 <script lang="ts">
-  import type { ThemeSetting } from '../api';
   import type { SettingsStore } from '../settings.svelte';
   import Terminal from './Terminal.svelte';
   import Updates from './Updates.svelte';
 
   let { settings }: { settings: SettingsStore } = $props();
-
-  const themes: { id: ThemeSetting; label: string }[] = [
-    { id: 'system', label: 'System' },
-    { id: 'light', label: 'Light' },
-    { id: 'dark', label: 'Dark' },
-  ];
 </script>
 
 <h1>Settings</h1>
-
-<section class="card">
-  <h2>Appearance</h2>
-  <div class="row">
-    <span id="theme-label">Theme</span>
-    <div class="segmented" role="radiogroup" aria-labelledby="theme-label">
-      {#each themes as theme (theme.id)}
-        <button
-          role="radio"
-          aria-checked={settings.value.theme === theme.id}
-          class:on={settings.value.theme === theme.id}
-          onclick={() => settings.update({ theme: theme.id })}
-        >
-          {theme.label}
-        </button>
-      {/each}
-    </div>
-  </div>
-</section>
 
 <section class="card">
   <h2>Startup</h2>
@@ -104,30 +78,6 @@
     height: 18px;
     accent-color: var(--accent);
     cursor: pointer;
-  }
-
-  .segmented {
-    display: inline-flex;
-    padding: 3px;
-    gap: 2px;
-    background: var(--surface-2);
-    border-radius: 9px;
-  }
-
-  .segmented button {
-    padding: 4px 14px;
-    border: 0;
-    border-radius: 7px;
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-  }
-
-  .segmented button.on {
-    background: var(--surface);
-    color: var(--text);
-    font-weight: 600;
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
   }
 
   .error {

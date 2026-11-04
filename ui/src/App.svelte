@@ -2,7 +2,7 @@
   import logo from '../../assets/logo.svg?url';
   import * as api from './api';
   import { createSettingsStore } from './settings.svelte';
-  import { applyTheme, resolveTheme } from './theme';
+  import TitleBar, { platformOf } from './TitleBar.svelte';
   import Dashboard from './views/Dashboard.svelte';
   import Dumps from './views/Dumps.svelte';
   import Logs from './views/Logs.svelte';
@@ -24,18 +24,8 @@
   const requested = new URLSearchParams(location.search).get('view');
   const views: View[] = ['dashboard', 'sites', 'workspaces', 'services', 'processes', 'php', 'node', 'mail', 'dumps', 'requests', 'profiles', 'logs', 'settings'];
   let view = $state<View>(views.includes(requested as View) ? (requested as View) : 'dashboard');
-  let prefersDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
 
   settings.load();
-
-  $effect(() => {
-    const query = window.matchMedia('(prefers-color-scheme: dark)');
-    const onChange = (e: MediaQueryListEvent) => (prefersDark = e.matches);
-    query.addEventListener('change', onChange);
-    return () => query.removeEventListener('change', onChange);
-  });
-
-  $effect(() => applyTheme(resolveTheme(settings.value.theme, prefersDark)));
 
   const nav: { id: View; label: string }[] = [
     { id: 'dashboard', label: 'Dashboard' },
@@ -54,6 +44,7 @@
   ];
 </script>
 
+<TitleBar platform={platformOf(navigator.userAgent)} />
 <div class="shell">
   <aside>
     <div class="brand">
@@ -111,7 +102,7 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
-    padding: 20px 12px 14px;
+    padding: calc(var(--titlebar-height) + 6px) 12px 14px;
     background: var(--sidebar);
     border-right: 1px solid var(--border);
   }
@@ -169,6 +160,6 @@
 
   main {
     overflow: auto;
-    padding: 28px 32px;
+    padding: calc(var(--titlebar-height) + 4px) 32px 28px;
   }
 </style>

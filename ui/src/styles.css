@@ -1,24 +1,7 @@
-:root,
-:root[data-theme='light'] {
-  color-scheme: light;
-  --bg: #f7f3ef;
-  --surface: #ffffff;
-  --surface-2: #f1ebe5;
-  --border: #e4dbd2;
-  --text: #2a2420;
-  --muted: #7a6d64;
-  --accent: #e8642c;
-  --accent-soft: #fbe4d8;
-  --accent-text: #ffffff;
-  --ok: #2f8f57;
-  --ok-soft: #dcf0e3;
-  --danger: #b8321c;
-  --sidebar: #efe8e1;
-  --nav-active: #e2d8ce;
-}
-
-:root[data-theme='dark'] {
+:root {
   color-scheme: dark;
+  /* The strip at the top that replaces the system title bar. */
+  --titlebar-height: 34px;
   --bg: #171311;
   --surface: #211c19;
   --surface-2: #2a2420;
