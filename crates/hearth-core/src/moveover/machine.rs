@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use super::outside::MachineWrite;
 use super::scan::Machine;
-use crate::dns::protocol::{Request, PIPE};
+use crate::dns::protocol::Request;
+#[cfg(windows)]
+use crate::dns::protocol::PIPE;
 use crate::CoreError;
 
 /// This computer. Outside Windows every answer is empty: there is no Herd to move from.
@@ -105,10 +107,18 @@ impl MachineWrite for RealWrite {
     }
 
     fn helper(&mut self, request: &Request) -> Result<(), CoreError> {
-        let answer = crate::dns::client::request_on(PIPE, request)?;
-        match answer.error {
-            Some(e) => Err(CoreError::Php(e)),
-            None => Ok(()),
+        #[cfg(windows)]
+        {
+            let answer = crate::dns::client::request_on(PIPE, request)?;
+            match answer.error {
+                Some(e) => Err(CoreError::Php(e)),
+                None => Ok(()),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = request;
+            Err(CoreError::Php("Hearth's helper runs on Windows only".into()))
         }
     }
 }
