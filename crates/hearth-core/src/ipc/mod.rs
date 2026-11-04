@@ -146,6 +146,9 @@ pub async fn handle(state: &CoreState, method: &str, params: &Value) -> Result<V
     if let Some(result) = crate::processes::api::handle(state, method, params).await {
         return result;
     }
+    if let Some(result) = crate::env::api::handle(state, method, params).await {
+        return result;
+    }
     if let Some(result) = crate::workspaces::api::handle(state, method, params).await {
         return result;
     }

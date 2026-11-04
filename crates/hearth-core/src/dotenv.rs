@@ -35,36 +35,73 @@ fn key_of(line: &str) -> Option<(&str, bool)> {
 /// `text` with every line of each key replaced (an `export ` stays), and keys that have none
 /// appended at the end, in the file's own line ending.
 pub fn set(text: &str, values: &[(&str, &str)]) -> String {
+    values
+        .iter()
+        .fold(text.to_string(), |out, (key, value)| put_line(&out, key, &format!("{key}={}", written(value)), true))
+}
+
+/// Whether `key` is a name a `.env` line can set.
+pub fn valid_key(key: &str) -> bool {
+    !key.is_empty() && !key.starts_with('#') && !key.contains(['=', '\r', '\n']) && !key.contains(char::is_whitespace)
+}
+
+/// `text` with every line of `key` replaced by `line` (keeping an `export ` when `keep_export`),
+/// or `line` appended when the key has none.
+pub fn put_line(text: &str, key: &str, line: &str, keep_export: bool) -> String {
     let eol = if text.contains("\r\n") { "\r\n" } else { "\n" };
-    let mut out = text.to_string();
-    for (key, value) in values {
-        let line = format!("{key}={}", written(value));
-        let mut found = false;
-        let mut next = String::with_capacity(out.len());
-        for piece in out.split_inclusive('\n') {
-            let content = piece.trim_end_matches(['\r', '\n']);
-            match key_of(content) {
-                Some((k, export)) if k == *key => {
-                    found = true;
-                    next.push_str(if export { "export " } else { "" });
-                    next.push_str(&line);
-                    next.push_str(&piece[content.len()..]);
-                }
-                _ => next.push_str(piece),
+    let mut found = false;
+    let mut next = String::with_capacity(text.len() + line.len());
+    for piece in text.split_inclusive('\n') {
+        let content = piece.trim_end_matches(['\r', '\n']);
+        match key_of(content) {
+            Some((k, export)) if k == key => {
+                found = true;
+                next.push_str(if export && keep_export { "export " } else { "" });
+                next.push_str(line);
+                next.push_str(&piece[content.len()..]);
+            }
+            _ => next.push_str(piece),
+        }
+    }
+    if found {
+        return next;
+    }
+    let base = text.trim_end_matches(['\r', '\n']);
+    if base.is_empty() {
+        format!("{line}{eol}")
+    } else {
+        format!("{base}{eol}{line}{eol}")
+    }
+}
+
+/// `text` without any line of `key`.
+pub fn unset(text: &str, key: &str) -> String {
+    text.split_inclusive('\n')
+        .filter(|piece| key_of(piece.trim_end_matches(['\r', '\n'])).is_none_or(|(k, _)| k != key))
+        .collect()
+}
+
+/// The last line that sets `key`, as written (without its line ending).
+pub fn line_of(text: &str, key: &str) -> Option<String> {
+    text.lines().rfind(|line| key_of(line).is_some_and(|(k, _)| k == key)).map(str::to_string)
+}
+
+/// Every key once, in the order of its first line, with the value its last line gives.
+pub fn all(text: &str) -> Vec<(String, String)> {
+    let mut keys: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if let Some((k, _)) = key_of(line) {
+            if !keys.iter().any(|seen| seen == k) {
+                keys.push(k.to_string());
             }
         }
-        out = if found {
-            next
-        } else {
-            let base = out.trim_end_matches(['\r', '\n']);
-            if base.is_empty() {
-                format!("{line}{eol}")
-            } else {
-                format!("{base}{eol}{line}{eol}")
-            }
-        };
     }
-    out
+    keys.into_iter()
+        .map(|k| {
+            let v = get(text, &k).unwrap_or_default();
+            (k, v)
+        })
+        .collect()
 }
 
 /// The value of `key` (the last line that sets it), without quotes or a trailing ` # comment`.
