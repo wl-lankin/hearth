@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
+mod mcp;
+
 use clap::{Parser, Subcommand};
 use hearth_core::node::launch::COMMANDS as NODE_COMMANDS;
 use hearth_core::php::manifest::Os;
@@ -293,6 +295,25 @@ enum Command {
     Other(Vec<String>),
     /// Prints the address the sites are served on.
     Loopback,
+    /// Runs the MCP server (stdio) with Herd's tool surface, for coding agents.
+    Mcp,
+    /// Registers Hearth's MCP server with agents: in this project (default) or user-wide (`--global`).
+    #[command(name = "mcp:install")]
+    McpInstall {
+        #[arg(long, conflicts_with = "project")]
+        global: bool,
+        #[arg(long)]
+        project: bool,
+        /// claude (default), cursor or vscode; repeat for several.
+        #[arg(long = "agent")]
+        agents: Vec<String>,
+        /// The project folder. Default: the current one.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Replace a different existing `hearth` entry.
+        #[arg(long)]
+        force: bool,
+    },
     /// Runs a site (default: the current folder's) on a PHP version.
     Isolate {
         minor: String,
@@ -556,6 +577,13 @@ async fn run() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Other(args) => fail(&missing(args.first().map(String::as_str).unwrap_or_default())),
+        Command::Mcp => {
+            mcp::serve(&paths).await;
+            ExitCode::SUCCESS
+        }
+        Command::McpInstall { global, project: _, agents, path, force } => {
+            mcp_install(&paths, global, agents, path, force)
+        }
         Command::Loopback => {
             println!("127.0.0.1");
             ExitCode::SUCCESS
@@ -810,6 +838,65 @@ async fn services_available(paths: &HearthPaths, kind: Option<&str>, as_json: bo
             ExitCode::SUCCESS
         }
         Err(e) => fail(&message(e)),
+    }
+}
+
+/// Registers the MCP server for each agent; Claude Code's user-wide list goes through `claude`.
+fn mcp_install(paths: &HearthPaths, global: bool, agents: Vec<String>, path: Option<PathBuf>, force: bool) -> ExitCode {
+    use mcp::install::{global_claude_command, hearth_exe, launch, write_global, write_project_with, Agent};
+    let agents = if agents.is_empty() { vec!["claude".to_string()] } else { agents };
+    let exe = hearth_exe(paths);
+    let home = std::env::var_os("HEARTH_HOME").map(PathBuf::from);
+    let path_var = std::env::var("PATH").ok();
+    let (command, env) = launch(&exe, &paths.bin, path_var.as_deref(), home.as_deref());
+    if command != "hearth" {
+        eprintln!(
+            "Note: Hearth's bin folder is not on PATH, so the config names {command}. Switch on \"Use Hearth's PHP in terminals\" to keep machine paths out of shared files."
+        );
+    }
+    let dir = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let mut failed = false;
+    for name in agents {
+        let agent = match Agent::parse(&name) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+                continue;
+            }
+        };
+        let result = match (global, agent) {
+            (true, Agent::Claude) => {
+                let add = global_claude_command(&command, home.as_deref());
+                match std::process::Command::new(&add[0]).args(&add[1..]).status() {
+                    Ok(s) if s.success() => Ok("Claude Code (user-wide)".to_string()),
+                    Ok(_) => Err(format!(
+                        "`claude mcp add` refused it (an existing `hearth` entry? `claude mcp remove --scope user hearth` removes it). The command was:\n  {}",
+                        add.join(" ")
+                    )),
+                    Err(_) => Err(format!(
+                        "Claude Code's `claude` command was not found. Register Hearth with:\n  {}",
+                        add.join(" ")
+                    )),
+                }
+            }
+            (true, _) => write_global(agent, &command, env.as_ref(), force).map(|f| f.display().to_string()),
+            (false, _) => {
+                write_project_with(agent, &dir, &command, env.as_ref(), force).map(|f| f.display().to_string())
+            }
+        };
+        match result {
+            Ok(where_) => println!("Hearth's MCP server is registered as `hearth` in {where_}"),
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
@@ -1112,7 +1199,6 @@ fn missing(command: &str) -> String {
         "db" => "database tools",
         "debug" | "coverage" => "one-click Xdebug",
         "log" | "logs" | "insights" => "log and insights viewer",
-        "mcp" => "MCP server",
         "share" | "fetch-share-url" => "site sharing",
         "studio" => return "Hearth has no Studio, and none is planned".into(),
         _ => return format!("Hearth has no `{command}` command (see `hearth --help`)"),
