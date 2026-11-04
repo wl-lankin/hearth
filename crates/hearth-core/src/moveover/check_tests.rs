@@ -227,7 +227,7 @@ impl FakeUninstaller {
 
 impl Uninstaller for FakeUninstaller {
     fn run(&mut self, program: &std::path::Path, args: &[String]) -> Result<i32, CoreError> {
-        assert!(program.ends_with("Uninstall Herd.exe"));
+        assert!(program.to_string_lossy().ends_with(r"\Uninstall Herd.exe"));
         assert_eq!(args, ["/allusers"]);
         self.ran = true;
         Ok(self.exit)

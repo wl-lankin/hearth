@@ -152,7 +152,7 @@ fn the_inventory_holds_all_of_herd() {
     assert_eq!(inv.autostart.as_ref().map(|(name, _)| name.as_str()), Some("de.beyondco.herd"));
     assert_eq!(inv.mcp.as_ref().and_then(|m| m["command"].as_str()), Some("cmd"));
     let uninstaller = inv.uninstaller.as_ref().expect("uninstaller");
-    assert!(uninstaller.program.ends_with("Uninstall Herd.exe"));
+    assert!(uninstaller.program.to_string_lossy().ends_with(r"\Uninstall Herd.exe"));
     assert_eq!(uninstaller.args, ["/allusers"]);
 
     assert_eq!(inv.other_hosts, ["bcd-1.api.shop.test", "herd-studio.test"]);

@@ -101,6 +101,8 @@ mod tests {
 
     use super::{database_server, foreign, inside};
 
+    // Windows paths: only Windows reads them as paths.
+    #[cfg(windows)]
     #[test]
     fn a_service_command_names_its_database_server_only() {
         let real = r"C:\Program Files\MariaDB 11.4\bin\mysqld.exe";
@@ -116,6 +118,8 @@ mod tests {
         assert_eq!(database_server(r"C:\mysqld.exe", |_| true), None, "never the root of a drive");
     }
 
+    // Windows paths: only Windows reads them as paths.
+    #[cfg(windows)]
     #[test]
     fn hearths_own_programs_may_hold_a_port() {
         let home = Path::new(r"C:\Users\x\.config\hearth");
