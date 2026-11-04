@@ -303,9 +303,6 @@
     align-items: center;
     gap: 8px;
   }
-  label.check input {
-    accent-color: var(--accent);
-  }
   .chips {
     display: flex;
     flex-wrap: wrap;

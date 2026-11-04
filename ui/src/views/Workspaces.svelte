@@ -259,9 +259,6 @@
     align-items: center;
     gap: 6px;
   }
-  .check input {
-    accent-color: var(--accent);
-  }
   code {
     font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
     font-size: 12px;

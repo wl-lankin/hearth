@@ -159,4 +159,27 @@
     color: var(--muted);
     font-size: 12px;
   }
+
+  /* A short window: tighter, so Settings stays in view down to the smallest size. */
+  @media (max-height: 680px) {
+    aside {
+      gap: 10px;
+    }
+
+    nav {
+      gap: 6px;
+    }
+
+    .heading {
+      padding-bottom: 1px;
+    }
+
+    button {
+      padding: 4px 10px;
+    }
+
+    .version {
+      display: none;
+    }
+  }
 </style>

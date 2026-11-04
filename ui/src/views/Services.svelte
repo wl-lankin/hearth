@@ -306,13 +306,13 @@
     color: var(--muted);
   }
 
+  /* On: a soft ember light, not a solid block. */
   button.toggle.on {
-    border-color: var(--ok);
-    background: var(--ok);
-    color: var(--accent-text);
+    border-color: rgb(240 122 64 / 0.5);
+    background: linear-gradient(180deg, rgb(240 122 64 / 0.3), rgb(240 122 64 / 0.16));
+    color: var(--text);
     font-weight: 600;
   }
-
 
   .error {
     color: var(--danger);

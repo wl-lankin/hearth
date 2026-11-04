@@ -329,18 +329,20 @@
     color: var(--muted);
   }
 
+  /* On: a soft ember light, not a solid block. */
   button.secure.on {
-    border-color: var(--ok);
-    background: var(--ok);
-    color: var(--accent-text);
+    border-color: rgb(240 122 64 / 0.5);
+    background: linear-gradient(180deg, rgb(240 122 64 / 0.3), rgb(240 122 64 / 0.16));
+    color: var(--text);
     font-weight: 600;
   }
 
   /* Name and controls on top, the full path and its notes below: nothing is cut off. */
-  /* One grid for the whole list (rows are subgrids): the PHP pickers and buttons line up. */
+  /* One grid for the whole list (rows are subgrids): the PHP pickers and buttons line up, and the
+     picker column is as wide as its longest choice, so "PHP 8.3 (not installed)" is never cut. */
   .list.card {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 200px auto;
+    grid-template-columns: minmax(0, 1fr) minmax(200px, max-content) auto;
   }
 
   .list.card > :not(.row) {
@@ -475,7 +477,7 @@
 
   @media (max-width: 860px) {
     .list.card {
-      grid-template-columns: minmax(0, 1fr) 180px;
+      grid-template-columns: minmax(0, 1fr) minmax(180px, max-content);
     }
 
     .row {

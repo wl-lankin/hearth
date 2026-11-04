@@ -45,9 +45,9 @@ body {
   height: 100%;
 }
 
+/* Only the font here: the colors live in the layer below, which this rule would otherwise beat. */
 button {
   font: inherit;
-  color: inherit;
 }
 
 :focus-visible {
@@ -151,6 +151,46 @@ h2 {
     outline: none;
     border-color: rgb(240 122 64 / 0.6);
     box-shadow: 0 0 0 3px rgb(240 122 64 / 0.16);
+  }
+
+  /* Checkboxes in Hearth's look: a glass box that fills with ember when checked. */
+  input[type='checkbox'] {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border: 1px solid rgb(255 255 255 / 0.22);
+    border-radius: 5px;
+    background: rgb(0 0 0 / 0.25);
+    cursor: pointer;
+    transition: background-color 150ms var(--ease), border-color 150ms var(--ease);
+  }
+
+  input[type='checkbox']::after {
+    content: '';
+    width: 9px;
+    height: 5px;
+    margin-top: -2px;
+    border: solid var(--accent-text);
+    border-width: 0 0 2px 2px;
+    transform: rotate(-45deg) scale(0);
+    transition: transform 150ms var(--ease);
+  }
+
+  input[type='checkbox']:checked {
+    border-color: #f6904f;
+    background: linear-gradient(180deg, #f6904f, #e8642c);
+  }
+
+  input[type='checkbox']:checked::after {
+    transform: rotate(-45deg) scale(1);
+  }
+
+  input[type='checkbox']:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
 
   table {

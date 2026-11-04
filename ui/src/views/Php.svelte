@@ -222,9 +222,6 @@
     cursor: pointer;
   }
 
-  .switch input {
-    accent-color: var(--accent);
-  }
 
 
 
