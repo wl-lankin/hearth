@@ -10,11 +10,13 @@ export type View =
   | 'mail'
   | 'inspect'
   | 'logs'
-  | 'settings';
+  | 'settings'
+  | 'moveover';
 
 export type NavItem = { id: View; label: string };
 
-/** The rail, top to bottom. Settings is pinned to the bottom of the rail and not listed here. */
+/** The rail, top to bottom. Settings is pinned to the bottom of the rail and not listed here;
+ *  the move over from Herd opens from Home and Settings only. */
 export const groups: { label: string | null; items: NavItem[] }[] = [
   { label: null, items: [{ id: 'home', label: 'Home' }] },
   {
@@ -42,7 +44,7 @@ export const groups: { label: string | null; items: NavItem[] }[] = [
   },
 ];
 
-const views = new Set<string>([...groups.flatMap((g) => g.items.map((i) => i.id)), 'settings']);
+const views = new Set<string>([...groups.flatMap((g) => g.items.map((i) => i.id)), 'settings', 'moveover']);
 
 /** Pages that became a tab of a merged page; old `?view=` links still open them. */
 const merged: Record<string, { view: View; tab: string }> = {

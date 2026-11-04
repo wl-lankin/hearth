@@ -7,7 +7,7 @@
   import { art } from '../illustrations';
   import type { View } from '../nav';
 
-  type Source = Pick<typeof api, 'coreStatus' | 'webStatus' | 'servicesList' | 'sitesList' | 'phpList'>;
+  type Source = Pick<typeof api, 'coreStatus' | 'webStatus' | 'servicesList' | 'sitesList' | 'phpList' | 'moveoverState'>;
 
   /** source: where the numbers come from (the core; tests pass their own). */
   let {
@@ -23,6 +23,8 @@
   let webRunning = $state(false);
   let php = $state<string | null>(null);
   let hour = $state(new Date().getHours());
+  // Herd is there and nothing moved yet: offer the move.
+  let offerMove = $state(false);
 
   async function refresh() {
     hour = new Date().getHours();
@@ -33,6 +35,10 @@
       source.webStatus(),
       source.phpList(),
     ]);
+    source
+      .moveoverState()
+      .then((m) => (offerMove = m.herd && !m.moved && !m.uninstalled))
+      .catch(() => (offerMove = false));
     if (core.status === 'fulfilled') {
       status = core.value;
       failed = null;
@@ -57,6 +63,16 @@
   /** A window's rectangle as a clip on the whole picture. */
   const clip = (w: Win) => `inset(${w.y}% ${100 - w.x - w.w}% ${100 - w.y - w.h}% ${w.x}%)`;
 </script>
+
+{#if offerMove}
+  <section class="move glass">
+    <div>
+      <h2>Herd is still installed</h2>
+      <p>Move your sites, PHP, services and tools over in one go. You see everything first, and can go back.</p>
+    </div>
+    <button class="primary" onclick={() => onnavigate('moveover')}>Move over from Herd</button>
+  </section>
+{/if}
 
 {#if sites === 0}
   <div class="welcome">
@@ -202,6 +218,22 @@
 
   .light.on {
     opacity: 1;
+  }
+
+  .move {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px 20px;
+    max-width: 960px;
+    margin: 0 auto 16px;
+    padding: 14px 18px;
+  }
+
+  .move p {
+    margin: 4px 0 0;
+    color: var(--muted);
   }
 
   .welcome {
