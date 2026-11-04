@@ -1,8 +1,11 @@
 //! Where the move stands, in `<home>/config/moveover.json`: Herd's answers before the move, whether
 //! it was moved and uninstalled, and the check results the owner accepted.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
+use super::check::SiteCheck;
 use super::probe::Answer;
 use crate::{CoreError, HearthPaths};
 
@@ -14,9 +17,11 @@ pub struct MoveState {
     pub uninstalled: bool,
     /// `<scheme>://<host>` of check results the owner accepted.
     pub accepted: Vec<String>,
+    /// The last check after the move (the uninstall waits for it).
+    pub last_check: Vec<SiteCheck>,
 }
 
-fn file(paths: &HearthPaths) -> std::path::PathBuf {
+fn file(paths: &HearthPaths) -> PathBuf {
     paths.config.join("moveover.json")
 }
 

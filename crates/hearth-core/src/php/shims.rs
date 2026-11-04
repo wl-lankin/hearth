@@ -2,6 +2,8 @@
 //! right PHP with its php.ini. They use paths relative to themselves, so the Hearth home can contain
 //! spaces or non-ASCII characters. `herd` and the Node commands hand over to the `hearth` CLI.
 
+use std::path::{Path, PathBuf};
+
 use crate::php::manifest::Os;
 use crate::{atomic, CoreError, HearthPaths};
 
@@ -92,21 +94,21 @@ pub fn render_shims(os: Os, default: Option<&str>, installed: &[String], node: b
 /// Writes the shims into `<home>/bin` and removes Hearth's own shims that are no longer needed.
 /// Commands that only forward to a program elsewhere (`mysql` to the MariaDB service's client), kept
 /// in `<home>/config/forwarders.json` as (name, program).
-fn forwarders_file(paths: &HearthPaths) -> std::path::PathBuf {
+fn forwarders_file(paths: &HearthPaths) -> PathBuf {
     paths.config.join("forwarders.json")
 }
 
-pub fn forwarders(paths: &HearthPaths) -> Vec<(String, std::path::PathBuf)> {
+pub fn forwarders(paths: &HearthPaths) -> Vec<(String, PathBuf)> {
     std::fs::read(forwarders_file(paths)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
 /// Saves the forwarders; the next `write_shims` writes (or removes) their scripts.
-pub fn set_forwarders(paths: &HearthPaths, list: &[(String, std::path::PathBuf)]) -> Result<(), CoreError> {
+pub fn set_forwarders(paths: &HearthPaths, list: &[(String, PathBuf)]) -> Result<(), CoreError> {
     let bytes = serde_json::to_vec_pretty(list).map_err(|e| CoreError::Php(e.to_string()))?;
     atomic::write(&forwarders_file(paths), &bytes)
 }
 
-fn forwarder_shim(os: Os, target: &std::path::Path) -> String {
+fn forwarder_shim(os: Os, target: &Path) -> String {
     match os {
         Os::Windows => format!("@echo off\r\nrem {MARKER}\r\n\"{}\" %*\r\n", target.display()),
         Os::Macos => format!("#!/bin/sh\n# {MARKER}\nexec \"{}\" \"$@\"\n", target.display()),

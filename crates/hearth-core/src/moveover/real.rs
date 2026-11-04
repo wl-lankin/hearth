@@ -279,3 +279,136 @@ impl Mover for RealMover {
         crate::web::service::schedule_sync(&self.core);
     }
 }
+
+impl super::undo::Reverter for RealMover {
+    fn start_herd(&mut self, app: &str) -> Result<(), CoreError> {
+        crate::workspaces::command(app)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| CoreError::Php(format!("Herd could not be started: {e}")))
+    }
+
+    fn remove_sites(&mut self, plan: &ImportPlan) -> Result<(), CoreError> {
+        let _guard = self.core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let paths = self.paths();
+        // Each part may be gone already; what is left is still taken back.
+        for name in &plan.secure {
+            let _ = registry::unsecure(paths, name);
+        }
+        for (name, _) in &plan.isolate {
+            let _ = registry::isolate(paths, name, None);
+        }
+        for (name, _) in &plan.proxy {
+            let _ = registry::unproxy(paths, name);
+        }
+        for (name, _) in &plan.link {
+            let _ = registry::unlink(paths, name);
+        }
+        for dir in &plan.park {
+            let _ = registry::unpark(paths, dir);
+        }
+        Ok(())
+    }
+
+    fn restore_ca(&mut self, previous: Option<&(Vec<u8>, Vec<u8>)>) -> Result<(), CoreError> {
+        let dir = self.tls_dir();
+        match previous {
+            Some((crt, key)) => {
+                crate::atomic::write(&dir.join("ca.crt"), crt)?;
+                crate::atomic::write_private(&dir.join("ca.key"), key)?;
+            }
+            None => {
+                let _ = std::fs::remove_file(dir.join("ca.crt"));
+                let _ = std::fs::remove_file(dir.join("ca.key"));
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir.join("sites"));
+        Ok(())
+    }
+
+    fn set_ports(&mut self, http: u16, https: u16) -> Result<(), CoreError> {
+        registry::set_http_port(self.paths(), http)?;
+        registry::set_https_port(self.paths(), https)
+    }
+
+    fn uninstall_php(&mut self, minor: &str) -> Result<(), CoreError> {
+        self.ipc("php.uninstall", json!({ "minor": minor })).map(|_| ())
+    }
+
+    fn set_php_default(&mut self, minor: Option<&str>) -> Result<(), CoreError> {
+        match minor {
+            Some(m) => self.ipc("php.use", json!({ "minor": m })).map(|_| ()),
+            None => Ok(()),
+        }
+    }
+
+    fn set_ini_user(&mut self, minor: &str, user: &str) -> Result<(), CoreError> {
+        self.ipc("php.ini.set", json!({ "minor": minor, "user": user })).map(|_| ())
+    }
+
+    fn delete_service(&mut self, id: &str) -> Result<(), CoreError> {
+        let _ = self.ipc("services.stop", json!({ "id": id }));
+        self.ipc("services.delete", json!({ "id": id })).map(|_| ())
+    }
+
+    fn set_smtp(&mut self, port: u16) -> Result<(), CoreError> {
+        self.ipc("mail.port", json!({ "port": port })).map(|_| ())
+    }
+
+    fn uninstall_node(&mut self, version: &str) -> Result<(), CoreError> {
+        self.ipc("node.uninstall", json!({ "spec": version.trim_start_matches('v') })).map(|_| ())
+    }
+
+    fn set_node_default(&mut self, version: Option<&str>) -> Result<(), CoreError> {
+        match version {
+            Some(v) => self.ipc("node.default", json!({ "spec": v.trim_start_matches('v') })).map(|_| ()),
+            None => crate::node::store::set_default(self.paths(), None),
+        }
+    }
+
+    fn remove_forwarders(&mut self) -> Result<(), CoreError> {
+        crate::php::shims::set_forwarders(self.paths(), &[])?;
+        crate::php::service::refresh_shims(self.paths())
+    }
+
+    fn sync(&mut self) {
+        crate::web::service::schedule_sync(&self.core);
+    }
+}
+
+/// Herd's uninstaller on this computer, and trust in the CA Hearth took over.
+pub struct RealUninstaller {
+    pub paths: HearthPaths,
+}
+
+impl super::uninstall::Uninstaller for RealUninstaller {
+    fn run(&mut self, program: &Path, args: &[String]) -> Result<i32, CoreError> {
+        // Through ShellExecute (Start-Process), so Windows asks for the rights Herd's uninstaller needs.
+        let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let arguments = if args.is_empty() {
+            String::new()
+        } else {
+            format!(" -ArgumentList {}", args.iter().map(|a| quote(a)).collect::<Vec<_>>().join(","))
+        };
+        let script = format!(
+            "try {{ $p = Start-Process -FilePath {}{} -Wait -PassThru -ErrorAction Stop; exit $p.ExitCode }} catch {{ exit 1223 }}",
+            quote(&program.to_string_lossy()),
+            arguments
+        );
+        let status = crate::workspaces::command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .status()
+            .map_err(|e| CoreError::Php(format!("Herd's uninstaller could not be started: {e}")))?;
+        Ok(status.code().unwrap_or(1))
+    }
+
+    fn ca_trusted(&self) -> bool {
+        crate::tls::ca::load_ca(&self.paths)
+            .is_some_and(|ca| crate::tls::trust::is_trusted(&ca, &crate::tls::ca::ca_cert_path(&self.paths)))
+    }
+
+    fn trust(&mut self) -> Result<(), CoreError> {
+        let ca = crate::tls::ca::ensure_ca(&self.paths)?;
+        crate::tls::trust::trust(&ca, &crate::tls::ca::ca_cert_path(&self.paths))
+    }
+}

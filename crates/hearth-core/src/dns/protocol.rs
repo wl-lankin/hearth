@@ -223,6 +223,8 @@ pub fn handle_with(line: &[u8], hosts: &Path, env: &mut dyn MachineEnv) -> Respo
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     fn hosts_file(content: &str) -> (tempfile::TempDir, std::path::PathBuf) {
@@ -277,7 +279,7 @@ mod tests {
     #[derive(Default)]
     struct FakeEnv {
         path: String,
-        vars: std::collections::BTreeMap<String, String>,
+        vars: BTreeMap<String, String>,
         removed: Removed,
     }
 

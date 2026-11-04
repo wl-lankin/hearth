@@ -2,8 +2,10 @@
 //! it is carried out, so Undo knows what to put back and a second "Move over" skips what is done.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::herd::import::ImportPlan;
 use crate::{CoreError, HearthPaths};
@@ -32,7 +34,7 @@ pub enum Done {
     },
     #[serde(rename_all = "camelCase")]
     Mcp {
-        herd_entry: serde_json::Value,
+        herd_entry: Value,
         hearth: String,
     },
     /// Hearth's CA before Herd's took its place (certificate and key), if it had one.
@@ -94,7 +96,7 @@ pub struct Record {
     pub steps: Vec<Done>,
 }
 
-fn file(paths: &HearthPaths) -> std::path::PathBuf {
+fn file(paths: &HearthPaths) -> PathBuf {
     paths.config.join("moveover-record.json")
 }
 

@@ -2,7 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
+use super::outside::MachineWrite;
 use super::scan::Machine;
+use crate::dns::protocol::{Request, PIPE};
+use crate::CoreError;
 
 /// This computer. Outside Windows every answer is empty: there is no Herd to move from.
 pub struct RealMachine;
@@ -61,7 +64,7 @@ impl Machine for RealMachine {
 /// This computer, for the move's outside changes. Outside Windows each write says it can't.
 pub struct RealWrite;
 
-impl super::outside::MachineWrite for RealWrite {
+impl MachineWrite for RealWrite {
     fn user_path(&self) -> String {
         #[cfg(windows)]
         return crate::path_env::read_user_path().unwrap_or_default();
@@ -69,32 +72,31 @@ impl super::outside::MachineWrite for RealWrite {
         String::new()
     }
 
-    fn set_user_path(&mut self, value: &str) -> Result<(), crate::CoreError> {
+    fn set_user_path(&mut self, value: &str) -> Result<(), CoreError> {
         #[cfg(windows)]
         return crate::path_env::write_user_path(value);
         #[cfg(not(windows))]
         {
             let _ = value;
-            Err(crate::CoreError::Php("Only on Windows".into()))
+            Err(CoreError::Php("Only on Windows".into()))
         }
     }
 
-    fn set_run(&mut self, name: &str, command: Option<&str>) -> Result<(), crate::CoreError> {
-        reg::set_run(name, command).map_err(crate::CoreError::Php)
+    fn set_run(&mut self, name: &str, command: Option<&str>) -> Result<(), CoreError> {
+        reg::set_run(name, command).map_err(CoreError::Php)
     }
 
-    fn claude(&mut self, args: &[String]) -> Result<(), crate::CoreError> {
+    fn claude(&mut self, args: &[String]) -> Result<(), CoreError> {
         // `claude` is a command script on Windows: run it through cmd.
         let mut cmd = crate::workspaces::command(if cfg!(windows) { "cmd" } else { "claude" });
         if cfg!(windows) {
             cmd.args(["/c", "claude"]);
         }
-        let out =
-            cmd.args(args).output().map_err(|e| crate::CoreError::Php(format!("Claude Code could not be run: {e}")))?;
+        let out = cmd.args(args).output().map_err(|e| CoreError::Php(format!("Claude Code could not be run: {e}")))?;
         if out.status.success() {
             Ok(())
         } else {
-            Err(crate::CoreError::Php(format!(
+            Err(CoreError::Php(format!(
                 "claude {} failed: {}",
                 args.join(" "),
                 String::from_utf8_lossy(&out.stderr).trim()
@@ -102,10 +104,10 @@ impl super::outside::MachineWrite for RealWrite {
         }
     }
 
-    fn helper(&mut self, request: &crate::dns::protocol::Request) -> Result<(), crate::CoreError> {
-        let answer = crate::dns::client::request_on(crate::dns::protocol::PIPE, request)?;
+    fn helper(&mut self, request: &Request) -> Result<(), CoreError> {
+        let answer = crate::dns::client::request_on(PIPE, request)?;
         match answer.error {
-            Some(e) => Err(crate::CoreError::Php(e)),
+            Some(e) => Err(CoreError::Php(e)),
             None => Ok(()),
         }
     }

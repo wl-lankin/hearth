@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use super::machine::RealMachine;
 use super::plan::plan;
 use super::probe::{probe_all, targets};
-use super::scan::{scan, HerdHome};
+use super::scan::{scan, HerdHome, Machine};
 use super::state;
 use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR};
 use crate::CoreError;
@@ -91,7 +91,7 @@ fn start_apply(core: &CoreState) -> Result<Value, RpcError> {
 }
 
 /// Answers a moveover.* method, or `None` when `method` is not one of them.
-pub async fn handle(core: &CoreState, method: &str, _params: &Value) -> Option<Result<Value, RpcError>> {
+pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Result<Value, RpcError>> {
     let result = match method {
         "moveover.state" => {
             let st = state::load(&core.paths);
@@ -99,7 +99,90 @@ pub async fn handle(core: &CoreState, method: &str, _params: &Value) -> Option<R
         }
         "moveover.scan" => dry_run(core).await,
         "moveover.apply" => start_apply(core),
+        "moveover.check" => check(core).await,
+        "moveover.accept" => accept(core, params),
+        "moveover.undo" => start_undo(core),
+        "moveover.uninstallHerd" => uninstall_herd(core).await,
         _ => return None,
     };
     Some(result)
+}
+
+/// Asks every site again through Hearth and keeps the result for the uninstall.
+async fn check(core: &CoreState) -> Result<Value, RpcError> {
+    let paths = core.paths.clone();
+    let mut st = state::load(&paths);
+    let config = crate::sites::registry::load(&paths);
+    let sites = super::check::check_sites(&st.baseline, config.http_port, config.https_port).await;
+    let services: Vec<Value> = crate::services::store::load(&paths)
+        .into_iter()
+        .map(|i| json!({ "name": i.name, "running": !crate::services::ports::port_free(i.port) }))
+        .collect();
+    let machine = RealMachine;
+    let hearth_bin = paths.bin.to_string_lossy().to_ascii_lowercase();
+    let node_from_hearth = machine.user_path().to_ascii_lowercase().contains(&hearth_bin)
+        && !machine.machine_path().to_ascii_lowercase().contains(r"\.config\herd");
+    st.last_check = sites.clone();
+    state::save(&paths, &st).map_err(failed)?;
+    Ok(
+        json!({ "sites": sites, "services": services, "node": { "fromHearth": node_from_hearth }, "accepted": st.accepted }),
+    )
+}
+
+fn accept(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
+    let key = params
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::new(crate::ipc::INVALID_PARAMS, "key is required"))?;
+    let mut st = state::load(&core.paths);
+    if !st.accepted.iter().any(|k| k == key) {
+        st.accepted.push(key.to_string());
+    }
+    state::save(&core.paths, &st).map_err(failed)?;
+    Ok(json!({ "accepted": st.accepted }))
+}
+
+/// Undo as a background job; its id.
+fn start_undo(core: &CoreState) -> Result<Value, RpcError> {
+    let (id, joined) = core.jobs.start("moveover", "moveover.undo", "Going back to Herd");
+    if joined {
+        return Ok(json!({ "jobId": id }));
+    }
+    let core2 = core.clone();
+    let runtime = tokio::runtime::Handle::current();
+    tokio::spawn(async move {
+        let jobs = core2.jobs.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            let paths = core2.paths.clone();
+            let mut rev = super::real::RealMover::new(core2, runtime);
+            super::undo::undo(&paths, &mut rev, &mut super::machine::RealWrite)
+        })
+        .await
+        .unwrap_or_else(|e| Err(CoreError::Php(e.to_string())));
+        jobs.finish(id, result.map_err(|e| e.to_string()));
+    });
+    Ok(json!({ "jobId": id }))
+}
+
+/// Runs Herd's uninstaller (once the last check allows it), then checks again.
+async fn uninstall_herd(core: &CoreState) -> Result<Value, RpcError> {
+    let herd = HerdHome::find().ok_or_else(|| RpcError::new(INTERNAL_ERROR, "Herd is not installed here"))?;
+    let paths = core.paths.clone();
+    let st = state::load(&paths);
+    let inv = tokio::task::spawn_blocking(move || scan(&herd, &RealMachine))
+        .await
+        .map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?
+        .map_err(failed)?;
+    let uninstaller =
+        inv.uninstaller.ok_or_else(|| RpcError::new(INTERNAL_ERROR, "Herd's uninstaller could not be found"))?;
+    let p2 = paths.clone();
+    let code = tokio::task::spawn_blocking(move || {
+        let mut real = super::real::RealUninstaller { paths: p2.clone() };
+        super::uninstall::uninstall(&p2, &st.last_check, &uninstaller.program, &uninstaller.args, &mut real)
+    })
+    .await
+    .map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?
+    .map_err(failed)?;
+    let after = check(core).await?;
+    Ok(json!({ "exitCode": code, "check": after }))
 }

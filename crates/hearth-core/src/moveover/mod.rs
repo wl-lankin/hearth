@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod apply;
+pub mod check;
 pub mod machine;
 pub mod outside;
 pub mod plan;
@@ -12,9 +13,13 @@ pub mod record;
 pub mod scan;
 pub mod state;
 pub mod stop;
+pub mod undo;
+pub mod uninstall;
 
 #[cfg(test)]
 mod apply_tests;
+#[cfg(test)]
+mod check_tests;
 #[cfg(test)]
 mod outside_tests;
 #[cfg(test)]

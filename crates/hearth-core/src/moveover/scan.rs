@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::herd::read::{self as herd_read, HerdSetup};
 use crate::CoreError;
@@ -96,17 +97,17 @@ pub struct Inventory {
     pub machine_path: Vec<String>,
     pub machine_vars: Vec<(String, String)>,
     pub autostart: Option<(String, String)>,
-    pub mcp: Option<serde_json::Value>,
+    pub mcp: Option<Value>,
     pub uninstaller: Option<Uninstaller>,
     pub other_hosts: Vec<String>,
 }
 
-fn json(path: &Path) -> Option<serde_json::Value> {
+fn json(path: &Path) -> Option<Value> {
     std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok())
 }
 
 /// A port that Herd writes as a number or as text.
-fn port(v: &serde_json::Value) -> Option<u16> {
+fn port(v: &Value) -> Option<u16> {
     v.as_u64().and_then(|p| u16::try_from(p).ok()).or_else(|| v.as_str()?.trim().parse().ok())
 }
 
