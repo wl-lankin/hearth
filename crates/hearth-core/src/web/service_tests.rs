@@ -297,3 +297,16 @@ fn a_debugged_site_without_xdebug_gets_a_note() {
     assert!(caddyfile(&h).contains("env XDEBUG_TRIGGER hearth"));
     h.core.supervisor.stop_all();
 }
+
+#[test]
+fn a_profiled_site_without_spx_gets_a_note_and_its_key() {
+    let h = home();
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    registry::set_profile(&h.core.paths, "shop", true).unwrap();
+    let status = sync_with(&h.core, &example("fake_server")).unwrap();
+    let note = status.notes.get("shop").cloned().unwrap_or_default();
+    assert!(note.contains("SPX is off for PHP 8.4"), "{note:?}");
+    let key = crate::profile::spx_key(&h.core.paths).unwrap();
+    assert!(caddyfile(&h).contains(&format!("env HTTP_SPX_KEY {key}")));
+    h.core.supervisor.stop_all();
+}

@@ -78,8 +78,13 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
                 if let Some(m) = minor.as_deref().filter(|m| site.debug && !xdebug_on(m)) {
                     notes.insert(site.name.clone(), format!("Xdebug is off for PHP {m}: switch it on on the PHP page"));
                 }
+                let spx_on = |m: &str| php_state.extensions.get(m).and_then(|e| e.get("spx")).copied() == Some(true);
+                if let Some(m) = minor.as_deref().filter(|m| site.profile && !spx_on(m)) {
+                    notes.insert(site.name.clone(), format!("SPX is off for PHP {m}: switch it on on the PHP page"));
+                }
+                let spx = if site.profile { Some(crate::profile::spx_key(paths)?) } else { None };
                 match minor {
-                    Some(minor) => Route::Php { docroot: docroot.clone(), minor, xdebug: site.debug },
+                    Some(minor) => Route::Php { docroot: docroot.clone(), minor, xdebug: site.debug, spx },
                     None => Route::Skip { reason: note.unwrap_or_default() },
                 }
             }

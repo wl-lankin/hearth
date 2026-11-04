@@ -191,6 +191,21 @@ fn set_debug_marks_the_site_and_refuses_proxies_and_unknown_names() {
 }
 
 #[test]
+fn set_profile_marks_the_site_unlink_drops_it_and_proxies_are_refused() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    proxy(&p, "vite", "http://localhost:5173").unwrap();
+    set_profile(&p, "shop", true).unwrap();
+    let profiled: Vec<(String, bool)> = list(&p).into_iter().map(|s| (s.name, s.profile)).collect();
+    assert_eq!(profiled, [("shop".to_string(), true), ("vite".to_string(), false)]);
+    assert!(set_profile(&p, "vite", true).is_err(), "a proxy runs no PHP");
+    assert!(set_profile(&p, "nope", true).is_err());
+    unlink(&p, "shop").unwrap();
+    assert!(load(&p).profile.is_empty());
+}
+
+#[test]
 fn unlinking_drops_debugging() {
     let (d, p) = home();
     project(&d.path().join("shop"), "laravel");
