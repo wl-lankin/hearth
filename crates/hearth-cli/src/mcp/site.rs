@@ -8,8 +8,23 @@ use hearth_core::workspaces::registry::within;
 use hearth_core::HearthPaths;
 
 /// `p` resolved, without Windows' `\\?\` prefix (sites are stored that way too after linking).
+/// A path that does not exist (yet) resolves through its deepest existing folder, so macOS'
+/// `/var` -> `/private/var` and Windows' short names still match.
 fn real(p: &Path) -> PathBuf {
-    let resolved = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let mut rest = Vec::new();
+    let mut base = p;
+    let resolved = loop {
+        if let Ok(r) = std::fs::canonicalize(base) {
+            break rest.iter().rev().fold(r, |acc: PathBuf, part| acc.join(part));
+        }
+        match (base.parent(), base.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                base = parent;
+            }
+            _ => break p.to_path_buf(),
+        }
+    };
     let text = resolved.to_string_lossy();
     PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text).to_string())
 }
