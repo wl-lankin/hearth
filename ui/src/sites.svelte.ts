@@ -17,6 +17,7 @@ export type SitesApi = {
   tlsTrust(): Promise<void>;
   dnsSetup(): Promise<void>;
   sitesDebug(name: string, on: boolean): Promise<void>;
+  sitesProfile(name: string, on: boolean): Promise<void>;
   debugStatus(): Promise<DebugStatus>;
   /** Optional: the Node a site's folder runs (shown for sites with a version file). */
   nodeWhich?(dir: string): Promise<NodeWhich>;
@@ -57,6 +58,21 @@ export function createSitesStore(api: SitesApi) {
       list.sites.map(async (site) => [site.name, site.path ? await api.nodeWhich?.(site.path).catch(() => undefined) : undefined] as const),
     );
     nodes = Object.fromEntries(found.filter((f): f is readonly [string, NodeWhich] => !!f[1]));
+  }
+
+  /** Flips a site switch at once, then asks the core; a refusal puts it back with the reason. */
+  async function toggle(name: string, field: 'debug' | 'profile', on: boolean, f: () => Promise<void>) {
+    const site = list.sites.find((s) => s.name === name);
+    if (!site) return;
+    const before = site[field];
+    site[field] = on;
+    errors[name] = null;
+    try {
+      await f();
+    } catch (e) {
+      site[field] = before;
+      errors[name] = asMessage(e);
+    }
   }
 
   /** Runs a change, then reloads; a failure shows on `key` (a site) or as the page error. */
@@ -160,18 +176,15 @@ export function createSitesStore(api: SitesApi) {
       return !!ide?.listening;
     },
     /** Starts (or stops) an Xdebug session for every request of the site; rolls back when refused. */
-    async debug(name: string, on: boolean) {
-      const site = list.sites.find((s) => s.name === name);
-      if (!site) return;
-      const before = site.debug;
-      site.debug = on;
-      errors[name] = null;
-      try {
-        await api.sitesDebug(name, on);
-      } catch (e) {
-        site.debug = before;
-        errors[name] = asMessage(e);
-      }
+    debug: (name: string, on: boolean) => toggle(name, 'debug', on, () => api.sitesDebug(name, on)),
+    /** Lets SPX profile (or stop profiling) every request of the site; rolls back when refused. */
+    profile: (name: string, on: boolean) => toggle(name, 'profile', on, () => api.sitesProfile(name, on)),
+    /** Whether the PHP the site runs on has SPX (a removed isolated version falls back to the default). */
+    canProfile(site: Site) {
+      const has = (minor: string | null) => php.installed.find((i) => i.minor === minor);
+      const runs = has(site.php) ?? has(php.default);
+      // A profiled site keeps its switch: it must stay possible to switch it off.
+      return site.kind !== 'proxy' && (site.profile || (!!runs && 'spx' in runs.extensions));
     },
     park: (dir: string) => act(null, () => api.sitesPark(dir)),
     unpark: (dir: string) => act(null, () => api.sitesUnpark(dir)),

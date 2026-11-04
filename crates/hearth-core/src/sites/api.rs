@@ -43,30 +43,52 @@ const XDEBUG_PORT: u16 = 9003;
 /// Starts (or stops) an Xdebug session for every request of a site. Switching on also switches the
 /// Xdebug extension on for the site's PHP; switching off leaves the extension as it is.
 fn debug(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
+    let paths = &core.paths;
+    // The prepend script starts the session: php.ini loads it while any site is debugged.
+    let with_prepend = |name: &str, on: bool| {
+        let _php = core.php_lock.lock().unwrap_or_else(|e| e.into_inner());
+        registry::set_debug(paths, name, on)?;
+        crate::insights::prepend::apply_all(paths)
+    };
+    php_switch(core, params, "xdebug", "debug", &with_prepend)
+}
+
+/// Lets SPX profile (or stop profiling) every request of a site, like `debug` for Xdebug.
+fn profile(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
+    php_switch(core, params, "spx", "profile", &|name, on| registry::set_profile(&core.paths, name, on))
+}
+
+/// A per-site switch that needs extension `ext` in the PHP the site runs on: switching on first
+/// switches `ext` on there, then `set` records the site.
+fn php_switch(
+    core: &CoreState,
+    params: &Value,
+    ext: &str,
+    what: &str,
+    set: &dyn Fn(&str, bool) -> Result<(), CoreError>,
+) -> Result<Value, RpcError> {
     let name = text(params, "name")?;
     let on = params.get("on").and_then(Value::as_bool).ok_or_else(|| invalid("on must be true or false"))?;
     let paths = &core.paths;
-    // The prepend script starts the session: php.ini loads it while any site is debugged.
-    let with_prepend = |f: &dyn Fn() -> Result<(), CoreError>| {
-        let _php = core.php_lock.lock().unwrap_or_else(|e| e.into_inner());
-        f()?;
-        crate::insights::prepend::apply_all(paths)
-    };
     if !on {
-        return change(core, || with_prepend(&|| registry::set_debug(paths, name, false)));
+        return change(core, || set(name, false));
     }
     let site = registry::list(paths).into_iter().find(|s| s.name == name);
     let site = site.ok_or_else(|| failed(CoreError::Php(format!("No site named {name}.test"))))?;
     if site.kind == registry::SiteKind::Proxy {
-        return Err(failed(CoreError::Php(format!("{name}.test is a proxy: it runs no PHP to debug"))));
+        return Err(failed(CoreError::Php(format!("{name}.test is a proxy: it runs no PHP to {what}"))));
     }
     // The version the site really runs on, as the web sync picks it (a removed isolation falls back).
     let installed: Vec<String> = crate::php::store::installed(paths).into_iter().map(|i| i.minor).collect();
-    let default = crate::php::store::load(paths).default;
-    let (minor, note) = crate::web::pools::effective_php(site.php.as_deref(), &installed, default.as_deref());
+    let state = crate::php::store::load(paths);
+    let (minor, note) = crate::web::pools::effective_php(site.php.as_deref(), &installed, state.default.as_deref());
     let minor = minor.ok_or_else(|| failed(CoreError::Php(note.unwrap_or_default())))?;
-    crate::php::service::set_extension(core, &minor, "xdebug", true).map_err(failed)?;
-    change(core, || with_prepend(&|| registry::set_debug(paths, name, true)))
+    // SPX has no Windows build: say so plainly instead of naming a missing extension.
+    if ext == "spx" && !state.extensions.get(&minor).is_some_and(|e| e.contains_key("spx")) {
+        return Err(failed(CoreError::Php(format!("SPX is not available for PHP {minor}"))));
+    }
+    crate::php::service::set_extension(core, &minor, ext, true).map_err(failed)?;
+    change(core, || set(name, true))
 }
 
 /// Whether a program listens on Xdebug's port (or `port`, for tests), and which one.
@@ -154,6 +176,7 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             (Err(e), _) => Err(e),
         },
         "sites.debug" => debug(core, params),
+        "sites.profile" => profile(core, params),
         // Off the async threads: on macOS the check runs lsof.
         "debug.status" => {
             let params = params.clone();

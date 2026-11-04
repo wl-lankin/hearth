@@ -13,6 +13,10 @@ pub enum Route {
         minor: String,
         /// Pass Xdebug's trigger with every request of this site.
         xdebug: bool,
+        /// SPX's key: profile every request of this site.
+        spx: Option<String>,
+        /// SPX's key when the site's PHP has SPX on: given to SPX's report pages.
+        spx_ui: Option<String>,
     },
     Proxy {
         upstream: String,
@@ -95,16 +99,27 @@ pub fn render(ctx: &CaddyContext) -> String {
             None => (format!("http://{host}:{}", ctx.http_port), String::new()),
         };
         match &route.target {
-            Route::Php { docroot, minor, xdebug } => {
+            Route::Php { docroot, minor, xdebug, spx, spx_ui } => {
                 let Some(upstreams) = ctx.php_upstreams.get(minor).filter(|p| !p.is_empty()) else {
                     let _ = writeln!(out, "# {}: PHP {minor} is not running", route.name);
                     continue;
                 };
                 // Xdebug (start_with_request = trigger) takes a FastCGI parameter as its trigger.
-                let trigger = if *xdebug { "\t\tenv XDEBUG_TRIGGER hearth\n" } else { "" };
+                let mut trigger = String::from(if *xdebug { "\t\tenv XDEBUG_TRIGGER hearth\n" } else { "" });
+                // SPX reads HTTP_* params as request headers: these switch it on for the site.
+                if let Some(key) = spx {
+                    trigger.push_str(&format!(
+                        "\t\tenv HTTP_SPX_ENABLED 1\n\t\tenv HTTP_SPX_KEY {key}\n\t\tenv HTTP_SPX_AUTO_START 1\n"
+                    ));
+                }
+                // SPX's report pages load their scripts and data without the key: add it to those
+                // requests (SPX reads an SPX-Key header as HTTP_SPX_KEY).
+                let ui = spx_ui.as_ref().map_or(String::new(), |key| {
+                    format!("\t@spxui expression {{query.SPX_UI_URI}} != \"\"\n\trequest_header @spxui SPX-Key {key}\n")
+                });
                 let _ = write!(
                     out,
-                    "{address} {{\n{tls}\troot * {}\n\tphp_fastcgi {} {{\n{trigger}\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
+                    "{address} {{\n{tls}\troot * {}\n{ui}\tphp_fastcgi {} {{\n{trigger}\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
                     quoted(docroot, ctx.windows_paths),
                     upstreams.join(" ")
                 );

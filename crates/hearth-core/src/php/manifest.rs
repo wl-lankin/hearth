@@ -71,6 +71,8 @@ pub enum ExtensionSource {
     ZendDll { version: String, url: String, sha256: String, file: String },
     /// macOS: `file` inside the PHP archive, loaded with `zend_extension=`.
     ZendSo { file: String },
+    /// macOS: `file` inside the PHP archive, loaded with `extension=`.
+    So { file: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

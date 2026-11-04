@@ -151,6 +151,15 @@
             onclick={() => store.debug(site.name, !site.debug)}>Debug</button
           >
         {/if}
+        {#if store.canProfile(site)}
+          <button
+            class="secure"
+            class:on={site.profile}
+            aria-pressed={site.profile}
+            title={site.profile ? 'SPX profiles every request; click to stop' : 'Click to let SPX profile every request (see Profiles)'}
+            onclick={() => store.profile(site.name, !site.profile)}>Profile</button
+          >
+        {/if}
         <button
           class="secure"
           class:on={site.secured}

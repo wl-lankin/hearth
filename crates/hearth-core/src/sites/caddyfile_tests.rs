@@ -30,7 +30,13 @@ fn a_php_site_is_served_through_its_pool() {
     let file = render(&ctx(vec![SiteRoute {
         name: "shop".into(),
         tls: None,
-        target: Route::Php { docroot: PathBuf::from(r"C:\x\shop\public"), minor: "8.4".into(), xdebug: false },
+        target: Route::Php {
+            docroot: PathBuf::from(r"C:\x\shop\public"),
+            minor: "8.4".into(),
+            xdebug: false,
+            spx: None,
+            spx_ui: None,
+        },
     }]));
     assert!(file.contains(
         "\nhttp://shop.test:8080 {\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
@@ -42,7 +48,13 @@ fn a_site_isolated_to_another_version_uses_that_pool() {
     let file = render(&ctx(vec![SiteRoute {
         name: "old".into(),
         tls: None,
-        target: Route::Php { docroot: PathBuf::from("/srv/old"), minor: "8.3".into(), xdebug: false },
+        target: Route::Php {
+            docroot: PathBuf::from("/srv/old"),
+            minor: "8.3".into(),
+            xdebug: false,
+            spx: None,
+            spx_ui: None,
+        },
     }]));
     assert!(file.contains("\tphp_fastcgi unix//Users/j/.config/hearth/run/php-8.3.sock {"), "{file}");
 }
@@ -72,6 +84,8 @@ fn awkward_folder_names_stay_inside_one_quoted_string() {
             docroot: PathBuf::from(r#"C:\Projects\Jörg {old} "x"\public"#),
             minor: "8.4".into(),
             xdebug: false,
+            spx: None,
+            spx_ui: None,
         },
     }]));
     // Quotes keep it one token; `\{` `\}` stop Caddy from reading `{old}` as a placeholder.
@@ -106,7 +120,13 @@ fn a_site_that_cannot_be_served_becomes_a_comment() {
         SiteRoute {
             name: "new".into(),
             tls: None,
-            target: Route::Php { docroot: PathBuf::from("/srv/new"), minor: "8.5".into(), xdebug: false },
+            target: Route::Php {
+                docroot: PathBuf::from("/srv/new"),
+                minor: "8.5".into(),
+                xdebug: false,
+                spx: None,
+                spx_ui: None,
+            },
         },
     ]));
     assert!(file.contains("\n# gone: Folder missing\n"), "{file}");
@@ -129,7 +149,13 @@ fn secured(name: &str, target: Route) -> SiteRoute {
 fn a_secured_php_site_is_served_over_https_and_http_redirects() {
     let file = render(&ctx(vec![secured(
         "shop",
-        Route::Php { docroot: PathBuf::from(r"C:\x\shop\public"), minor: "8.4".into(), xdebug: false },
+        Route::Php {
+            docroot: PathBuf::from(r"C:\x\shop\public"),
+            minor: "8.4".into(),
+            xdebug: false,
+            spx: None,
+            spx_ui: None,
+        },
     )]));
     assert!(file.contains(
         "\nhttps://shop.test:8443 {\n\ttls \"C:/h/tls/\\{x\\}/shop.crt\" \"C:/h/tls/\\{x\\}/shop.key\"\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
@@ -151,12 +177,24 @@ fn a_debugged_site_passes_the_xdebug_trigger() {
         SiteRoute {
             name: "shop".into(),
             tls: None,
-            target: Route::Php { docroot: PathBuf::from("/srv/shop/public"), minor: "8.4".into(), xdebug: true },
+            target: Route::Php {
+                docroot: PathBuf::from("/srv/shop/public"),
+                minor: "8.4".into(),
+                xdebug: true,
+                spx: None,
+                spx_ui: None,
+            },
         },
         SiteRoute {
             name: "blog".into(),
             tls: None,
-            target: Route::Php { docroot: PathBuf::from("/srv/blog/public"), minor: "8.4".into(), xdebug: false },
+            target: Route::Php {
+                docroot: PathBuf::from("/srv/blog/public"),
+                minor: "8.4".into(),
+                xdebug: false,
+                spx: None,
+                spx_ui: None,
+            },
         },
     ]));
     assert!(
@@ -164,4 +202,48 @@ fn a_debugged_site_passes_the_xdebug_trigger() {
         "{file}"
     );
     assert_eq!(file.matches("XDEBUG_TRIGGER").count(), 1, "only the debugged site: {file}");
+}
+
+#[test]
+fn a_profiled_site_passes_the_spx_switches() {
+    let route = |name: &str, spx: Option<String>| SiteRoute {
+        name: name.into(),
+        tls: None,
+        target: Route::Php {
+            docroot: PathBuf::from(format!("/srv/{name}")),
+            minor: "8.4".into(),
+            xdebug: false,
+            spx,
+            spx_ui: None,
+        },
+    };
+    let file = render(&ctx(vec![route("shop", Some("k123".into())), route("blog", None)]));
+    assert!(
+        file.contains("\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tenv HTTP_SPX_ENABLED 1\n\t\tenv HTTP_SPX_KEY k123\n\t\tenv HTTP_SPX_AUTO_START 1\n\t\tlb_policy least_conn\n"),
+        "{file}"
+    );
+    assert_eq!(file.matches("HTTP_SPX_ENABLED").count(), 1, "only the profiled site: {file}");
+}
+
+/// SPX's report pages fetch their scripts and data without the key: every site whose PHP has SPX
+/// adds it to those requests, also when the site is not profiled.
+#[test]
+fn a_site_on_a_php_with_spx_gives_its_report_pages_the_key() {
+    let route = |name: &str, spx_ui: Option<String>| SiteRoute {
+        name: name.into(),
+        tls: None,
+        target: Route::Php {
+            docroot: PathBuf::from(format!("/srv/{name}")),
+            minor: "8.4".into(),
+            xdebug: false,
+            spx: None,
+            spx_ui,
+        },
+    };
+    let file = render(&ctx(vec![route("shop", Some("k123".into())), route("blog", None)]));
+    assert!(
+        file.contains("\troot * \"/srv/shop\"\n\t@spxui expression {query.SPX_UI_URI} != \"\"\n\trequest_header @spxui SPX-Key k123\n\tphp_fastcgi "),
+        "{file}"
+    );
+    assert_eq!(file.matches("@spxui expression").count(), 1, "only the site on a PHP with SPX: {file}");
 }

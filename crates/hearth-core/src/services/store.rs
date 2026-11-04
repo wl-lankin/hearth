@@ -50,7 +50,7 @@ pub fn get(paths: &HearthPaths, id: &str) -> Result<Instance, CoreError> {
 
 /// 32 random hex characters. The standard library's hasher keys come from the OS's random
 /// source, so two fresh hashers give 128 random bits: enough for a local development key.
-fn secret() -> String {
+pub(crate) fn secret() -> String {
     use std::hash::{BuildHasher, Hasher};
     (0..2)
         .map(|_| {

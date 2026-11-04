@@ -151,6 +151,46 @@ async fn debugging_a_site_switches_xdebug_on_for_its_php() {
     assert!(call(&core, "sites.debug", json!({ "name": "shop" })).await.is_err());
 }
 
+/// An installed macOS-style PHP 8.4 whose build has (or lacks) SPX.
+fn fake_php_spx(paths: &HearthPaths, with_spx: bool) {
+    fake_php(paths, false);
+    let dir = crate::php::store::install_dir(paths, "8.4");
+    let file = dir.join(crate::php::service::BUILD_FILE);
+    let mut build: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    if with_spx {
+        build["extensions"]["spx"] = json!({ "kind": "so", "file": "lib/spx.so" });
+    }
+    std::fs::write(&file, build.to_string()).unwrap();
+    let names: Vec<String> = if with_spx { vec!["spx".into()] } else { vec![] };
+    crate::php::store::register(paths, "8.4", &names).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn profiling_a_site_switches_spx_on_with_hearths_key() {
+    let (_d, core, projects) = home();
+    fake_php_spx(&core.paths, true);
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    call(&core, "sites.profile", json!({ "name": "shop", "on": true })).await.unwrap();
+    let ini = std::fs::read_to_string(crate::php::ini::ini_dir(&core.paths, "8.4").join("php.ini")).unwrap();
+    let key = crate::profile::spx_key(&core.paths).unwrap();
+    assert!(ini.contains("lib/spx.so\"") && ini.contains(&format!("spx.http_key = \"{key}\"")), "{ini}");
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"][0]["profile"], json!(true));
+    call(&core, "sites.profile", json!({ "name": "shop", "on": false })).await.unwrap();
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"][0]["profile"], json!(false));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_php_without_spx_is_a_clear_error_and_nothing_changes() {
+    let (_d, core, projects) = home();
+    fake_php_spx(&core.paths, false);
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    let err = call(&core, "sites.profile", json!({ "name": "shop", "on": true })).await.unwrap_err();
+    assert_eq!(err.message, "SPX is not available for PHP 8.4");
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"][0]["profile"], json!(false));
+    call(&core, "sites.proxy", json!({ "name": "vite", "upstream": "http://localhost:5173" })).await.unwrap();
+    assert!(call(&core, "sites.profile", json!({ "name": "vite", "on": true })).await.is_err());
+}
+
 /// Xdebug cannot see the trigger itself (it is a FastCGI param and `$_ENV` stays empty): Hearth's
 /// prepend script starts the session, so php.ini loads it while a site is debugged.
 #[tokio::test(flavor = "multi_thread")]

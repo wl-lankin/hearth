@@ -27,6 +27,8 @@ pub struct SitesConfig {
     pub secured: BTreeSet<String>,
     /// Sites whose requests start an Xdebug session.
     pub debug: BTreeSet<String>,
+    /// Sites whose requests SPX profiles.
+    pub profile: BTreeSet<String>,
     pub http_port: u16,
     pub https_port: u16,
 }
@@ -40,6 +42,7 @@ impl Default for SitesConfig {
             isolated: BTreeMap::new(),
             secured: BTreeSet::new(),
             debug: BTreeSet::new(),
+            profile: BTreeSet::new(),
             http_port: DEFAULT_HTTP_PORT,
             https_port: DEFAULT_HTTPS_PORT,
         }
@@ -68,6 +71,8 @@ pub struct Site {
     pub secured: bool,
     /// Xdebug starts a session for every request of this site.
     pub debug: bool,
+    /// SPX profiles every request of this site.
+    pub profile: bool,
     pub problem: Option<String>,
 }
 
@@ -141,7 +146,8 @@ fn site_for_folder(name: String, kind: SiteKind, path: PathBuf, config: &SitesCo
     let php = config.isolated.get(&name).cloned();
     let secured = config.secured.contains(&name);
     let debug = config.debug.contains(&name);
-    Site { name, kind, path: Some(path), upstream: None, docroot, php, secured, debug, problem }
+    let profile = config.profile.contains(&name);
+    Site { name, kind, path: Some(path), upstream: None, docroot, php, secured, debug, profile, problem }
 }
 
 /// Every site, sorted by name. A link wins over a parked folder of the same name.
@@ -175,6 +181,7 @@ pub fn list(paths: &HearthPaths) -> Vec<Site> {
                 php: None,
                 secured: config.secured.contains(name),
                 debug: false,
+                profile: false,
                 problem: None,
             },
         );
@@ -229,6 +236,7 @@ pub fn unlink(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
     config.isolated.remove(name);
     config.secured.remove(name);
     config.debug.remove(name);
+    config.profile.remove(name);
     save(paths, &config)
 }
 
@@ -320,23 +328,40 @@ pub fn secure(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
     save(paths, &config)
 }
 
-/// Starts (or stops) an Xdebug session for every request of PHP site `name`.
-pub fn set_debug(paths: &HearthPaths, name: &str, on: bool) -> Result<(), CoreError> {
+/// Adds `name` to (or removes it from) one of the per-site switch sets, for PHP sites only; `what`
+/// names the action in the error ("debug", "profile").
+fn set_php_switch(
+    paths: &HearthPaths,
+    name: &str,
+    on: bool,
+    what: &str,
+    set: fn(&mut SitesConfig) -> &mut BTreeSet<String>,
+) -> Result<(), CoreError> {
     let site = list(paths).into_iter().find(|s| s.name == name);
     match site {
         None => return Err(CoreError::Php(format!("No site named {name}.test"))),
         Some(s) if s.kind == SiteKind::Proxy => {
-            return Err(CoreError::Php(format!("{name}.test is a proxy: it runs no PHP to debug")))
+            return Err(CoreError::Php(format!("{name}.test is a proxy: it runs no PHP to {what}")))
         }
         Some(_) => {}
     }
     let mut config = load(paths);
     if on {
-        config.debug.insert(name.into());
+        set(&mut config).insert(name.into());
     } else {
-        config.debug.remove(name);
+        set(&mut config).remove(name);
     }
     save(paths, &config)
+}
+
+/// Starts (or stops) an Xdebug session for every request of PHP site `name`.
+pub fn set_debug(paths: &HearthPaths, name: &str, on: bool) -> Result<(), CoreError> {
+    set_php_switch(paths, name, on, "debug", |c| &mut c.debug)
+}
+
+/// Lets SPX profile (or stop profiling) every request of PHP site `name`.
+pub fn set_profile(paths: &HearthPaths, name: &str, on: bool) -> Result<(), CoreError> {
+    set_php_switch(paths, name, on, "profile", |c| &mut c.profile)
 }
 
 pub fn unsecure(paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
