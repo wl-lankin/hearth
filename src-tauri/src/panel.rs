@@ -3,7 +3,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{AppHandle, LogicalSize, Manager, PhysicalPosition};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, PhysicalPosition};
 
 /// A rectangle in physical pixels.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,21 +19,31 @@ const GAP: f64 = 8.0;
 
 /// The transparent margin around the panel's card, room for its shadow (logical pixels; the page
 /// uses the same value).
-pub const MARGIN: f64 = 32.0;
+pub const MARGIN: f64 = 24.0;
 
 /// The top-left corner of a `window_w` x `window_h` panel window at the tray `icon`. The card inside
 /// (the window less `margin` on each side) goes above the icon when the icon is in the lower half
 /// of the screen (a Windows taskbar), else below it (the macOS menu bar), its right edge at the
-/// icon's, and always fully inside the work area; the margin may reach past it.
+/// icon's. The whole window, margin included, stays inside the work area: its invisible part must
+/// not cover the taskbar, where it would catch the clicks meant for the tray icons and the clock.
 pub fn place(icon: Area, window_w: f64, window_h: f64, work: Area, margin: f64) -> (f64, f64) {
-    let (w, h) = (window_w - 2.0 * margin, window_h - 2.0 * margin);
+    let h = window_h - 2.0 * margin;
     let below = icon.y + icon.h / 2.0 < work.y + work.h / 2.0;
-    let x = icon.x + icon.w - w;
-    let y = if below { icon.y + icon.h + GAP } else { icon.y - GAP - h };
-    // min before max: a card larger than the screen starts at its top left.
-    let x = x.min(work.x + work.w - w).max(work.x);
-    let y = y.min(work.y + work.h - h).max(work.y);
-    (x - margin, y - margin)
+    let x = icon.x + icon.w - window_w + margin;
+    let y = if below { icon.y + icon.h + GAP - margin } else { icon.y - GAP - h - margin };
+    // min before max: a window larger than the screen starts at its top left.
+    let x = x.min(work.x + work.w - window_w).max(work.x);
+    let y = y.min(work.y + work.h - window_h).max(work.y);
+    (x, y)
+}
+
+/// Which of `screens` holds `point` (all in the same units).
+pub fn containing(point: (f64, f64), screens: &[Area]) -> Option<usize> {
+    screens.iter().position(|s| point.0 >= s.x && point.0 < s.x + s.w && point.1 >= s.y && point.1 < s.y + s.h)
+}
+
+fn scaled(a: Area, by: f64) -> Area {
+    Area { x: a.x / by, y: a.y / by, w: a.w / by, h: a.h / by }
 }
 
 pub const LABEL: &str = "panel";
@@ -45,27 +55,47 @@ pub struct PanelState(Mutex<(Option<Area>, Option<Instant>)>);
 /// A right-click on the icon right after the panel closed is the click that closed it: no reopen.
 const REOPEN_GUARD: Duration = Duration::from_millis(300);
 
-fn work_area(app: &AppHandle, icon: Area) -> Option<Area> {
-    let monitor = app
-        .monitor_from_point(icon.x + icon.w / 2.0, icon.y + icon.h / 2.0)
-        .ok()
-        .flatten()
-        .or_else(|| app.primary_monitor().ok().flatten())?;
-    let work = monitor.work_area();
-    Some(Area {
-        x: f64::from(work.position.x),
-        y: f64::from(work.position.y),
-        w: f64::from(work.size.width),
-        h: f64::from(work.size.height),
-    })
+/// The screen with the tray icon, found by each screen's own physical rectangle (macOS'
+/// `monitor_from_point` compares points instead), else the primary one.
+fn screen_of(app: &AppHandle, icon: Area) -> Option<tauri::Monitor> {
+    let monitors = app.available_monitors().ok().unwrap_or_default();
+    let rects: Vec<Area> = monitors
+        .iter()
+        .map(|m| Area {
+            x: f64::from(m.position().x),
+            y: f64::from(m.position().y),
+            w: f64::from(m.size().width),
+            h: f64::from(m.size().height),
+        })
+        .collect();
+    match containing((icon.x + icon.w / 2.0, icon.y + icon.h / 2.0), &rects) {
+        Some(i) => monitors.into_iter().nth(i),
+        None => app.primary_monitor().ok().flatten(),
+    }
 }
 
-/// Places the panel at `icon` with its current size.
+/// Places the panel at `icon` (physical pixels of its screen) with the window's current size.
 fn position(app: &AppHandle, window: &tauri::WebviewWindow, icon: Area) {
-    let (Some(work), Ok(size)) = (work_area(app, icon), window.outer_size()) else { return };
-    let margin = MARGIN * window.scale_factor().unwrap_or(1.0);
-    let (x, y) = place(icon, f64::from(size.width), f64::from(size.height), work, margin);
-    let _ = window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    let (Some(screen), Ok(size)) = (screen_of(app, icon), window.outer_size()) else { return };
+    let area = screen.work_area();
+    let work = Area {
+        x: f64::from(area.position.x),
+        y: f64::from(area.position.y),
+        w: f64::from(area.size.width),
+        h: f64::from(area.size.height),
+    };
+    let (w, h) = (f64::from(size.width), f64::from(size.height));
+    if cfg!(target_os = "macos") {
+        // macOS positions windows in points, and a Mac's screens can have different scales: do the
+        // math in points of the icon's screen.
+        let (screen_scale, window_scale) = (screen.scale_factor(), window.scale_factor().unwrap_or(1.0));
+        let (x, y) =
+            place(scaled(icon, screen_scale), w / window_scale, h / window_scale, scaled(work, screen_scale), MARGIN);
+        let _ = window.set_position(LogicalPosition::new(x, y));
+    } else {
+        let (x, y) = place(icon, w, h, work, MARGIN * screen.scale_factor());
+        let _ = window.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+    }
 }
 
 /// Opens the panel at the tray icon, or closes it when it is open.
@@ -115,7 +145,7 @@ pub fn blurred(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{place, Area};
+    use super::{containing, place, Area};
 
     const SCREEN: Area = Area { x: 0.0, y: 0.0, w: 1920.0, h: 1040.0 };
 
@@ -126,13 +156,27 @@ mod tests {
     }
 
     #[test]
-    fn the_shadow_margin_is_outside_the_card_and_may_cover_the_taskbar() {
+    fn the_whole_window_with_its_shadow_margin_stays_off_the_taskbar() {
         let icon = Area { x: 1800.0, y: 1044.0, w: 24.0, h: 36.0 };
-        // A 300x400 card in a window 32 px bigger on each side: the card sits where it would alone.
-        assert_eq!(place(icon, 364.0, 464.0, SCREEN, 32.0), (1492.0, 604.0));
+        // A 300x400 card in a window 32 px bigger on each side: the window ends at the taskbar, so
+        // nothing invisible covers the tray icons or the clock.
+        let (x, y) = place(icon, 364.0, 464.0, SCREEN, 32.0);
+        assert_eq!((x, y), (1492.0, 576.0));
+        assert!(y + 464.0 <= SCREEN.y + SCREEN.h);
         let corner = Area { x: 1900.0, y: 1044.0, w: 24.0, h: 36.0 };
         let (x, _) = place(corner, 364.0, 464.0, SCREEN, 32.0);
-        assert_eq!(x + 32.0 + 300.0, 1920.0, "the card, not the window, stops at the screen edge");
+        assert_eq!(x + 364.0, 1920.0, "the window stops at the screen edge");
+        let mac = Area { x: 0.0, y: 25.0, w: 1440.0, h: 875.0 };
+        let (_, y) = place(Area { x: 1300.0, y: 0.0, w: 24.0, h: 24.0 }, 364.0, 464.0, mac, 32.0);
+        assert_eq!(y, 25.0, "not over the menu bar either");
+    }
+
+    #[test]
+    fn the_icon_belongs_to_the_screen_that_contains_it() {
+        let screens = [Area { x: 0.0, y: 0.0, w: 2880.0, h: 1800.0 }, Area { x: 2880.0, y: 0.0, w: 1920.0, h: 1080.0 }];
+        assert_eq!(containing((100.0, 10.0), &screens), Some(0));
+        assert_eq!(containing((3000.0, 10.0), &screens), Some(1));
+        assert_eq!(containing((9000.0, 10.0), &screens), None);
     }
 
     #[test]

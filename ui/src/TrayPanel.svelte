@@ -35,7 +35,7 @@
   const FLYOUT = 200;
   const GAP = 12;
   // The same as MARGIN in src-tauri/src/panel.rs: the card is placed, the margin hangs over.
-  const MARGIN = 32;
+  const MARGIN = 24;
 
   let php = $state<{ default: string | null; installed: InstalledPhp[] }>({ default: null, installed: [] });
   let services = $state<ServiceRow[]>([]);
@@ -269,9 +269,9 @@
   .flyout {
     color: var(--text);
     border: 1px solid rgb(255 255 255 / 0.1);
-    /* Fits inside the window margin (offset + blur stay under 32 px), so nothing cuts it. */
+    /* Fits inside the 24 px window margin (offset + blur stay under it), so nothing cuts it. */
     box-shadow:
-      0 8px 22px rgb(0 0 0 / 0.5),
+      0 6px 16px rgb(0 0 0 / 0.5),
       0 1px 3px rgb(0 0 0 / 0.4);
     animation: open 120ms var(--ease);
   }
