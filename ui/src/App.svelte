@@ -35,6 +35,26 @@
     tab = opts.tab ?? null;
     link = opts.link ?? false;
   }
+
+  // The tray panel opens the window on a page ("Install another...", "All sites...").
+  $effect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) return;
+    let stop: (() => void) | undefined;
+    let cancelled = false;
+    import('@tauri-apps/api/event').then(({ listen }) =>
+      listen<{ view: string | null; tab: string | null }>('hearth://navigate', ({ payload }) => {
+        const target = resolveView(payload.view);
+        navigate(target.view, { tab: payload.tab ?? target.tab ?? undefined });
+      }).then((unlisten) => {
+        if (cancelled) unlisten();
+        else stop = unlisten;
+      }),
+    );
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  });
 </script>
 
 <div class="glow" aria-hidden="true"></div>

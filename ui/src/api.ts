@@ -869,3 +869,17 @@ export const workspacesDelete = async (name: string, keepDatabase: boolean, keep
 };
 export const workspacesMerge = async (name: string, push: boolean, del: boolean): Promise<{ message: string; notes: string[] }> =>
   demo ? { message: `Merged ${name.split('.')[0]} into main of shop`, notes: [] } : core('workspaces.merge', { name, push, delete: del });
+// The tray panel's window and the app around it (nothing to do in the browser demo).
+export async function panelFit(width: number, height: number): Promise<void> {
+  if (!demo) await invoke('panel_fit', { width, height });
+}
+export async function panelHide(): Promise<void> {
+  if (!demo) await invoke('panel_hide');
+}
+/** Shows the main window, on `view` (and `tab`) when given. */
+export async function appOpen(view?: string, tab?: string): Promise<void> {
+  if (!demo) await invoke('app_open', { view: view ?? null, tab: tab ?? null });
+}
+export async function appQuit(): Promise<void> {
+  if (!demo) await invoke('app_quit');
+}

@@ -214,6 +214,7 @@
 
   .card {
     max-width: 720px;
+    margin: 0 auto;
     padding: 18px 20px;
   }
 
