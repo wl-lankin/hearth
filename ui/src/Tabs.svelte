@@ -32,7 +32,6 @@
     border-radius: 8px;
     background: transparent;
     color: var(--muted);
-    backdrop-filter: none;
   }
 
   .tabs button:hover:not(.on) {

@@ -30,7 +30,8 @@
 {/snippet}
 
 <aside>
-  <div class="brand">
+  <!-- Level with the window buttons; it moves the window like the strip beside it. -->
+  <div class="brand" data-tauri-drag-region>
     <img class="mark" src={logo} alt="" width="28" height="28" />
     <span class="name">Hearth</span>
   </div>
@@ -56,18 +57,31 @@
     flex-direction: column;
     gap: 18px;
     min-height: 0;
-    padding: calc(var(--titlebar-height) + 4px) 12px 14px;
+    padding: 0 12px 14px;
     background: var(--sidebar);
     border-right: 1px solid var(--border);
-    backdrop-filter: blur(var(--glass-blur));
     overflow-y: auto;
   }
 
   .brand {
     display: flex;
+    flex: none;
     align-items: center;
     gap: 10px;
-    padding: 0 8px;
+    height: calc(var(--titlebar-height) + 10px);
+    margin-bottom: 8px;
+    padding: 4px 8px 0;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .brand > * {
+    pointer-events: none;
+  }
+
+  /* macOS draws its traffic lights in the top left corner: the logo steps aside. */
+  :global(html[data-platform='macos']) .brand {
+    padding-left: 78px;
   }
 
   .mark {
@@ -114,7 +128,6 @@
     background: transparent;
     color: #d9cbc1;
     text-align: left;
-    backdrop-filter: none;
   }
 
   button:hover:not(.active) {

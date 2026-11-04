@@ -65,7 +65,8 @@
 <style>
   .titlebar {
     position: fixed;
-    inset: 0 0 auto 0;
+    /* Over the page column only: the rail's top holds the logo. */
+    inset: 0 0 auto var(--rail-width);
     z-index: 50;
     height: var(--titlebar-height);
     display: flex;

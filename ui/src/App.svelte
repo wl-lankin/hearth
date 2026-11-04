@@ -26,6 +26,10 @@
 
   settings.load();
 
+  const platform = platformOf(navigator.userAgent);
+  // For styles that differ per platform (the logo steps aside for the macOS traffic lights).
+  document.documentElement.dataset.platform = platform;
+
   function navigate(next: View, opts: { tab?: string; link?: boolean } = {}) {
     view = next;
     tab = opts.tab ?? null;
@@ -34,7 +38,7 @@
 </script>
 
 <div class="glow" aria-hidden="true"></div>
-<TitleBar platform={platformOf(navigator.userAgent)} />
+<TitleBar {platform} />
 <div class="shell">
   <Rail {view} onnavigate={(next) => navigate(next)} />
   <main>
@@ -94,13 +98,16 @@
     position: relative;
     z-index: 1;
     display: grid;
-    grid-template-columns: 208px 1fr;
+    grid-template-columns: var(--rail-width) 1fr;
     height: 100%;
   }
 
+  /* The page scrolls below the title strip, never under its buttons. */
   main {
+    height: calc(100% - var(--titlebar-height));
+    margin-top: var(--titlebar-height);
     overflow: auto;
-    padding: calc(var(--titlebar-height) + 4px) 32px 28px;
+    padding: 4px 32px 28px;
   }
 
   .page {

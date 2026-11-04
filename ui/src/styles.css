@@ -3,6 +3,7 @@
   color-scheme: dark;
   /* The strip at the top that replaces the system title bar. */
   --titlebar-height: 34px;
+  --rail-width: 208px;
 
   --bg: #120e0c;
   /* Panels are see-through, so the glow behind them shows. */
@@ -22,7 +23,6 @@
   --sidebar: rgb(255 255 255 / 0.025);
   --nav-active: rgb(255 255 255 / 0.1);
 
-  --glass-blur: 12px;
   --radius: 12px;
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
@@ -82,7 +82,6 @@ h2 {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  backdrop-filter: blur(var(--glass-blur));
 }
 
 /* Buttons, fields and tables: one look everywhere. In a layer, so a page's own styles (toggles,
@@ -98,7 +97,6 @@ h2 {
     line-height: 1.4;
     white-space: nowrap;
     cursor: pointer;
-    backdrop-filter: blur(var(--glass-blur));
     transition:
       background-color 150ms var(--ease),
       border-color 150ms var(--ease),

@@ -124,6 +124,8 @@
     min-height: 380px;
     margin-bottom: 10px;
     container-type: inline-size;
+    /* The house reaches past the edge; it must not make the page scroll sideways. */
+    overflow-x: clip;
   }
 
   .text {
@@ -144,6 +146,7 @@
 
   .stats {
     display: flex;
+    flex-wrap: wrap;
     gap: 10px;
   }
 
