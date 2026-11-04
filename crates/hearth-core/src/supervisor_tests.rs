@@ -177,3 +177,45 @@ fn a_crashed_process_whose_port_was_taken_is_parked_not_restarted() {
     assert_eq!(status.last_error.as_deref(), Some(format!("Port {port} is used by another program").as_str()));
     sup.stop_all();
 }
+
+/// A shell and the program it started (as `npm run dev` starts node): stopping the shell's process
+/// must end the program too, or it keeps its port after Stop.
+fn shell_spec(dir: &tempfile::TempDir, key: &str, port: u16) -> ProcessSpec {
+    let (program, args): (PathBuf, Vec<std::ffi::OsString>) = if cfg!(windows) {
+        ("cmd.exe".into(), vec!["/d".into(), "/s".into(), "/c".into(), format!("{} {port}", helper().display()).into()])
+    } else {
+        ("/bin/sh".into(), vec!["-c".into(), format!("'{}' {port}; true", helper().display()).into()])
+    };
+    ProcessSpec {
+        key: key.into(),
+        program,
+        args,
+        env: vec![],
+        cwd: None,
+        log: dir.path().join(format!("{key}.log")),
+        ready_port: Some(port),
+        ready_socket: None,
+        guard_port: None,
+    }
+}
+
+#[test]
+fn stopping_a_shell_stops_what_it_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    let port = free_port();
+    sup.ensure(shell_spec(&dir, "dev", port)).unwrap();
+    assert!(answers(port));
+    sup.stop("dev");
+    eventually("the program the shell started stops", || !answers(port));
+}
+
+#[test]
+fn stop_all_stops_what_shells_started() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = Supervisor::new().unwrap();
+    let port = free_port();
+    sup.ensure(shell_spec(&dir, "dev", port)).unwrap();
+    sup.stop_all();
+    eventually("the program the shell started stops", || !answers(port));
+}

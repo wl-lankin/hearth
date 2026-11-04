@@ -50,9 +50,17 @@ pub struct ProcessStatus {
     pub last_error: Option<String>,
 }
 
+/// What a stop has to end besides the child itself: on Windows the child's own Job Object, which also
+/// holds everything the child started (a shell's program); on macOS the process group does that.
+#[cfg(windows)]
+type Tree = job::Job;
+#[cfg(unix)]
+type Tree = ();
+
 struct Entry {
     spec: ProcessSpec,
     child: Option<Child>,
+    tree: Option<Tree>,
     restarts: u32,
     last_error: Option<String>,
     started: Instant,
@@ -163,7 +171,7 @@ impl Supervisor {
         })
     }
 
-    fn spawn(&self, spec: &ProcessSpec) -> Result<Child, CoreError> {
+    fn spawn(&self, spec: &ProcessSpec) -> Result<(Child, Tree), CoreError> {
         #[cfg(windows)]
         return spawn(spec, &self.job);
         #[cfg(unix)]
@@ -180,9 +188,7 @@ impl Supervisor {
                     return Ok(());
                 }
                 if let Some(mut entry) = table.remove(&spec.key) {
-                    if let Some(child) = entry.child.as_mut() {
-                        terminate(child);
-                    }
+                    end(&mut entry);
                 }
             }
         }
@@ -200,7 +206,7 @@ impl Supervisor {
             // A socket file left by a crash would look ready at once.
             let _ = std::fs::remove_file(socket);
         }
-        let child = self.spawn(&spec)?;
+        let (child, tree) = self.spawn(&spec)?;
         let key = spec.key.clone();
         let (ready_port, ready_socket, log) = (spec.ready_port, spec.ready_socket.clone(), spec.log.clone());
         {
@@ -210,6 +216,7 @@ impl Supervisor {
                 Entry {
                     spec,
                     child: Some(child),
+                    tree: Some(tree),
                     restarts: 0,
                     last_error: None,
                     started: Instant::now(),
@@ -253,8 +260,8 @@ impl Supervisor {
             persist(&table, &self.record);
             entry
         };
-        if let Some(mut child) = entry.and_then(|e| e.child) {
-            terminate(&mut child);
+        if let Some(mut entry) = entry {
+            end(&mut entry);
         }
     }
 
@@ -275,9 +282,7 @@ impl Supervisor {
             entries
         };
         for mut entry in entries {
-            if let Some(child) = entry.child.as_mut() {
-                terminate(child);
-            }
+            end(&mut entry);
         }
     }
 
@@ -329,6 +334,8 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
         if let Some(child) = entry.child.as_mut() {
             if let Ok(Some(status)) = child.try_wait() {
                 entry.child = None;
+                // What it started dies with it, or a restart finds its port taken.
+                end(entry);
                 if status.success() {
                     // A clean exit is routine (php-cgi after PHP_FCGI_MAX_REQUESTS): back at once.
                     entry.retry_at = Some(now);
@@ -360,8 +367,9 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
             #[cfg(unix)]
             let spawned = spawn(&entry.spec);
             match spawned {
-                Ok(child) => {
+                Ok((child, tree)) => {
                     entry.child = Some(child);
+                    entry.tree = Some(tree);
                     entry.restarts += 1;
                     entry.started = now;
                     entry.retry_at = None;
@@ -408,27 +416,44 @@ fn start_error(spec: &ProcessSpec, e: std::io::Error) -> CoreError {
 }
 
 #[cfg(windows)]
-fn spawn(spec: &ProcessSpec, job: &job::Job) -> Result<Child, CoreError> {
+fn spawn(spec: &ProcessSpec, job: &job::Job) -> Result<(Child, Tree), CoreError> {
     use std::os::windows::process::CommandExt;
     /// No console window for background programs.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let mut cmd = command(spec)?;
     cmd.creation_flags(CREATE_NO_WINDOW);
     let mut child = cmd.spawn().map_err(|e| start_error(spec, e))?;
-    if let Err(e) = job.assign(&child) {
-        let _ = child.kill();
-        return Err(CoreError::Php(format!("Could not supervise {}: {e}", spec.key)));
+    // Hearth's job first (everything dies with Hearth), then the child's own one inside it.
+    let tree = job.assign(&child).and_then(|()| job::Job::plain()).and_then(|tree| tree.assign(&child).map(|()| tree));
+    match tree {
+        Ok(tree) => Ok((child, tree)),
+        Err(e) => {
+            let _ = child.kill();
+            Err(CoreError::Php(format!("Could not supervise {}: {e}", spec.key)))
+        }
     }
-    Ok(child)
 }
 
 #[cfg(unix)]
-fn spawn(spec: &ProcessSpec) -> Result<Child, CoreError> {
+fn spawn(spec: &ProcessSpec) -> Result<(Child, Tree), CoreError> {
     use std::os::unix::process::CommandExt;
     let mut cmd = command(spec)?;
     // Own process group, so stopping it also stops its workers (php-fpm).
     cmd.process_group(0);
-    cmd.spawn().map_err(|e| start_error(spec, e))
+    cmd.spawn().map(|c| (c, ())).map_err(|e| start_error(spec, e))
+}
+
+/// Stops an entry's child and everything it started.
+fn end(entry: &mut Entry) {
+    #[cfg(windows)]
+    if let Some(tree) = entry.tree.take() {
+        tree.terminate();
+    }
+    #[cfg(unix)]
+    entry.tree.take();
+    if let Some(child) = entry.child.as_mut() {
+        terminate(child);
+    }
 }
 
 #[cfg(windows)]
@@ -462,7 +487,7 @@ mod job {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation, SetInformationJobObject,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
 
     /// A Job Object whose processes are killed when its last handle closes (Hearth exiting or crashing).
@@ -494,6 +519,23 @@ mod job {
                 }
                 Ok(job)
             }
+        }
+
+        /// A job without limits, nested in the job its first process is already in: closing it
+        /// kills nothing (a detached database shuts down on its own), `terminate` ends all of it.
+        pub fn plain() -> std::io::Result<Job> {
+            // SAFETY: anonymous job, no attributes.
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(Job(handle))
+        }
+
+        /// Ends every process in the job, also those its processes started.
+        pub fn terminate(&self) {
+            // SAFETY: valid handle; exit code 1 like a kill.
+            unsafe { TerminateJobObject(self.0, 1) };
         }
 
         pub fn assign(&self, child: &Child) -> std::io::Result<()> {
