@@ -14,14 +14,15 @@
   import Requests from './views/Requests.svelte';
   import Services from './views/Services.svelte';
   import Sites from './views/Sites.svelte';
+  import Workspaces from './views/Workspaces.svelte';
   import Settings from './views/Settings.svelte';
 
-  type View = 'dashboard' | 'sites' | 'services' | 'processes' | 'php' | 'node' | 'mail' | 'dumps' | 'requests' | 'profiles' | 'logs' | 'settings';
+  type View = 'dashboard' | 'sites' | 'workspaces' | 'services' | 'processes' | 'php' | 'node' | 'mail' | 'dumps' | 'requests' | 'profiles' | 'logs' | 'settings';
 
   const settings = createSettingsStore(api);
   // `?view=settings` opens a section directly (used for screenshots in the browser demo).
   const requested = new URLSearchParams(location.search).get('view');
-  const views: View[] = ['dashboard', 'sites', 'services', 'processes', 'php', 'node', 'mail', 'dumps', 'requests', 'profiles', 'logs', 'settings'];
+  const views: View[] = ['dashboard', 'sites', 'workspaces', 'services', 'processes', 'php', 'node', 'mail', 'dumps', 'requests', 'profiles', 'logs', 'settings'];
   let view = $state<View>(views.includes(requested as View) ? (requested as View) : 'dashboard');
   let prefersDark = $state(window.matchMedia('(prefers-color-scheme: dark)').matches);
 
@@ -39,6 +40,7 @@
   const nav: { id: View; label: string }[] = [
     { id: 'dashboard', label: 'Dashboard' },
     { id: 'sites', label: 'Sites' },
+    { id: 'workspaces', label: 'Workspaces' },
     { id: 'services', label: 'Services' },
     { id: 'processes', label: 'Processes' },
     { id: 'php', label: 'PHP' },
@@ -72,6 +74,8 @@
       <Dashboard />
     {:else if view === 'sites'}
       <Sites />
+    {:else if view === 'workspaces'}
+      <Workspaces />
     {:else if view === 'services'}
       <Services />
     {:else if view === 'processes'}

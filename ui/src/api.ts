@@ -821,3 +821,51 @@ export const processesSuggest = (site: string): Promise<ProcessSuggestion[]> =>
         { name: 'pail', command: 'php artisan pail', autostart: false },
       ])
     : core('processes.suggest', { site });
+export interface Workspace {
+  kind: 'worktree';
+  /** The branch as typed. */
+  name: string;
+  /** The host without `.test` (`feature-x.shop`). */
+  site: string;
+  url: string;
+  path: string;
+  appDir: string;
+  parentSite: string;
+  parentPath: string;
+  branch: string;
+  baseBranch: string;
+  baseCommit: string;
+  secured: boolean;
+  phpVersion: string | null;
+  databaseMode: 'shared' | 'empty' | 'clone';
+  databaseName: string | null;
+  databaseDriver: string | null;
+  createdBy: string;
+  createdAt: number;
+  owned: boolean;
+}
+
+const demoWorkspace = (name: string, database: Workspace['databaseMode'], databaseName: string | null): Workspace => ({
+  kind: 'worktree', name, site: `${name}.shop`, url: `https://${name}.shop.test:8443`,
+  path: `C:\\Users\\you\\.config\\hearth\\data\\workspaces\\shop\\${name}`, appDir: '', parentSite: 'shop',
+  parentPath: String.raw`C:\Users\you\Code\shop`, branch: name, baseBranch: 'main', baseCommit: '4f2a9c1', secured: true,
+  phpVersion: '8.3', databaseMode: database, databaseName, databaseDriver: databaseName ? 'mysql' : null, createdBy: 'app',
+  createdAt: 1793787000, owned: true,
+});
+let demoWorkspaces: Workspace[] = [demoWorkspace('checkout-v2', 'clone', 'shop_checkout_v2'), demoWorkspace('fix-invoices', 'shared', null)];
+
+export const workspacesList = (): Promise<{ workspaces: Workspace[] }> =>
+  demo ? Promise.resolve({ workspaces: structuredClone(demoWorkspaces) }) : core('workspaces.list');
+export const workspacesCreate = async (site: string, name: string, database: string, secure?: boolean): Promise<{ workspace: Workspace; notes: string[] }> => {
+  if (!demo) return core('workspaces.create', { site, name, database, ...(secure === undefined ? {} : { secure }) });
+  const made = demoWorkspace(name || 'brave-otter', database as Workspace['databaseMode'], database === 'shared' ? null : `shop_${name}`);
+  demoWorkspaces.push(made);
+  return { workspace: made, notes: [] };
+};
+export const workspacesDelete = async (name: string, keepDatabase: boolean, keepFiles: boolean): Promise<{ notes: string[] }> => {
+  if (!demo) return core('workspaces.delete', { name, keepDatabase, keepFiles });
+  demoWorkspaces = demoWorkspaces.filter((w) => w.site !== name);
+  return { notes: [] };
+};
+export const workspacesMerge = async (name: string, push: boolean, del: boolean): Promise<{ message: string; notes: string[] }> =>
+  demo ? { message: `Merged ${name.split('.')[0]} into main of shop`, notes: [] } : core('workspaces.merge', { name, push, delete: del });
