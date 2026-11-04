@@ -15,6 +15,21 @@
         "backgroundColor": "#120e0c",
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
+      },
+      {
+        "label": "panel",
+        "url": "panel.html",
+        "title": "Hearth",
+        "width": 300,
+        "height": 420,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": true
       }
     ]
   }

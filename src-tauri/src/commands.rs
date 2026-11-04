@@ -1,7 +1,7 @@
 use hearth_core::ipc::{self, CoreState};
 use hearth_core::{settings, Settings};
-use serde_json::Value;
-use tauri::{AppHandle, State};
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::updates::{self, UpdateState, Updates};
@@ -64,4 +64,31 @@ pub fn open_url(url: String) -> Result<(), String> {
         Ok(s) if s.success() => Ok(()),
         _ => Err(format!("Could not open {url}")),
     }
+}
+
+/// The tray panel measured its content (logical pixels): resize it and keep it at the icon.
+#[tauri::command]
+pub fn panel_fit(app: AppHandle, width: f64, height: f64) {
+    crate::panel::fit(&app, width, height);
+}
+
+#[tauri::command]
+pub fn panel_hide(app: AppHandle) {
+    crate::panel::hide(&app);
+}
+
+/// Shows the main window, on `view` (and its `tab`) when given; used by the tray panel.
+#[tauri::command]
+pub fn app_open(app: AppHandle, view: Option<String>, tab: Option<String>) {
+    crate::panel::hide(&app);
+    crate::window::show(&app);
+    if view.is_some() {
+        let _ = app.emit_to(crate::window::MAIN, "hearth://navigate", json!({ "view": view, "tab": tab }));
+    }
+}
+
+/// Quits Hearth completely, as the tray's Quit always did.
+#[tauri::command]
+pub fn app_quit(app: AppHandle) {
+    crate::quit(&app);
 }

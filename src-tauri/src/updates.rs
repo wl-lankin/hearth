@@ -45,28 +45,12 @@ impl Updates {
     pub fn state(&self) -> UpdateState {
         self.state.lock().unwrap().clone()
     }
-
-    pub fn ready_version(&self) -> Option<String> {
-        match self.state() {
-            UpdateState::Ready { version } => Some(version),
-            _ => None,
-        }
-    }
-}
-
-/// The tray menu only shows "Restart to update" for a ready update, so only entering or leaving
-/// `Ready` changes it (rebuilding it per download percent would close a menu the user has open).
-pub fn tray_needs_refresh(before: &UpdateState, after: &UpdateState) -> bool {
-    let ready = |s: &UpdateState| matches!(s, UpdateState::Ready { .. });
-    ready(before) != ready(after)
 }
 
 fn set(app: &AppHandle, next: UpdateState) {
-    let before = std::mem::replace(&mut *app.state::<Updates>().state.lock().unwrap(), next.clone());
+    *app.state::<Updates>().state.lock().unwrap() = next.clone();
+    // Every window hears it: the main window's update section and the tray panel.
     let _ = app.emit("update-state", &next);
-    if tray_needs_refresh(&before, &next) {
-        crate::tray::refresh(app);
-    }
 }
 
 /// Starts the background schedule (does nothing when updates are disabled).
@@ -168,17 +152,6 @@ mod tests {
         assert!(!next_check_allowed(&UpdateState::Downloading { version: v(), progress: 0.5 }));
         assert!(!next_check_allowed(&UpdateState::Ready { version: v() }));
         assert!(!next_check_allowed(&UpdateState::Installing { version: v() }));
-    }
-
-    #[test]
-    fn tray_refreshes_only_when_an_update_becomes_ready_or_goes_away() {
-        let dl = |p| UpdateState::Downloading { version: "0.2.0".into(), progress: p };
-        let ready = UpdateState::Ready { version: "0.2.0".into() };
-        let installing = UpdateState::Installing { version: "0.2.0".into() };
-        assert!(!tray_needs_refresh(&dl(0.1), &dl(0.2)));
-        assert!(!tray_needs_refresh(&UpdateState::Checking, &dl(0.0)));
-        assert!(tray_needs_refresh(&dl(1.0), &ready));
-        assert!(tray_needs_refresh(&ready, &installing));
     }
 
     #[test]
