@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, test } from 'vitest';
-import type { ProfileReport, SitesList } from './api';
+import type { PhpList, ProfileReport, SitesList } from './api';
 import { createProfilesStore, type ProfilesApi } from './profiles.svelte';
 
 const site = (name: string, secured = false) => ({ name, kind: 'linked' as const, path: `/x/${name}`, upstream: null, docroot: `/x/${name}/public`, php: null, secured, debug: false, profile: false, problem: null });
@@ -22,6 +22,7 @@ function fakeApi(over: Partial<ProfilesApi> = {}) {
       return { deleted: 2 };
     },
     sitesList: async () => structuredClone(list),
+    phpList: async (): Promise<PhpList> => ({ default: '8.4', installed: [{ minor: '8.4', version: '8.4.27', extensions: { spx: true } }, { minor: '8.3', version: '8.3.36', extensions: { spx: false } }] }),
     openUrl: async (url) => void calls.push(`open ${url}`),
     ...over,
   };
@@ -29,6 +30,15 @@ function fakeApi(over: Partial<ProfilesApi> = {}) {
 }
 
 describe('profiles store', () => {
+  test('a report opens only through a site whose PHP has SPX on; a command picks such a site', async () => {
+    const list: SitesList = { sites: [{ ...site('legacy'), php: '8.3' }, site('shop')], parked: [], httpPort: 8080, httpsPort: 8443 };
+    const cli = report('spx-full-cli', '', { cli: true, uri: 'php artisan migrate' });
+    const store = createProfilesStore(fakeApi({ sitesList: async () => structuredClone(list), profileList: async () => ({ reports: [report('spx-full-l', 'legacy.test'), cli] }) }));
+    await store.load();
+    expect(store.reportUrl(store.reports[0])).toBeNull();
+    expect(store.reportUrl(store.reports[1])).toBe('http://shop.test:8080/?SPX_KEY=k&SPX_UI_URI=/report.html&key=spx-full-cli');
+  });
+
   test('a report opens in SPX\'s own UI through its site, over HTTPS for a secured one', async () => {
     const api = fakeApi();
     const store = createProfilesStore(api);

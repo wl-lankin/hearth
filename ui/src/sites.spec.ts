@@ -92,6 +92,8 @@ describe('sites store', () => {
     const store = createSitesStore(api);
     await store.load();
     expect(store.sites.map((s) => store.canProfile(s))).toEqual([true, false, true]);
+    // A profiled site whose PHP lacks SPX keeps its switch, so it can be switched off.
+    expect(store.canProfile({ ...store.sites[1], profile: true })).toBe(true);
     await store.profile('shop', true);
     expect(api.calls).toContain('profile shop true');
     const refusing = fakeApi({ sitesProfile: async () => { throw 'SPX is not available for PHP 8.4'; } });

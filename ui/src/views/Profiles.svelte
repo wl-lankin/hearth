@@ -21,7 +21,7 @@
 
 <section class="card strip">
   <span class="muted">
-    Switch <strong>Profile</strong> on for a site on the Sites page: SPX then profiles each of its requests. Open a profile to see its flame graph and timeline in SPX.
+    Switch <strong>Profile</strong> on for a site on the Sites page: SPX then profiles each of its requests. Open a profile to see its flame graph and timeline in SPX. To profile a command, run it with <code>SPX_ENABLED=1 SPX_REPORT=full</code>.
   </span>
   <button onclick={() => store.clear()} disabled={store.reports.length === 0}>Clear</button>
 </section>

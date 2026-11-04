@@ -183,7 +183,8 @@ export function createSitesStore(api: SitesApi) {
     canProfile(site: Site) {
       const has = (minor: string | null) => php.installed.find((i) => i.minor === minor);
       const runs = has(site.php) ?? has(php.default);
-      return site.kind !== 'proxy' && !!runs && 'spx' in runs.extensions;
+      // A profiled site keeps its switch: it must stay possible to switch it off.
+      return site.kind !== 'proxy' && (site.profile || (!!runs && 'spx' in runs.extensions));
     },
     park: (dir: string) => act(null, () => api.sitesPark(dir)),
     unpark: (dir: string) => act(null, () => api.sitesUnpark(dir)),
