@@ -250,3 +250,15 @@ fn the_uninstall_marks_herd_gone_and_brings_trust_back() {
     let mut blocked = FakeUninstaller { exit: 0, trusted_after: true, trusted_again: false };
     assert!(uninstall(&paths, &red, &program, &args, &mut blocked).is_err());
 }
+
+/// The record holds the CA key from before the move (for Undo): only the user may read it.
+#[cfg(unix)]
+#[test]
+fn the_record_with_the_previous_ca_key_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_d, paths) = home();
+    let mut record = Record::default();
+    record.push(&paths, Done::Ca { previous: Some((b"crt".to_vec(), b"key".to_vec())) }).unwrap();
+    let mode = std::fs::metadata(paths.config.join("moveover-record.json")).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+}

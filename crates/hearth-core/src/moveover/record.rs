@@ -111,9 +111,10 @@ impl Record {
         self.save(paths)
     }
 
+    /// Private: the `ca` step keeps the CA key from before the move, for Undo.
     pub fn save(&self, paths: &HearthPaths) -> Result<(), CoreError> {
         let bytes = serde_json::to_vec_pretty(self).map_err(|e| CoreError::Php(e.to_string()))?;
-        crate::atomic::write(&file(paths), &bytes)
+        crate::atomic::write_private(&file(paths), &bytes)
     }
 
     /// Whether a step of this kind ("ports", "redis", ...) is recorded.
