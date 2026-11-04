@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
+mod mcp;
+
 use clap::{Parser, Subcommand};
 use hearth_core::node::launch::COMMANDS as NODE_COMMANDS;
 use hearth_core::php::manifest::Os;
@@ -293,6 +295,8 @@ enum Command {
     Other(Vec<String>),
     /// Prints the address the sites are served on.
     Loopback,
+    /// Runs the MCP server (stdio) with Herd's tool surface, for coding agents.
+    Mcp,
     /// Runs a site (default: the current folder's) on a PHP version.
     Isolate {
         minor: String,
@@ -556,6 +560,10 @@ async fn run() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Other(args) => fail(&missing(args.first().map(String::as_str).unwrap_or_default())),
+        Command::Mcp => {
+            mcp::serve(&paths).await;
+            ExitCode::SUCCESS
+        }
         Command::Loopback => {
             println!("127.0.0.1");
             ExitCode::SUCCESS
