@@ -238,7 +238,7 @@ enum Command {
     /// served at `<name>.<site>.test` (inside an existing worktree: serves that one).
     Workspace {
         name: Option<String>,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "no_secure")]
         secure: bool,
         #[arg(long = "no-secure")]
         no_secure: bool,

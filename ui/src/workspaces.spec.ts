@@ -31,7 +31,7 @@ function fakeApi(over: Partial<WorkspacesApi> = {}) {
       calls.push(`merge ${name} ${push} ${del}`);
       return { message: `Merged ${name} into main of shop`, notes: [] };
     },
-    sitesList: async (): Promise<SitesList> => ({ sites: [site('shop'), site('blog', 'parked'), site('vite', 'proxy')], parked: [], httpPort: 8080, httpsPort: 8443 }),
+    sitesList: async (): Promise<SitesList> => ({ sites: [site('shop'), site('blog', 'parked'), site('vite', 'proxy'), site('feature-x.shop')], parked: [], httpPort: 8080, httpsPort: 8443 }),
     openUrl: async (url) => void calls.push(`open ${url}`),
     ...over,
   };
@@ -46,7 +46,25 @@ describe('workspaces store', () => {
       ['blog', ['hotfix.blog']],
       ['shop', ['feature-x.shop', 'ui.shop']],
     ]);
+    // No proxies, no workspaces.
     expect(store.parents).toEqual(['shop', 'blog']);
+  });
+
+  test('a row action while a workspace is being made keeps the form busy', async () => {
+    let finish: () => void = () => {};
+    const api = fakeApi({
+      workspacesCreate: (site, name) => new Promise((resolve) => (finish = () => resolve({ workspace: ws(`${name}.${site}`, site), notes: [] }))),
+    });
+    const store = createWorkspacesStore(api);
+    await store.load();
+    store.form.site = 'shop';
+    store.form.name = 'slow';
+    const making = store.create();
+    await store.merge('feature-x.shop');
+    expect(store.creating).toBe(true);
+    finish();
+    await making;
+    expect(store.creating).toBe(false);
   });
 
   test('a new workspace sends site, branch and database and shows what to do next', async () => {

@@ -17,6 +17,8 @@ export function createWorkspacesStore(api: WorkspacesApi) {
   let error = $state<string | null>(null);
   let errors = $state<Record<string, string | null>>({});
   let busy = $state<string | null>(null);
+  // Making a workspace has its own flag: a row action meanwhile must not end it.
+  let creating = $state(false);
   let message = $state<string | null>(null);
   let notes = $state<string[]>([]);
   let deleting = $state<string | null>(null);
@@ -54,7 +56,7 @@ export function createWorkspacesStore(api: WorkspacesApi) {
       for (const w of workspaces) by.set(w.parentSite, [...(by.get(w.parentSite) ?? []), w]);
       return [...by.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([site, list]) => ({ site, workspaces: list }));
     },
-    /** The sites a workspace can branch from: every site with a folder. */
+    /** The sites a workspace can branch from: every site with a folder that is no workspace itself. */
     get parents() {
       return parents;
     },
@@ -63,6 +65,9 @@ export function createWorkspacesStore(api: WorkspacesApi) {
     },
     get busy() {
       return busy;
+    },
+    get creating() {
+      return creating;
     },
     get message() {
       return message;
@@ -83,7 +88,8 @@ export function createWorkspacesStore(api: WorkspacesApi) {
     async load() {
       await refresh();
       try {
-        parents = (await api.sitesList()).sites.filter((s) => s.kind !== 'proxy').map((s) => s.name);
+        const own = new Set(workspaces.map((w) => w.site));
+        parents = (await api.sitesList()).sites.filter((s) => s.kind !== 'proxy' && !own.has(s.name)).map((s) => s.name);
       } catch {
         parents = [];
       }
@@ -94,7 +100,7 @@ export function createWorkspacesStore(api: WorkspacesApi) {
       formError = null;
       message = null;
       notes = [];
-      busy = 'new';
+      creating = true;
       try {
         const made = await api.workspacesCreate(form.site, form.name.trim(), form.database);
         message = `${made.workspace.name} is ready at ${made.workspace.url}`;
@@ -106,7 +112,7 @@ export function createWorkspacesStore(api: WorkspacesApi) {
         formError = asMessage(e);
         return false;
       } finally {
-        busy = null;
+        creating = false;
       }
     },
     open: (w: Workspace) => api.openUrl(w.url),

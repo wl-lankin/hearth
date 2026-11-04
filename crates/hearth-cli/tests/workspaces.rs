@@ -92,4 +92,6 @@ fn workspace_is_no_longer_a_missing_feature() {
     let (d, paths, _shop) = home();
     let out = hearth(&paths, d.path(), &["workspace:frobnicate"]);
     assert!(!text(&out).contains("Hearth has no workspaces yet"), "{}", text(&out));
+    let both = hearth(&paths, d.path(), &["workspace", "x", "--secure", "--no-secure"]);
+    assert_eq!(both.status.code(), Some(2), "--secure and --no-secure exclude each other: {}", text(&both));
 }

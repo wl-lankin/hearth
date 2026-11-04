@@ -52,8 +52,8 @@
     <span>Database</span>
     <Select label="Database" value={store.form.database} onchange={(v) => (store.form.database = v)} options={databases} />
   </div>
-  <button class="primary" type="submit" disabled={!store.form.site || store.busy === 'new'}>
-    {store.busy === 'new' ? 'Making...' : 'New workspace'}
+  <button class="primary" type="submit" disabled={!store.form.site || store.creating}>
+    {store.creating ? 'Making...' : 'New workspace'}
   </button>
   {#if store.formError}<p class="error wide">{store.formError}</p>{/if}
   <p class="hint wide">
