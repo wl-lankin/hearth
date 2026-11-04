@@ -369,6 +369,10 @@ async fn env_db_and_site_error_work_through_the_server() {
             ("db", json!({ "action": "create", "name": "reports" })),
             ("site", json!({ "action": "error" })),
             ("env", json!({ "action": "get", "key": "NOPE" })),
+            ("env", json!({ "action": "set", "key": "DB_PORT", "value": 3306 })),
+            ("env", json!({ "action": "set", "key": "APP_DEBUG", "value": true })),
+            ("env", json!({ "action": "set", "key": "MAIL_FROM", "value": "" })),
+            ("env", json!({ "action": "set", "key": "LIST", "value": [1, 2] })),
         ] {
             out.push(s.tool(out.len() as u64 + 1, tool, args));
         }
@@ -390,14 +394,22 @@ async fn env_db_and_site_error_work_through_the_server() {
     assert!(ok(4).contains("REDIS_PORT") && ok(4).contains("6390"), "{}", results[4].0);
     ok(5);
     ok(6);
-    assert_eq!(
-        std::fs::read_to_string(shop.join(".env")).unwrap(),
-        "DB_CONNECTION=sqlite\nQUEUE_CONNECTION=database\n"
-    );
+    // After unmanaged and unset; the sets that follow append their keys.
+    let text = std::fs::read_to_string(shop.join(".env")).unwrap();
+    assert!(text.starts_with("DB_CONNECTION=sqlite\nQUEUE_CONNECTION=database\nDB_PORT="), "{text}");
     let conn: Value = serde_json::from_str(&ok(7)).unwrap();
     assert_eq!(conn["driver"], "sqlite");
     assert!(ok(8).contains("reports") && shop.join("database").join("reports.sqlite").is_file(), "{}", results[8].0);
     let e: Value = serde_json::from_str(&ok(9)).unwrap();
     assert_eq!((e["class"].as_str(), e["line"].as_u64()), (Some("RuntimeException"), Some(7)));
     assert!(results[10].1 && results[10].0.contains("NOPE"), "{:?}", results[10]);
+    for i in 11..=13 {
+        ok(i);
+    }
+    let text = std::fs::read_to_string(shop.join(".env")).unwrap();
+    assert!(
+        text.contains("DB_PORT=3306\n") && text.contains("APP_DEBUG=true\n") && text.contains("MAIL_FROM=\n"),
+        "{text}"
+    );
+    assert!(results[14].1 && results[14].0.contains("text"), "{:?}", results[14]);
 }

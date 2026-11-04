@@ -45,6 +45,10 @@ async fn values_are_read_set_and_unset_keeping_the_file() {
     assert!(text.ends_with("NEW_KEY=x\r\n") && !text.contains("DB_PASSWORD"), "{text}");
     let bad = call(&core, "env.set", json!({ "site": "shop", "key": "BAD KEY", "value": "x" })).await.unwrap_err();
     assert!(bad.message.contains("BAD KEY"), "{}", bad.message);
+    let before = std::fs::read_to_string(shop.join(".env")).unwrap();
+    let bad = call(&core, "env.set", json!({ "site": "shop", "key": "PEM", "value": "a\nb" })).await.unwrap_err();
+    assert!(bad.message.contains("line break"), "{}", bad.message);
+    assert_eq!(std::fs::read_to_string(shop.join(".env")).unwrap(), before);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -82,7 +86,9 @@ async fn a_service_takes_over_a_category_and_unmanaged_gives_the_file_back() {
         text.contains("DB_CONNECTION=sqlite") && text.contains("CACHE_STORE=redis") && text.contains("REDIS_PORT=6380"),
         "{text}"
     );
-    assert!(text.contains("DB_DATABASE=shop"), "the database name stays: {text}");
+    // SQLite: Laravel's default file, which now exists; a server's database name would be read as a path.
+    assert!(crate::dotenv::get(&text, "DB_DATABASE").is_none() && text.contains("# DB_DATABASE=shop"), "{text}");
+    assert!(shop.join("database").join("database.sqlite").is_file());
     for category in ["database", "cache", "queue"] {
         call(&core, "env.useService", json!({ "site": "shop", "category": category, "selection": "unmanaged" }))
             .await
@@ -97,6 +103,26 @@ async fn a_service_takes_over_a_category_and_unmanaged_gives_the_file_back() {
         .await
         .unwrap_err();
     assert!(err.message.contains("oracle"), "{}", err.message);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_gets_a_database_name_when_the_env_has_none() {
+    let (_d, core, shop) = home();
+    let env = "APP_NAME=Shop\nDB_CONNECTION=sqlite\n# DB_DATABASE=laravel\n";
+    std::fs::write(shop.join(".env"), env).unwrap();
+    crate::services::store::create(&core.paths, "mysql", "8.4", 3308, None).unwrap();
+    let done = call(&core, "env.useService", json!({ "site": "shop", "category": "database", "selection": "mysql" }))
+        .await
+        .unwrap();
+    assert_eq!(done["changed"]["DB_DATABASE"], "shop");
+    assert_eq!(
+        crate::dotenv::get(&std::fs::read_to_string(shop.join(".env")).unwrap(), "DB_DATABASE").as_deref(),
+        Some("shop")
+    );
+    call(&core, "env.useService", json!({ "site": "shop", "category": "database", "selection": "unmanaged" }))
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read_to_string(shop.join(".env")).unwrap(), env);
 }
 
 #[tokio::test(flavor = "multi_thread")]

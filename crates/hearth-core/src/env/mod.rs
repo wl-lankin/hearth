@@ -59,6 +59,9 @@ fn checked(key: &str) -> Result<(), CoreError> {
 /// Sets `key` (every line of it); a site without a `.env` gets one.
 pub fn set(paths: &HearthPaths, name: &str, key: &str, value: &str) -> Result<(), CoreError> {
     checked(key)?;
+    if value.contains(['\r', '\n']) {
+        return Err(error(format!("The value of {key} has a line break: .env values are one line")));
+    }
     let file = file_of(paths, name)?;
     let text = std::fs::read_to_string(&file).unwrap_or_default();
     crate::atomic::write(&file, dotenv::set(&text, &[(key, value)]).as_bytes())
@@ -122,6 +125,11 @@ fn service(paths: &HearthPaths, selection: &str) -> Option<store::Instance> {
         .find(|i| i.id == wanted || i.name.to_lowercase() == wanted)
         .or_else(|| all.iter().find(|i| i.kind == wanted))
         .cloned()
+}
+
+/// A database name from a site name: `my-shop` gives `my_shop`.
+fn database_name(site: &str) -> String {
+    site.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect()
 }
 
 /// The lines `selection` sets for `category` in `text`.
@@ -205,6 +213,8 @@ pub fn use_service(
                 continue;
             }
             next = match &original {
+                // A line Hearth commented out goes back where it was.
+                Some(line) if dotenv::line_of(&next, &key).is_none() => dotenv::uncomment(&next, line),
                 Some(line) => dotenv::put_line(&next, &key, line, false),
                 None => dotenv::unset(&next, &key),
             };
@@ -212,19 +222,46 @@ pub fn use_service(
         }
         next
     } else {
-        let lines = lines_for(paths, category, selection, &text)?;
+        let mut lines = lines_for(paths, category, selection, &text)?;
+        // The database name follows the driver: a server needs one (Laravel's `laravel` rarely
+        // exists), and SQLite reads `DB_DATABASE` as a file path, so its line is commented out.
+        let database = dotenv::get(&text, "DB_DATABASE").filter(|v| !v.is_empty());
+        let sqlite = category == "database" && selection.eq_ignore_ascii_case("sqlite");
+        if category == "database" && !sqlite && database.is_none() {
+            lines.push(("DB_DATABASE".into(), database_name(name)));
+        }
         let recorded: Vec<String> = site.values().flat_map(|m| m.originals.keys().cloned()).collect();
         let managed = site.entry(category.to_string()).or_default();
         managed.selection = selection.to_string();
         managed.wrote = lines.iter().map(|(k, _)| k.clone()).collect();
-        for (key, _) in &lines {
+        let mut removed = vec![];
+        if sqlite && dotenv::line_of(&text, "DB_DATABASE").is_some() {
+            removed.push("DB_DATABASE".to_string());
+            managed.wrote.push("DB_DATABASE".into());
+        }
+        for key in lines.iter().map(|(k, _)| k).chain(&removed) {
             if !recorded.contains(key) {
                 managed.originals.insert(key.clone(), dotenv::line_of(&text, key));
             }
         }
         let pairs: Vec<(&str, &str)> = lines.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         changed.extend(lines.iter().map(|(k, v)| (k.clone(), Some(v.clone()))));
-        dotenv::set(&text, &pairs)
+        let mut next = dotenv::set(&text, &pairs);
+        for key in removed {
+            next = dotenv::comment_out(&next, &key);
+            changed.insert(key, None);
+        }
+        if sqlite {
+            // Laravel's default file, so the site works right away.
+            if let Some(folder) = file.parent().map(|p| p.join("database")) {
+                let db = folder.join("database.sqlite");
+                if !db.exists() {
+                    std::fs::create_dir_all(&folder).map_err(|e| CoreError::io(&folder, e))?;
+                    std::fs::write(&db, b"").map_err(|e| CoreError::io(&db, e))?;
+                }
+            }
+        }
+        next
     };
     if site.is_empty() {
         all.remove(name);

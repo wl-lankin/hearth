@@ -81,6 +81,33 @@ pub fn unset(text: &str, key: &str) -> String {
         .collect()
 }
 
+/// `text` with every line of `key` turned into a comment (`# KEY=...`).
+pub fn comment_out(text: &str, key: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|piece| match key_of(piece.trim_end_matches(['\r', '\n'])) {
+            Some((k, _)) if k == key => format!("# {piece}"),
+            _ => piece.to_string(),
+        })
+        .collect()
+}
+
+/// `text` with the first `# line` that `comment_out` made turned back into `line`.
+pub fn uncomment(text: &str, line: &str) -> String {
+    let commented = format!("# {line}");
+    let mut done = false;
+    text.split_inclusive('\n')
+        .map(|piece| {
+            let content = piece.trim_end_matches(['\r', '\n']);
+            if !done && content == commented {
+                done = true;
+                format!("{line}{}", &piece[content.len()..])
+            } else {
+                piece.to_string()
+            }
+        })
+        .collect()
+}
+
 /// The last line that sets `key`, as written (without its line ending).
 pub fn line_of(text: &str, key: &str) -> Option<String> {
     text.lines().rfind(|line| key_of(line).is_some_and(|(k, _)| k == key)).map(str::to_string)

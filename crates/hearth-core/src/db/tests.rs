@@ -47,6 +47,11 @@ async fn without_db_connection_it_is_sqlite_and_other_drivers_are_named() {
     assert_eq!(c["driver"], "sqlite");
     assert_eq!(PathBuf::from(c["database"].as_str().unwrap()), shop.join("database").join("database.sqlite"));
 
+    // A server without DB_DATABASE uses Laravel's default database, `laravel`: never dropped.
+    std::fs::write(shop.join(".env"), "DB_CONNECTION=mysql\nDB_PORT=1\n").unwrap();
+    let err = call(&core, "db.drop", json!({ "site": "shop", "name": "laravel" })).await.unwrap_err();
+    assert!(err.message.contains("uses `laravel`"), "{}", err.message);
+
     std::fs::write(shop.join(".env"), "DB_CONNECTION=sqlsrv\nDB_DATABASE=shop\n").unwrap();
     for method in ["db.connection", "db.list", "db.create"] {
         let err = call(&core, method, json!({ "site": "shop" })).await.unwrap_err();
@@ -72,8 +77,20 @@ async fn sqlite_databases_are_files_in_the_database_folder() {
     assert_eq!(list["databases"], json!(["archive", "reports"]));
     assert_eq!(list["current"], "archive");
 
-    let err = call(&core, "db.drop", json!({ "site": "shop", "name": "Archive" })).await.unwrap_err();
+    for current in ["Archive", "archive.sqlite", "ARCHIVE.sqlite"] {
+        let err = call(&core, "db.drop", json!({ "site": "shop", "name": current })).await.unwrap_err();
+        assert!(err.message.contains("uses"), "{current}: {}", err.message);
+    }
+    // The same file under another spelling of its path is still the current one.
+    let other_spelling = shop.join("database").join("..").join("database").join("archive.sqlite");
+    let env = std::fs::read_to_string(shop.join(".env")).unwrap();
+    let env = crate::dotenv::set(&env, &[("DB_DATABASE", &other_spelling.to_string_lossy())]);
+    std::fs::write(shop.join(".env"), env).unwrap();
+    let err = call(&core, "db.drop", json!({ "site": "shop", "name": "archive" })).await.unwrap_err();
     assert!(err.message.contains("uses"), "{}", err.message);
+    assert!(archive.is_file());
+    let err = call(&core, "db.create", json!({ "site": "shop", "name": "two\nlines" })).await.unwrap_err();
+    assert!(err.message.contains("not a database name"), "{}", err.message);
     call(&core, "db.drop", json!({ "site": "shop", "name": "reports" })).await.unwrap();
     assert!(!shop.join("database").join("reports.sqlite").exists() && archive.is_file());
     let err = call(&core, "db.drop", json!({ "site": "shop", "name": "../.env" })).await.unwrap_err();
@@ -101,6 +118,8 @@ async fn a_server_lists_creates_switches_and_drops_but_never_the_current_one() {
     call(&core, "db.use", json!({ "site": "shop", "name": "shop_next", "create": true })).await.unwrap();
     assert_eq!(env_db(&shop).as_deref(), Some("shop_next"));
     assert!(server.sql("SHOW DATABASES").lines().any(|l| l == "shop_next"));
+    let err = call(&core, "db.use", json!({ "site": "shop", "name": "bad\nname", "create": true })).await.unwrap_err();
+    assert!(err.message.contains("not a database name"), "{}", err.message);
     let err = call(&core, "db.use", json!({ "site": "shop", "name": "missing" })).await.unwrap_err();
     assert!(err.message.contains("missing"), "{}", err.message);
     assert_eq!(env_db(&shop).as_deref(), Some("shop_next"), "unchanged after a failed use");

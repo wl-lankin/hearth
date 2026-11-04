@@ -270,7 +270,11 @@ impl Tool {
             .required
             .iter()
             .copied()
-            .filter(|p| args.get(*p).is_none_or(|v| v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty())))
+            // An empty `value` is a value (`KEY=`); an empty name or key is not.
+            .filter(|p| {
+                args.get(*p)
+                    .is_none_or(|v| v.is_null() || (*p != "value" && v.as_str().is_some_and(|s| s.trim().is_empty())))
+            })
             .collect();
         if missing.is_empty() {
             Ok(action)

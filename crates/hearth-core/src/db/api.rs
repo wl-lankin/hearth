@@ -59,7 +59,8 @@ impl Target {
                     _ => file.to_string_lossy().into_owned(),
                 }
             }
-            _ => self.conn().database,
+            // Laravel's own default when `.env` names none.
+            _ => Some(self.conn().database).filter(|d| !d.is_empty()).unwrap_or_else(|| "laravel".into()),
         }
     }
 
@@ -132,11 +133,16 @@ impl Target {
 
     fn drop(&self, paths: &HearthPaths, name: &str) -> Result<(), CoreError> {
         let current = self.current();
+        let refused = || error(format!("{}.test uses `{current}`: it is not dropped", self.site));
         if name.eq_ignore_ascii_case(&current) || name.is_empty() {
-            return Err(error(format!("{}.test uses `{current}`: it is not dropped", self.site)));
+            return Err(refused());
         }
         if self.driver == Driver::Sqlite {
             let file = self.sqlite_path(name)?;
+            // The same file however its path is spelled (`..`, case, short names, links).
+            if same_file(&file, &self.sqlite_file()) {
+                return Err(refused());
+            }
             if !file.is_file() {
                 return Err(error(format!("No database [{name}] in {}", self.folder().display())));
             }
@@ -172,6 +178,23 @@ impl Target {
     }
 }
 
+/// Whether two paths are one file: resolved when they exist, else compared without case (Windows
+/// and macOS file systems ignore it).
+fn same_file(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy()),
+    }
+}
+
+/// A name a server database can have: no control characters (a line break would reach `.env`).
+fn server_name(name: &str) -> Result<(), CoreError> {
+    if name.chars().any(char::is_control) {
+        return Err(error(format!("[{}] is not a database name", name.escape_debug())));
+    }
+    Ok(())
+}
+
 /// A name as an agent may write it: trimmed, without surrounding backticks or quotes.
 fn bare(name: &str) -> String {
     let name = name.trim();
@@ -194,6 +217,9 @@ fn answer(paths: &HearthPaths, method: &str, params: &Value) -> Result<Value, Co
     let site = params.get("site").and_then(Value::as_str).ok_or_else(|| error("site is required"))?;
     let name = params.get("name").and_then(Value::as_str).map(bare);
     let target = Target::of(paths, site)?;
+    if let (Some(n), false) = (&name, target.driver == Driver::Sqlite) {
+        server_name(n)?;
+    }
     match method {
         "db.connection" => Ok(match target.driver {
             Driver::Sqlite => json!({ "driver": "sqlite", "database": target.sqlite_file() }),

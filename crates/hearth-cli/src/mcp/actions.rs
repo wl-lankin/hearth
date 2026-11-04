@@ -102,7 +102,12 @@ async fn env_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<S
             }
         }
         "set" => {
-            let value = args.get("value").and_then(Value::as_str).unwrap_or_default();
+            // Agents send numbers and true/false as such; `.env` holds them as text.
+            let value = match args.get("value") {
+                Some(Value::String(s)) => s.clone(),
+                Some(v @ (Value::Number(_) | Value::Bool(_))) => v.to_string(),
+                _ => return Err(format!("The value of {key} must be text, a number or true/false")),
+            };
             call(paths, "env.set", json!({ "site": site, "key": key, "value": value })).await?;
             Ok(format!("{key} is set in the .env of {site}.test"))
         }
