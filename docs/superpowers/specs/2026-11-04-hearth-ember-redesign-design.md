@@ -15,7 +15,7 @@ Success: Hearth looks like a premium, warm, crafted app the moment it opens; fin
 
 ## Non-goals
 
-- No new features, IPC methods or behaviour changes. This is presentation only.
+- No new features, IPC methods or behaviour changes. This is presentation only, apart from removing the light theme and theme switching. If the core stores a theme setting, it may stay there unused; no core change is needed for the redesign.
 - No change to how pages work inside (tables, forms, actions), beyond restyling them and the regrouping listed below.
 - No marketing website.
 
@@ -91,7 +91,7 @@ Mail shows a badge with the number of unread mails. Existing deep links (`?view=
   - `#17120f` darkest, `#2a221d` surface, `#5a4a40` stone;
   - `#c2361f` deep red, `#f07a40` ember, `#ffd27a` gold, `#ffe2a0` light gold.
   - Text and muted text stay within WCAG AA contrast on these.
-- **Light variant ("Ember day"):** a warm parchment background with the same accent and a softer glow. Hearth already follows the system theme, and so does Ember. The illustrations are used unchanged on light too; the builder checks they read well there, and puts them on a soft dark-warm plate if they don't. *(Designer's call: the owner was asked and said continue.)*
+- **Dark only (owner's decision):** Ember is the one and only theme. The light theme and theme switching go away: the theme setting in Settings, the system-theme following in `theme.ts`, and the light token set in `styles.css`. Native window parts (the title bar, scrollbars, form controls) are set to dark as well.
 - **Type:** the current system font stack stays. Headings are tighter and heavier than today.
 - **Buttons:** one shared look. The primary button is an ember gradient with dark text; the secondary is glass. The same in every page.
 - **Dropdowns:** the existing custom `Select.svelte`, restyled as a glass panel.
