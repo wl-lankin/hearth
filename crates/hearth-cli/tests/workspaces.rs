@@ -72,9 +72,12 @@ async fn make_list_switch_and_delete_a_workspace() {
     let json: serde_json::Value = serde_json::from_slice(&outs[2].stdout).unwrap();
     assert_eq!(json["workspaces"][0]["branch"], "feature-x");
     let path = paths.data.join("workspaces").join("shop").join("feature-x");
-    // Compared as text: the folder is gone by now (the delete ran after the switch).
-    let norm = |p: &str| p.replace('\\', "/").trim().to_lowercase();
-    assert_eq!(norm(&text(&outs[3])), norm(&path.to_string_lossy()), "switch prints the folder");
+    // Compared as text: the folder is gone by now (the delete ran after the switch). Hearth prints
+    // the resolved path (CI's temp folder is an 8.3 name like RUNNER~1; macOS's is a link), so the
+    // expected one is built from the resolved home, which still exists.
+    let resolved = std::fs::canonicalize(&paths.data).unwrap().join("workspaces").join("shop").join("feature-x");
+    let norm = |p: &str| p.trim().trim_start_matches(r"\\?\").replace('\\', "/").to_lowercase();
+    assert_eq!(norm(&text(&outs[3])), norm(&resolved.to_string_lossy()), "switch prints the folder");
     assert!(outs[4].status.success(), "{}", text(&outs[4]));
     assert!(
         text(&outs[4]).contains("Workspace feature-x is deleted; its branch feature-x stays"),
