@@ -81,9 +81,73 @@ pub async fn run(paths: &HearthPaths, tool: &str, action: &str, args: &Value) ->
         "services" => services_action(paths, action, args).await,
         "workspaces" => workspaces_action(paths, action, args).await,
         "runtime" => runtime_action(paths, action, args).await,
-        "env" => Err(format!("`env {action}` {NOT_YET}: edit the site's .env directly for now")),
-        "db" => Err(format!("`db {action}` {NOT_YET}: use the database's own client for now")),
+        "env" => env_action(paths, action, args).await,
+        "db" => db_action(paths, action, args).await,
         _ => Err(format!("`{tool} {action}` {NOT_YET}")),
+    }
+}
+
+// env ---------------------------------------------------------------------------------------------
+
+async fn env_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<String, String> {
+    let site = which_site(paths, args)?.name;
+    let key = text(args, "key").unwrap_or_default();
+    match action {
+        "get" if key.is_empty() => Ok(pretty(&call(paths, "env.get", json!({ "site": site })).await?["values"])),
+        "get" => {
+            let got = call(paths, "env.get", json!({ "site": site, "key": key })).await?;
+            match got["value"].as_str() {
+                Some(value) => Ok(pretty(&json!({ key: value }))),
+                None => Err(format!("{key} is not set in the .env of {site}.test")),
+            }
+        }
+        "set" => {
+            let value = args.get("value").and_then(Value::as_str).unwrap_or_default();
+            call(paths, "env.set", json!({ "site": site, "key": key, "value": value })).await?;
+            Ok(format!("{key} is set in the .env of {site}.test"))
+        }
+        "unset" => {
+            call(paths, "env.unset", json!({ "site": site, "key": key })).await?;
+            Ok(format!("{key} is removed from the .env of {site}.test"))
+        }
+        "check" => Ok(pretty(&call(paths, "env.check", json!({ "site": site })).await?)),
+        _ => {
+            let (category, selection) =
+                (text(args, "category").unwrap_or_default(), text(args, "selection").unwrap_or_default());
+            let done =
+                call(paths, "env.useService", json!({ "site": site, "category": category, "selection": selection }))
+                    .await?;
+            Ok(pretty(&json!({ "category": category, "selection": selection, "changed": done["changed"] })))
+        }
+    }
+}
+
+// db ----------------------------------------------------------------------------------------------
+
+async fn db_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<String, String> {
+    let site = which_site(paths, args)?.name;
+    let name = text(args, "name");
+    match action {
+        "connection" | "list" => Ok(pretty(&call(paths, &format!("db.{action}"), json!({ "site": site })).await?)),
+        "create" => {
+            let made = call(paths, "db.create", json!({ "site": site, "name": name })).await?;
+            let name = made["name"].as_str().unwrap_or_default();
+            Ok(if made["created"] == true {
+                format!("Created the database {name}")
+            } else {
+                format!("The database {name} already exists")
+            })
+        }
+        "use" => {
+            let create = flag(args, "create").unwrap_or(false);
+            let used = call(paths, "db.use", json!({ "site": site, "name": name, "create": create })).await?;
+            let made = if used["created"] == true { " (created)" } else { "" };
+            Ok(format!("{site}.test uses the database {}{made} now", used["name"].as_str().unwrap_or_default()))
+        }
+        _ => {
+            let dropped = call(paths, "db.drop", json!({ "site": site, "name": name })).await?;
+            Ok(format!("Dropped the database {}", dropped["name"].as_str().unwrap_or_default()))
+        }
     }
 }
 
@@ -175,7 +239,15 @@ async fn site_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
             Ok(format!("{name} is now served at {address}{note}"))
         }
         "studio" => Err("Hearth has no Studio: open the site's URL in the browser instead".into()),
-        "error" => Err(format!("`site error` {NOT_YET}: read the last exception with `logs read`")),
+        "error" => {
+            let name = which_site(paths, args)?.name;
+            let found = call(paths, "logs.lastException", json!({ "site": name })).await?;
+            if found.is_null() {
+                Ok(format!("No exception in the log of {name}.test"))
+            } else {
+                Ok(pretty(&found))
+            }
+        }
         _ => {
             let site = which_site(paths, args)?;
             let name = site.name.clone();

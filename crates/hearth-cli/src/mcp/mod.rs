@@ -17,8 +17,9 @@ const DEFAULT_PROTOCOL: &str = "2025-03-26";
 
 const INSTRUCTIONS: &str = "Hearth serves the user's PHP sites locally at http(s)://<site>.test: never start a web server (no `php artisan serve`, no `php -S`).
 - Start with `site info` to learn the site's URL, PHP version and services.
-- Debugging: `logs read` for the log and its exceptions, `insights analyze` for N+1, duplicate and slow queries (pass the printed cursor as `after` next time).
+- Debugging: `site error` for the last exception with its stack trace, `logs read` for the log, `insights analyze` for N+1, duplicate and slow queries (pass the printed cursor as `after` next time).
 - Mail: call `mail wait`, then trigger the sending; it returns the mail.
+- Configuration: `env` reads and changes the site's .env (comments and order stay); `env use_service` points the database, queue, cache or broadcasting at a Hearth service, and `unmanaged` puts the old lines back. `db` lists, creates and switches the site's databases.
 - Use `workspaces create` instead of `git worktree add`: the branch gets its own .test domain and .env.
 - Use `processes` for long-running dev processes (Vite, queue workers), not background shell jobs.
 Site-scoped actions take an optional `site` (a name or a path inside it); the default is the project this server was started in.";

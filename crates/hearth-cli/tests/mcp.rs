@@ -86,7 +86,10 @@ fn the_server_speaks_mcp_with_herds_ten_tools() {
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
     assert_eq!(init["result"]["serverInfo"]["name"], "Hearth");
     assert!(init["result"]["capabilities"]["tools"].is_object());
-    assert!(init["result"]["instructions"].as_str().unwrap_or_default().contains("site info"));
+    let instructions = init["result"]["instructions"].as_str().unwrap_or_default();
+    for part in ["site info", "site error", "`env`", "`db`", "use_service"] {
+        assert!(instructions.contains(part), "{part}: {instructions}");
+    }
     // A notification gets no answer: the next line is the ping's.
     s.send(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#);
     assert_eq!(s.request(2, "ping", json!({}))["result"], json!({}));
@@ -192,7 +195,7 @@ async fn the_actions_answer_from_hearths_core() {
             ("processes", json!({ "action": "list" })),
             ("workspaces", json!({ "action": "list" })),
             ("runtime", json!({ "action": "status" })),
-            ("env", json!({ "action": "get" })),
+            ("site", json!({ "action": "error" })),
             ("site", json!({ "action": "studio" })),
         ] {
             out.push(s.tool(out.len() as u64 + 1, tool, args));
@@ -236,7 +239,7 @@ async fn the_actions_answer_from_hearths_core() {
     ok(8);
     ok(9);
     assert!(ok(10).contains("\"version\""));
-    assert!(results[11].1 && results[11].0.contains("not available in Hearth yet"), "{:?}", results[11]);
+    assert!(ok(11).contains("No exception"), "{}", results[11].0);
     assert!(results[12].1 && results[12].0.contains("Studio"), "{:?}", results[12]);
     assert!(ok(13).contains("Subject: Welcome") || ok(13).contains("Welcome"), "{}", results[13].0);
     let links: Value = serde_json::from_str(&ok(14)).unwrap();
@@ -333,4 +336,68 @@ async fn install_starts_the_service_and_link_takes_folders_and_names_as_given() 
     assert!(std::fs::read_to_string(api.join(".env")).unwrap().contains("APP_URL=http://api.test:8080"));
     assert!(!results[3].1 && results[3].0.contains(" on"), "a string flag counts: {}", results[3].0);
     assert!(results[4].1 && results[4].0.contains("since"), "an unreadable since is an error: {}", results[4].0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn env_db_and_site_error_work_through_the_server() {
+    let (_d, paths, shop) = shop_home();
+    let env = "APP_NAME=Shop\nDB_CONNECTION=sqlite\nQUEUE_CONNECTION=database\n";
+    std::fs::write(shop.join(".env"), env).unwrap();
+    std::fs::write(shop.join(".env.example"), "APP_NAME=\nAPP_KEY=\nDB_CONNECTION=\n").unwrap();
+    std::fs::write(
+        shop.join("storage").join("logs").join("laravel.log"),
+        "[2026-11-04 10:00:09] local.ERROR: boom {\"exception\":\"[object] (RuntimeException(code: 0): boom at /srv/shop/app/A.php:7)\n[stacktrace]\n#0 {main}\n\"}\n",
+    )
+    .unwrap();
+    hearth_core::services::store::create(&paths, "redis", "8", 6390, None).unwrap();
+    let mut core = hearth_core::ipc::CoreState::new(paths.clone());
+    core.web_sync = false;
+    let server = hearth_core::ipc::serve(&paths, hearth_core::ipc::router(core.clone())).await.unwrap();
+    let (p, cwd) = (paths.clone(), shop.clone());
+    let results = tokio::task::spawn_blocking(move || {
+        let mut s = Server::start(&p, &cwd);
+        let mut out = vec![];
+        for (tool, args) in [
+            ("env", json!({ "action": "get" })),
+            ("env", json!({ "action": "get", "key": "APP_NAME" })),
+            ("env", json!({ "action": "set", "key": "APP_NAME", "value": "My Shop" })),
+            ("env", json!({ "action": "check" })),
+            ("env", json!({ "action": "use_service", "category": "queue", "selection": "redis" })),
+            ("env", json!({ "action": "use_service", "category": "queue", "selection": "unmanaged" })),
+            ("env", json!({ "action": "unset", "key": "APP_NAME" })),
+            ("db", json!({ "action": "connection" })),
+            ("db", json!({ "action": "create", "name": "reports" })),
+            ("site", json!({ "action": "error" })),
+            ("env", json!({ "action": "get", "key": "NOPE" })),
+        ] {
+            out.push(s.tool(out.len() as u64 + 1, tool, args));
+        }
+        out
+    })
+    .await
+    .unwrap();
+    server.shutdown().await;
+    let ok = |i: usize| {
+        assert!(!results[i].1, "call {i} failed: {}", results[i].0);
+        results[i].0.clone()
+    };
+    let all: Value = serde_json::from_str(&ok(0)).unwrap();
+    assert_eq!(all["QUEUE_CONNECTION"], "database");
+    assert!(ok(1).contains("Shop"), "{}", results[1].0);
+    ok(2);
+    let check: Value = serde_json::from_str(&ok(3)).unwrap();
+    assert_eq!((check["missing"].clone(), check["extra"].clone()), (json!(["APP_KEY"]), json!(["QUEUE_CONNECTION"])));
+    assert!(ok(4).contains("REDIS_PORT") && ok(4).contains("6390"), "{}", results[4].0);
+    ok(5);
+    ok(6);
+    assert_eq!(
+        std::fs::read_to_string(shop.join(".env")).unwrap(),
+        "DB_CONNECTION=sqlite\nQUEUE_CONNECTION=database\n"
+    );
+    let conn: Value = serde_json::from_str(&ok(7)).unwrap();
+    assert_eq!(conn["driver"], "sqlite");
+    assert!(ok(8).contains("reports") && shop.join("database").join("reports.sqlite").is_file(), "{}", results[8].0);
+    let e: Value = serde_json::from_str(&ok(9)).unwrap();
+    assert_eq!((e["class"].as_str(), e["line"].as_u64()), (Some("RuntimeException"), Some(7)));
+    assert!(results[10].1 && results[10].0.contains("NOPE"), "{:?}", results[10]);
 }
