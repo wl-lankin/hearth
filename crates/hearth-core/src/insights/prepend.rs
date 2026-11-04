@@ -31,17 +31,19 @@ pub fn write_prepend(paths: &HearthPaths, config: &CollectorConfig) -> Result<Pa
     Ok(path)
 }
 
-/// The script php.ini should load: written for the current settings when dumps or requests are on,
-/// `None` when both are off.
+/// The script php.ini should load: written for the current settings when dumps or requests are on
+/// or a site is debugged (the script starts its Xdebug session), `None` otherwise.
 pub fn for_ini(paths: &HearthPaths) -> Result<Option<PathBuf>, CoreError> {
     let config = collector::config(paths);
-    if !config.dumps && !config.requests {
+    let debugging = !crate::sites::registry::load(paths).debug.is_empty();
+    if !config.dumps && !config.requests && !debugging {
         return Ok(None);
     }
     write_prepend(paths, &config).map(Some)
 }
 
-/// Rewrites the script and the php.ini of every installed PHP after a dumps setting changed.
+/// Rewrites the script and the php.ini of every installed PHP after a dumps setting or the debugged
+/// sites changed.
 pub fn apply_all(paths: &HearthPaths) -> Result<(), CoreError> {
     for installed in crate::php::store::installed(paths) {
         crate::php::service::apply_config(paths, &installed.minor)?;

@@ -46,8 +46,14 @@ fn debug(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
     let name = text(params, "name")?;
     let on = params.get("on").and_then(Value::as_bool).ok_or_else(|| invalid("on must be true or false"))?;
     let paths = &core.paths;
+    // The prepend script starts the session: php.ini loads it while any site is debugged.
+    let with_prepend = |f: &dyn Fn() -> Result<(), CoreError>| {
+        let _php = core.php_lock.lock().unwrap_or_else(|e| e.into_inner());
+        f()?;
+        crate::insights::prepend::apply_all(paths)
+    };
     if !on {
-        return change(core, || registry::set_debug(paths, name, false));
+        return change(core, || with_prepend(&|| registry::set_debug(paths, name, false)));
     }
     let site = registry::list(paths).into_iter().find(|s| s.name == name);
     let site = site.ok_or_else(|| failed(CoreError::Php(format!("No site named {name}.test"))))?;
@@ -60,7 +66,7 @@ fn debug(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
     let (minor, note) = crate::web::pools::effective_php(site.php.as_deref(), &installed, default.as_deref());
     let minor = minor.ok_or_else(|| failed(CoreError::Php(note.unwrap_or_default())))?;
     crate::php::service::set_extension(core, &minor, "xdebug", true).map_err(failed)?;
-    change(core, || registry::set_debug(paths, name, true))
+    change(core, || with_prepend(&|| registry::set_debug(paths, name, true)))
 }
 
 /// Whether a program listens on Xdebug's port (or `port`, for tests), and which one.

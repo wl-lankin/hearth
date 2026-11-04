@@ -9,6 +9,13 @@
 //
 // The file sits at .../symfony/var-dumper/Resources/functions/dump.php on purpose: Laravel finds the
 // line a dump came from by looking for that file in the call stack, as with Symfony's own dump().
+//
+// It also starts Xdebug for a site switched to Debug in Hearth: the web server passes XDEBUG_TRIGGER
+// as a FastCGI param, which lands in $_SERVER only, while Xdebug looks for it in $_ENV (kept empty).
+
+if (isset($_SERVER['XDEBUG_TRIGGER']) && function_exists('xdebug_connect_to_client') && !xdebug_is_debugger_active()) {
+    xdebug_connect_to_client();
+}
 
 if (!function_exists('hearth_send_line')) {
     /** Sends one JSON line to Hearth; after one failed connect the rest of this run skips it. */
