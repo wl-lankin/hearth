@@ -101,6 +101,10 @@
 
 {#if store.error}<p class="error banner" role="alert">{store.error}</p>{/if}
 
+{#if store.ide}
+  <p class="ide"><span class="ide-dot" class:on={store.ideListening} aria-hidden="true"></span>{store.ide}</p>
+{/if}
+
 <section class="card list" aria-label="Sites">
   {#if store.sites.length === 0}
     <p class="empty">No sites yet. Park a folder to serve every project in it, or link a single project.</p>
@@ -138,6 +142,15 @@
         {/if}
       </div>
       <div class="more">
+        {#if site.kind !== 'proxy'}
+          <button
+            class="secure"
+            class:on={site.debug}
+            aria-pressed={site.debug}
+            title={site.debug ? 'Every request starts an Xdebug session; click to stop' : 'Click to start an Xdebug session with every request'}
+            onclick={() => store.debug(site.name, !site.debug)}>Debug</button
+          >
+        {/if}
         <button
           class="secure"
           class:on={site.secured}
@@ -303,7 +316,7 @@
 
   .row {
     display: grid;
-    grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 190px 150px;
+    grid-template-columns: minmax(150px, 220px) minmax(0, 1fr) 190px auto;
     gap: 6px 16px;
     align-items: center;
     padding: 10px 20px;
@@ -401,6 +414,25 @@
     margin: 0 0 12px;
   }
 
+  .ide {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 960px;
+    margin: 0 0 10px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .ide-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .ide-dot.on {
+    background: var(--ok);
+  }
   .muted {
     color: var(--muted);
   }
@@ -413,7 +445,7 @@
     clip: rect(0 0 0 0);
   }
 
-  @media (max-width: 860px) {
+  @media (max-width: 1000px) {
     .row {
       grid-template-columns: minmax(0, 1fr) auto;
     }

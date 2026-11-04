@@ -174,3 +174,28 @@ fn folder_names_keep_their_dots_like_herd() {
     assert_eq!(name_from_folder("a..b").as_deref(), Some("a.b"));
     assert_eq!(name_from_folder(".claude"), Some("claude".into()));
 }
+
+#[test]
+fn set_debug_marks_the_site_and_refuses_proxies_and_unknown_names() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    proxy(&p, "vite", "http://localhost:5173").unwrap();
+    set_debug(&p, "shop", true).unwrap();
+    let debugged: Vec<(String, bool)> = list(&p).into_iter().map(|s| (s.name, s.debug)).collect();
+    assert_eq!(debugged, [("shop".to_string(), true), ("vite".to_string(), false)]);
+    assert!(set_debug(&p, "vite", true).is_err(), "a proxy runs no PHP");
+    assert!(set_debug(&p, "nope", true).is_err());
+    set_debug(&p, "shop", false).unwrap();
+    assert!(!list(&p)[0].debug);
+}
+
+#[test]
+fn unlinking_drops_debugging() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    set_debug(&p, "shop", true).unwrap();
+    unlink(&p, "shop").unwrap();
+    assert!(load(&p).debug.is_empty());
+}

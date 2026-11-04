@@ -222,6 +222,8 @@ export interface Site {
   docroot: string | null;
   php: string | null;
   secured: boolean;
+  /** Every request of this site starts an Xdebug session. */
+  debug: boolean;
   problem: string | null;
 }
 
@@ -250,10 +252,10 @@ const demoSites: SitesList = {
   httpsPort: 8443,
   parked: [String.raw`C:\Users\you\Projects`],
   sites: [
-    { name: 'blog', kind: 'parked', path: String.raw`C:\Users\you\Projects\blog`, upstream: null, docroot: String.raw`C:\Users\you\Projects\blog\public`, php: null, secured: false, problem: null },
-    { name: 'shop', kind: 'linked', path: String.raw`C:\Users\you\Code\shop`, upstream: null, docroot: String.raw`C:\Users\you\Code\shop\public`, php: '8.3', secured: true, problem: null },
-    { name: 'app.shop', kind: 'proxy', path: null, upstream: 'http://localhost:5173', docroot: null, php: null, secured: false, problem: null },
-    { name: 'notes', kind: 'parked', path: String.raw`C:\Users\you\Projects\notes`, upstream: null, docroot: null, php: null, secured: false, problem: 'No index.php or index.html found' },
+    { name: 'blog', kind: 'parked', path: String.raw`C:\Users\you\Projects\blog`, upstream: null, docroot: String.raw`C:\Users\you\Projects\blog\public`, php: null, secured: false, debug: false, problem: null },
+    { name: 'shop', kind: 'linked', path: String.raw`C:\Users\you\Code\shop`, upstream: null, docroot: String.raw`C:\Users\you\Code\shop\public`, php: '8.3', secured: true, debug: true, problem: null },
+    { name: 'app.shop', kind: 'proxy', path: null, upstream: 'http://localhost:5173', docroot: null, php: null, secured: false, debug: false, problem: null },
+    { name: 'notes', kind: 'parked', path: String.raw`C:\Users\you\Projects\notes`, upstream: null, docroot: null, php: null, secured: false, debug: false, problem: 'No index.php or index.html found' },
   ],
 };
 
@@ -660,3 +662,14 @@ export const logsClear = async (site: string, file: string): Promise<void> => {
   if (demo) demoLogEntries = [];
   else await core('logs.clear', { site, file });
 };
+
+export interface DebugStatus {
+  port: number;
+  listening: boolean;
+  /** The listening program's name, when it can be read. */
+  program: string | null;
+}
+
+export const sitesDebug = (name: string, on: boolean) => change('sites.debug', { name, on })();
+export const debugStatus = (): Promise<DebugStatus> =>
+  demo ? Promise.resolve({ port: 9003, listening: true, program: 'phpstorm64' }) : core('debug.status');

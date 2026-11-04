@@ -283,6 +283,42 @@ async fn wait_for(c: &Collector, n: usize) {
     panic!("only {} dumps arrived", c.dumps().len());
 }
 
+/// Stands in for Xdebug: its two functions, then the real script.
+const FAKE_XDEBUG: &str = r#"<?php
+function xdebug_is_debugger_active(): bool { return getenv('ACTIVE') === '1'; }
+function xdebug_connect_to_client(): bool { echo "connect "; return true; }
+require getenv('PREPEND');
+"#;
+
+/// A site's trigger arrives as a FastCGI param, in `$_SERVER` only; Xdebug looks in `$_ENV` (empty
+/// under GPCS), so the script starts the session. One that already runs is left alone.
+#[test]
+fn the_trigger_starts_an_xdebug_session() {
+    let php = need_php!();
+    let (d, paths) = home();
+    write_prepend(&paths, &CollectorConfig { port: free_port(), dumps: false, requests: false }).unwrap();
+    let stub = d.path().join("stub.php");
+    std::fs::write(&stub, FAKE_XDEBUG).unwrap();
+    let project = d.path().join("project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(project.join("s.php"), "<?php echo 'app';").unwrap();
+    let go = |trigger: bool, active: bool| {
+        let mut cmd = Command::new(&php);
+        cmd.args(["-n", "-d", "variables_order=GPCS", "-d", &format!("auto_prepend_file=\"{}\"", stub.display())]);
+        cmd.arg("s.php").current_dir(&project).env("PREPEND", script_path(&paths));
+        cmd.env_remove("XDEBUG_TRIGGER");
+        if trigger {
+            cmd.env("XDEBUG_TRIGGER", "hearth");
+        }
+        cmd.env("ACTIVE", if active { "1" } else { "0" });
+        let out = cmd.output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
+    };
+    assert_eq!(go(true, false), "connect app");
+    assert_eq!(go(false, false), "app");
+    assert_eq!(go(true, true), "app");
+}
+
 #[test]
 fn the_script_has_the_port_and_is_rewritten_only_on_change() {
     let (_d, paths) = home();

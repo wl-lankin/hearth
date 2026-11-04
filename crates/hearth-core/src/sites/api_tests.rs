@@ -115,3 +115,93 @@ async fn a_herd_import_is_planned_first_and_applied_on_request() {
     let err = call(&core, "herd.import", json!({ "from": d.path().join("nope"), "apply": false })).await.unwrap_err();
     assert!(err.message.ends_with("is not a Herd folder"), "{}", err.message);
 }
+
+/// An installed PHP 8.4 (only its php.ini is written here), with or without Xdebug in its build.
+fn fake_php(paths: &HearthPaths, with_xdebug: bool) {
+    use crate::php::manifest::Os;
+    let dir = crate::php::store::install_dir(paths, "8.4");
+    std::fs::create_dir_all(&dir).unwrap();
+    let extensions = if with_xdebug {
+        json!({ "xdebug": { "kind": "zend_dll", "version": "3.5.3", "url": "u", "sha256": "s", "file": "php_xdebug.dll" } })
+    } else {
+        json!({})
+    };
+    let build = json!({
+        "minor": "8.4", "version": "8.4.27", "channel": "stable", "os": Os::current(), "arch": "x64",
+        "url": "u", "sha256": "0".repeat(64), "format": "zip", "root": "", "extensions": extensions
+    });
+    std::fs::write(dir.join(crate::php::service::BUILD_FILE), build.to_string()).unwrap();
+    std::fs::write(dir.join(crate::php::store::VERSION_FILE), "8.4.27").unwrap();
+    let names: Vec<String> = if with_xdebug { vec!["xdebug".into()] } else { vec![] };
+    crate::php::store::register(paths, "8.4", &names).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn debugging_a_site_switches_xdebug_on_for_its_php() {
+    let (_d, core, projects) = home();
+    fake_php(&core.paths, true);
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    call(&core, "sites.debug", json!({ "name": "shop", "on": true })).await.unwrap();
+    let ini = std::fs::read_to_string(crate::php::ini::ini_dir(&core.paths, "8.4").join("php.ini")).unwrap();
+    assert!(ini.contains("zend_extension=xdebug") || ini.contains("php_xdebug"), "{ini}");
+    let list = call(&core, "sites.list", Value::Null).await.unwrap();
+    assert_eq!(list["sites"][0]["debug"], json!(true));
+    call(&core, "sites.debug", json!({ "name": "shop", "on": false })).await.unwrap();
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"][0]["debug"], json!(false));
+    assert!(call(&core, "sites.debug", json!({ "name": "shop" })).await.is_err());
+}
+
+/// Xdebug cannot see the trigger itself (it is a FastCGI param and `$_ENV` stays empty): Hearth's
+/// prepend script starts the session, so php.ini loads it while a site is debugged.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_debugged_site_loads_the_prepend_script_even_with_dumps_off() {
+    let (_d, core, projects) = home();
+    fake_php(&core.paths, true);
+    let off = crate::insights::collector::CollectorConfig { dumps: false, requests: false, ..Default::default() };
+    crate::insights::collector::set_config(&core.paths, &off).unwrap();
+    let ini = || std::fs::read_to_string(crate::php::ini::ini_dir(&core.paths, "8.4").join("php.ini")).unwrap();
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    call(&core, "sites.debug", json!({ "name": "shop", "on": true })).await.unwrap();
+    assert!(ini().contains("auto_prepend_file"), "{}", ini());
+    call(&core, "sites.debug", json!({ "name": "shop", "on": false })).await.unwrap();
+    assert!(!ini().contains("auto_prepend_file"), "{}", ini());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_php_without_xdebug_is_a_clear_error_and_nothing_changes() {
+    let (_d, core, projects) = home();
+    fake_php(&core.paths, false);
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    let err = call(&core, "sites.debug", json!({ "name": "shop", "on": true })).await.unwrap_err();
+    assert!(err.message.contains("no xdebug"), "{}", err.message);
+    assert_eq!(call(&core, "sites.list", Value::Null).await.unwrap()["sites"][0]["debug"], json!(false));
+    call(&core, "sites.proxy", json!({ "name": "vite", "upstream": "http://localhost:5173" })).await.unwrap();
+    assert!(call(&core, "sites.debug", json!({ "name": "vite", "on": true })).await.is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn debug_status_reports_a_listener() {
+    let (_d, core, _projects) = home();
+    let status = call(&core, "debug.status", Value::Null).await.unwrap();
+    assert_eq!(status["port"], json!(9003));
+    let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = socket.local_addr().unwrap().port();
+    let mine = call(&core, "debug.status", json!({ "port": port })).await.unwrap();
+    assert_eq!(mine["listening"], json!(true));
+    let name = std::env::current_exe().unwrap().file_stem().unwrap().to_string_lossy().into_owned();
+    assert_eq!(mine["program"], json!(name));
+    drop(socket);
+    assert_eq!(call(&core, "debug.status", json!({ "port": port })).await.unwrap()["listening"], json!(false));
+}
+
+/// A site isolated to a removed PHP is served on the default one: that one gets Xdebug.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_site_on_a_removed_php_debugs_on_the_one_it_runs_on() {
+    let (_d, core, projects) = home();
+    fake_php(&core.paths, true);
+    call(&core, "sites.link", json!({ "name": "shop", "dir": projects.join("shop") })).await.unwrap();
+    call(&core, "sites.isolate", json!({ "name": "shop", "minor": "8.3" })).await.unwrap();
+    call(&core, "sites.debug", json!({ "name": "shop", "on": true })).await.unwrap();
+    let ini = std::fs::read_to_string(crate::php::ini::ini_dir(&core.paths, "8.4").join("php.ini")).unwrap();
+    assert!(ini.contains("zend_extension=xdebug"), "{ini}");
+}

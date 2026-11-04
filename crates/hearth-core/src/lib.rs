@@ -2,6 +2,7 @@
 
 pub mod atomic;
 pub mod cli_install;
+pub mod debug;
 pub mod dns;
 pub mod error;
 pub mod herd;

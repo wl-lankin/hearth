@@ -1,4 +1,4 @@
-import type { NodeWhich, PhpList, Site, SitesList, WebStatus } from './api';
+import type { DebugStatus, NodeWhich, PhpList, Site, SitesList, WebStatus } from './api';
 
 export type SitesApi = {
   sitesList(): Promise<SitesList>;
@@ -16,6 +16,8 @@ export type SitesApi = {
   sitesUnsecure(name: string): Promise<void>;
   tlsTrust(): Promise<void>;
   dnsSetup(): Promise<void>;
+  sitesDebug(name: string, on: boolean): Promise<void>;
+  debugStatus(): Promise<DebugStatus>;
   /** Optional: the Node a site's folder runs (shown for sites with a version file). */
   nodeWhich?(dir: string): Promise<NodeWhich>;
 };
@@ -29,9 +31,28 @@ export function createSitesStore(api: SitesApi) {
   let errors = $state<Record<string, string | null>>({});
   let error = $state<string | null>(null);
   let nodes = $state<Record<string, NodeWhich>>({});
+  let ide = $state<DebugStatus | null>(null);
+  // One IDE check at a time: on macOS it runs lsof, which can be slow.
+  let ideBusy = false;
+
+  /** Starts an IDE check unless one runs; resolves when the one it started is done. */
+  function checkIde(): Promise<void> {
+    if (ideBusy) return Promise.resolve();
+    ideBusy = true;
+    return api
+      .debugStatus()
+      .then((s) => {
+        ide = s;
+      })
+      .catch(() => {})
+      .finally(() => {
+        ideBusy = false;
+      });
+  }
 
   async function reload() {
     [list, status, php] = await Promise.all([api.sitesList(), api.webStatus(), api.phpList()]);
+    await checkIde();
     const found = await Promise.all(
       list.sites.map(async (site) => [site.name, site.path ? await api.nodeWhich?.(site.path).catch(() => undefined) : undefined] as const),
     );
@@ -125,7 +146,32 @@ export function createSitesStore(api: SitesApi) {
     },
     load: reload,
     async refreshStatus() {
-      status = await api.webStatus();
+      [status] = await Promise.all([api.webStatus(), checkIde()]);
+    },
+    /** Whether an IDE listens for Xdebug, in a sentence. */
+    get ide() {
+      if (!ide) return '';
+      if (!ide.listening) return `No IDE is listening on port ${ide.port}. Start listening for Xdebug in your IDE.`;
+      return ide.program
+        ? `${ide.program} is listening for Xdebug on port ${ide.port}`
+        : `A program is listening for Xdebug on port ${ide.port}`;
+    },
+    get ideListening() {
+      return !!ide?.listening;
+    },
+    /** Starts (or stops) an Xdebug session for every request of the site; rolls back when refused. */
+    async debug(name: string, on: boolean) {
+      const site = list.sites.find((s) => s.name === name);
+      if (!site) return;
+      const before = site.debug;
+      site.debug = on;
+      errors[name] = null;
+      try {
+        await api.sitesDebug(name, on);
+      } catch (e) {
+        site.debug = before;
+        errors[name] = asMessage(e);
+      }
     },
     park: (dir: string) => act(null, () => api.sitesPark(dir)),
     unpark: (dir: string) => act(null, () => api.sitesUnpark(dir)),

@@ -72,8 +72,14 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
                 if let Some(note) = note.clone() {
                     notes.insert(site.name.clone(), note);
                 }
+                // The trigger starts nothing when the extension is off (switched off, or another PHP now).
+                let xdebug_on =
+                    |m: &str| php_state.extensions.get(m).and_then(|e| e.get("xdebug")).copied() == Some(true);
+                if let Some(m) = minor.as_deref().filter(|m| site.debug && !xdebug_on(m)) {
+                    notes.insert(site.name.clone(), format!("Xdebug is off for PHP {m}: switch it on on the PHP page"));
+                }
                 match minor {
-                    Some(minor) => Route::Php { docroot: docroot.clone(), minor },
+                    Some(minor) => Route::Php { docroot: docroot.clone(), minor, xdebug: site.debug },
                     None => Route::Skip { reason: note.unwrap_or_default() },
                 }
             }

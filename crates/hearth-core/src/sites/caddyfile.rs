@@ -11,6 +11,8 @@ pub enum Route {
     Php {
         docroot: PathBuf,
         minor: String,
+        /// Pass Xdebug's trigger with every request of this site.
+        xdebug: bool,
     },
     Proxy {
         upstream: String,
@@ -93,14 +95,16 @@ pub fn render(ctx: &CaddyContext) -> String {
             None => (format!("http://{host}:{}", ctx.http_port), String::new()),
         };
         match &route.target {
-            Route::Php { docroot, minor } => {
+            Route::Php { docroot, minor, xdebug } => {
                 let Some(upstreams) = ctx.php_upstreams.get(minor).filter(|p| !p.is_empty()) else {
                     let _ = writeln!(out, "# {}: PHP {minor} is not running", route.name);
                     continue;
                 };
+                // Xdebug (start_with_request = trigger) takes a FastCGI parameter as its trigger.
+                let trigger = if *xdebug { "\t\tenv XDEBUG_TRIGGER hearth\n" } else { "" };
                 let _ = write!(
                     out,
-                    "{address} {{\n{tls}\troot * {}\n\tphp_fastcgi {} {{\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
+                    "{address} {{\n{tls}\troot * {}\n\tphp_fastcgi {} {{\n{trigger}\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
                     quoted(docroot, ctx.windows_paths),
                     upstreams.join(" ")
                 );
