@@ -77,3 +77,15 @@ fn env_values_are_read_without_quotes_or_comments() {
     assert_eq!(env_file::get("DB_DATABASE=shop\nDB_DATABASE=shop_x\n", "DB_DATABASE").as_deref(), Some("shop_x"));
     assert_eq!(env_file::get("A='it''s'\n", "A").as_deref(), Some("it"));
 }
+
+#[test]
+fn every_key_once_in_order_and_unset_removes_every_line_of_a_key() {
+    let text = "# c\nA=1\nexport B='two words'\nA=3\nC=\n";
+    let all = env_file::all(text);
+    assert_eq!(
+        all,
+        [("A".to_string(), "3".to_string()), ("B".into(), "two words".into()), ("C".into(), String::new())]
+    );
+    assert_eq!(env_file::unset("# c\r\nA=1\r\nB=2\r\nexport A=3\r\n", "A"), "# c\r\nB=2\r\n");
+    assert_eq!(env_file::unset("A=1\n", "Z"), "A=1\n");
+}

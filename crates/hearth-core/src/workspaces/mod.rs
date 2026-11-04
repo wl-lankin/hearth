@@ -3,7 +3,8 @@
 
 pub mod api;
 pub mod database;
-pub mod env_file;
+/// The .env editor, shared with the env methods.
+pub use crate::dotenv as env_file;
 pub mod git;
 pub mod names;
 pub mod registry;

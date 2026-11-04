@@ -112,6 +112,12 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
         "dumps.port" => set_port(core, params).await,
         "logs.sites" => Ok(serde_json::to_value(logs::sites(&core.paths)).unwrap_or(Value::Null)),
         "logs.read" => read_log(core, params),
+        "logs.lastException" => match text(params, "site") {
+            Ok(site) => logs::last_exception(&core.paths, site)
+                .map(|e| serde_json::to_value(e).unwrap_or(Value::Null))
+                .map_err(failed),
+            Err(e) => Err(e),
+        },
         "logs.clear" => match (text(params, "site"), text(params, "file")) {
             (Ok(site), Ok(file)) => logs::clear(&core.paths, site, file).map(|()| Value::Null).map_err(failed),
             (Err(e), _) | (_, Err(e)) => Err(e),
