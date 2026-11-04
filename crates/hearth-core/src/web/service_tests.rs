@@ -305,8 +305,22 @@ fn a_profiled_site_without_spx_gets_a_note_and_its_key() {
     registry::set_profile(&h.core.paths, "shop", true).unwrap();
     let status = sync_with(&h.core, &example("fake_server")).unwrap();
     let note = status.notes.get("shop").cloned().unwrap_or_default();
-    assert!(note.contains("SPX is off for PHP 8.4"), "{note:?}");
+    assert!(note.contains("PHP 8.4 has no SPX: switch Profile off"), "{note:?}");
     let key = crate::profile::spx_key(&h.core.paths).unwrap();
     assert!(caddyfile(&h).contains(&format!("env HTTP_SPX_KEY {key}")));
+    h.core.supervisor.stop_all();
+}
+
+#[test]
+fn a_site_on_a_php_with_spx_on_gives_spx_pages_the_key_without_profiling() {
+    let h = home();
+    registry::link(&h.core.paths, "shop", &h.projects.join("shop")).unwrap();
+    crate::php::store::register(&h.core.paths, "8.4", &["spx".to_string()]).unwrap();
+    crate::php::store::set_extension(&h.core.paths, "8.4", "spx", true).unwrap();
+    sync_with(&h.core, &example("fake_server")).unwrap();
+    let key = crate::profile::spx_key(&h.core.paths).unwrap();
+    let file = caddyfile(&h);
+    assert!(file.contains(&format!("request_header @spxui SPX-Key {key}")), "{file}");
+    assert!(!file.contains("HTTP_SPX_ENABLED"), "not profiled: {file}");
     h.core.supervisor.stop_all();
 }

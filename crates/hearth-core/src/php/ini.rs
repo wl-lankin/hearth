@@ -93,8 +93,11 @@ pub fn render_ini(ctx: &IniContext) -> String {
             // Profiles start only for requests that carry the key, and only from this machine.
             let _ = writeln!(ini, "spx.http_enabled = 1");
             let _ = writeln!(ini, "spx.http_key = \"{key}\"");
-            let _ = writeln!(ini, "spx.http_ip_whitelist = \"127.0.0.1\"");
+            // Caddy listens on both loopback addresses; SPX compares them as text.
+            let _ = writeln!(ini, "spx.http_ip_whitelist = \"127.0.0.1,::1\"");
             let _ = writeln!(ini, "spx.data_dir = {}", quoted(dir));
+            // SPX's report pages ship in the archive (its built-in path is the build machine's).
+            let _ = writeln!(ini, "spx.http_ui_assets_dir = \"{}/share/spx/web-ui\"", ctx.install_dir.display());
         }
         if name == "xdebug" {
             // Debugging starts only when a request asks for it (browser extension, XDEBUG_TRIGGER).
@@ -267,7 +270,8 @@ mod tests {
         assert!(ini.contains("\nextension=\"/Users/j/hearth/php/8.4/lib/spx.so\"\n"), "{ini}");
         assert!(ini.contains("\nspx.http_enabled = 1\n"), "{ini}");
         assert!(ini.contains("\nspx.http_key = \"k123\"\n"), "{ini}");
-        assert!(ini.contains("\nspx.http_ip_whitelist = \"127.0.0.1\"\n"), "{ini}");
+        assert!(ini.contains("\nspx.http_ip_whitelist = \"127.0.0.1,::1\"\n"), "{ini}");
+        assert!(ini.contains("\nspx.http_ui_assets_dir = \"/Users/j/hearth/php/8.4/share/spx/web-ui\"\n"), "{ini}");
         assert!(ini.contains("\nspx.data_dir = \"/Users/j/hearth/data/spx\"\n"), "{ini}");
         assert!(!render_ini(&ctx(vec![])).contains("spx."), "spx off: no settings");
     }

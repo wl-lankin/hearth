@@ -79,12 +79,22 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
                     notes.insert(site.name.clone(), format!("Xdebug is off for PHP {m}: switch it on on the PHP page"));
                 }
                 let spx_on = |m: &str| php_state.extensions.get(m).and_then(|e| e.get("spx")).copied() == Some(true);
+                let has_spx = |m: &str| php_state.extensions.get(m).is_some_and(|e| e.contains_key("spx"));
                 if let Some(m) = minor.as_deref().filter(|m| site.profile && !spx_on(m)) {
-                    notes.insert(site.name.clone(), format!("SPX is off for PHP {m}: switch it on on the PHP page"));
+                    let note = if has_spx(m) {
+                        format!("SPX is off for PHP {m}: switch it on on the PHP page")
+                    } else {
+                        format!("PHP {m} has no SPX: switch Profile off")
+                    };
+                    notes.insert(site.name.clone(), note);
                 }
                 let spx = if site.profile { Some(crate::profile::spx_key(paths)?) } else { None };
+                let spx_ui = match minor.as_deref() {
+                    Some(m) if spx_on(m) => Some(crate::profile::spx_key(paths)?),
+                    _ => None,
+                };
                 match minor {
-                    Some(minor) => Route::Php { docroot: docroot.clone(), minor, xdebug: site.debug, spx },
+                    Some(minor) => Route::Php { docroot: docroot.clone(), minor, xdebug: site.debug, spx, spx_ui },
                     None => Route::Skip { reason: note.unwrap_or_default() },
                 }
             }
