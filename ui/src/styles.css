@@ -1,38 +1,30 @@
-:root,
-:root[data-theme='light'] {
-  color-scheme: light;
-  --bg: #f7f3ef;
-  --surface: #ffffff;
-  --surface-2: #f1ebe5;
-  --border: #e4dbd2;
-  --text: #2a2420;
-  --muted: #7a6d64;
-  --accent: #e8642c;
-  --accent-soft: #fbe4d8;
-  --accent-text: #ffffff;
-  --ok: #2f8f57;
-  --ok-soft: #dcf0e3;
-  --danger: #b8321c;
-  --sidebar: #efe8e1;
-  --nav-active: #e2d8ce;
-}
-
-:root[data-theme='dark'] {
+/* Ember: Hearth's one look. Warm dark, a glow rising from the bottom, frosted glass panels. */
+:root {
   color-scheme: dark;
-  --bg: #171311;
-  --surface: #211c19;
-  --surface-2: #2a2420;
-  --border: #3a312b;
-  --text: #f1ebe5;
+  /* The strip at the top that replaces the system title bar. */
+  --titlebar-height: 34px;
+  --rail-width: 208px;
+
+  --bg: #120e0c;
+  /* Panels are see-through, so the glow behind them shows. */
+  --surface: rgb(255 255 255 / 0.045);
+  --surface-2: rgb(255 255 255 / 0.08);
+  --border: rgb(255 255 255 / 0.09);
+  --text: #f3e9e1;
   --muted: #a8998f;
   --accent: #f07a40;
-  --accent-soft: #43271a;
+  --accent-deep: #c2361f;
+  --accent-soft: rgb(240 122 64 / 0.16);
   --accent-text: #1a1310;
+  --gold: #ffd27a;
   --ok: #5cc58a;
-  --ok-soft: #1f3528;
+  --ok-soft: rgb(92 197 138 / 0.14);
   --danger: #f08a73;
-  --sidebar: #1d1815;
-  --nav-active: #2f2824;
+  --sidebar: rgb(255 255 255 / 0.025);
+  --nav-active: rgb(255 255 255 / 0.1);
+
+  --radius: 12px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 * {
@@ -47,15 +39,26 @@ body {
   color: var(--text);
   font: 14px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* An app, not a page: only fields let text be selected. */
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 #app {
   height: 100%;
 }
 
+/* Only the font here: the colors live in the layer below, which this rule would otherwise beat. */
 button {
   font: inherit;
-  color: inherit;
 }
 
 :focus-visible {
@@ -63,13 +66,42 @@ button {
   outline-offset: 2px;
 }
 
-/* Buttons: one look everywhere. In a layer, so a page's own button styles (toggles, list rows)
-   always win over these. */
+::selection {
+  background: rgb(240 122 64 / 0.35);
+}
+
+/* Thin warm scrollbars instead of the system's grey ones. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(255 255 255 / 0.14) transparent;
+}
+
+h1 {
+  margin: 0 0 18px;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* A frosted panel. */
+.glass {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Buttons, fields and tables: one look everywhere. In a layer, so a page's own styles (toggles,
+   list rows) always win over these. */
 @layer base {
   button {
-    padding: 5px 12px;
+    padding: 5px 13px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 9px;
     background: var(--surface-2);
     color: var(--text);
     font-weight: 500;
@@ -77,45 +109,128 @@ button {
     white-space: nowrap;
     cursor: pointer;
     transition:
-      background-color 120ms ease,
-      border-color 120ms ease,
-      color 120ms ease,
-      box-shadow 120ms ease;
+      background-color 150ms var(--ease),
+      border-color 150ms var(--ease),
+      color 150ms var(--ease),
+      box-shadow 150ms var(--ease),
+      filter 150ms var(--ease);
   }
 
   button:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--muted) 55%, var(--border));
+    border-color: rgb(255 255 255 / 0.16);
     background: var(--nav-active);
   }
 
   button:active:not(:disabled) {
-    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.18);
+    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.3);
   }
 
   button:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: default;
   }
 
   button.primary {
-    border-color: var(--accent);
-    background: var(--accent);
+    border-color: rgb(255 180 120 / 0.35);
+    background: linear-gradient(180deg, #f6904f, #e8642c);
     color: var(--accent-text);
     font-weight: 600;
+    box-shadow: 0 4px 14px rgb(232 100 44 / 0.25);
   }
 
   button.primary:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--accent) 85%, var(--text));
-    background: color-mix(in srgb, var(--accent) 88%, var(--text));
+    border-color: rgb(255 200 150 / 0.5);
+    background: linear-gradient(180deg, #f6904f, #e8642c);
+    filter: brightness(1.08);
   }
 
   input:not([type='checkbox']):not([type='radio']),
   textarea {
     padding: 5px 10px;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
+    border-radius: 9px;
+    background: rgb(0 0 0 / 0.22);
     color: var(--text);
     font: inherit;
+    transition: border-color 150ms var(--ease), box-shadow 150ms var(--ease);
+  }
+
+  input:not([type='checkbox']):not([type='radio']):focus,
+  textarea:focus {
+    outline: none;
+    border-color: rgb(240 122 64 / 0.6);
+    box-shadow: 0 0 0 3px rgb(240 122 64 / 0.16);
+  }
+
+  /* Checkboxes in Hearth's look: a glass box that fills with ember when checked. */
+  input[type='checkbox'] {
+    appearance: none;
+    display: inline-grid;
+    place-content: center;
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    border: 1px solid rgb(255 255 255 / 0.22);
+    border-radius: 5px;
+    background: rgb(0 0 0 / 0.25);
+    cursor: pointer;
+    transition: background-color 150ms var(--ease), border-color 150ms var(--ease);
+  }
+
+  input[type='checkbox']::after {
+    content: '';
+    width: 9px;
+    height: 5px;
+    margin-top: -2px;
+    border: solid var(--accent-text);
+    border-width: 0 0 2px 2px;
+    transform: rotate(-45deg) scale(0);
+    transition: transform 150ms var(--ease);
+  }
+
+  input[type='checkbox']:checked {
+    border-color: #f6904f;
+    background: linear-gradient(180deg, #f6904f, #e8642c);
+  }
+
+  input[type='checkbox']:checked::after {
+    transform: rotate(-45deg) scale(1);
+  }
+
+  input[type='checkbox']:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  table {
+    border-collapse: collapse;
+  }
+
+  th {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  th,
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+/* Nothing moves when the OS asks for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
   }
 }

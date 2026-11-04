@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import type { Workspace } from '../api';
@@ -71,7 +73,7 @@
 {/if}
 
 {#if store.groups.length === 0}
-  <p class="empty">No workspaces yet. Make one to work on a branch next to the main checkout.</p>
+  <EmptyState art={art.workspaces} title="No workspaces" line="Give a branch its own folder, domain and database" />
 {/if}
 
 {#each store.groups as group (group.site)}
@@ -257,16 +259,9 @@
     align-items: center;
     gap: 6px;
   }
-  .check input {
-    accent-color: var(--accent);
-  }
   code {
     font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
     font-size: 12px;
-  }
-  .empty {
-    color: var(--muted);
-    font-size: 13px;
   }
   .muted {
     color: var(--muted);

@@ -23,8 +23,6 @@
   }
 </script>
 
-<h1>Node</h1>
-
 <p class="intro">
   <code>node</code>, <code>npm</code>, <code>npx</code> and <code>corepack</code> run the version a project's
   <code>.nvmrc</code> or <code>.node-version</code> asks for, and the default everywhere else.
@@ -99,11 +97,6 @@
 </form>
 
 <style>
-  h1 {
-    margin: 0 0 8px;
-    font-size: 22px;
-    font-weight: 650;
-  }
 
   .intro {
     max-width: 900px;

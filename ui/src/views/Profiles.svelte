@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import * as api from '../api';
   import type { ProfileReport } from '../api';
   import { formatReceived, formatSize } from '../format';
@@ -17,8 +19,6 @@
   const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(2)} s` : `${n} ms`);
 </script>
 
-<h1>Profiles</h1>
-
 <section class="card strip">
   <span class="muted">
     Switch <strong>Profile</strong> on for a site on the Sites page: SPX then profiles each of its requests. Open a profile to see its flame graph and timeline in SPX. To profile a command, run it with <code>SPX_ENABLED=1 SPX_REPORT=full</code>.
@@ -32,7 +32,7 @@
   {#if store.unavailable}
     <p class="empty">{store.unavailable}</p>
   {:else if store.reports.length === 0}
-    <p class="empty">No profiles yet. Switch Profile on for a site, then open one of its pages.</p>
+    <EmptyState art={art.inspect} title="Nothing captured yet" line="Switch Profile on for a site, then open one of its pages" />
   {:else}
     <table>
       <thead>
@@ -66,11 +66,6 @@
 </section>
 
 <style>
-  h1 {
-    margin: 0 0 16px;
-    font-size: 22px;
-    font-weight: 650;
-  }
   .card {
     background: var(--surface);
     border: 1px solid var(--border);

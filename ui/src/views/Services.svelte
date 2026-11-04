@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import { createServicesStore } from '../services.svelte';
@@ -87,7 +89,12 @@
 
 <section class="card list" aria-label="Services">
   {#if store.services.length === 0}
-    <p class="empty">No services yet. Add a database, Redis or search to use them from your sites.</p>
+    <EmptyState
+      art={art.services}
+      title="No services yet"
+      line="MySQL, Redis, Meilisearch and more, one click away"
+      action={{ label: 'Add a service', onclick: () => (adding = true) }}
+    />
   {/if}
   {#each store.services as s (s.id)}
     <div class="row">
@@ -285,11 +292,6 @@
     margin: 4px 0;
   }
 
-  .empty {
-    margin: 0;
-    padding: 18px 20px;
-    color: var(--muted);
-  }
 
 
 
@@ -304,13 +306,13 @@
     color: var(--muted);
   }
 
+  /* On: a soft ember light, not a solid block. */
   button.toggle.on {
-    border-color: var(--ok);
-    background: var(--ok);
-    color: var(--accent-text);
+    border-color: rgb(240 122 64 / 0.5);
+    background: linear-gradient(180deg, rgb(240 122 64 / 0.3), rgb(240 122 64 / 0.16));
+    color: var(--text);
     font-weight: 600;
   }
-
 
   .error {
     color: var(--danger);

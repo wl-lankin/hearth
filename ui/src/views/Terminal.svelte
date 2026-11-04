@@ -96,7 +96,6 @@
     width: 18px;
     height: 18px;
     flex: none;
-    accent-color: var(--accent);
   }
 
   code {

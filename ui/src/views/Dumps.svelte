@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import { createDumpsStore, fold, shortPath } from '../dumps.svelte';
@@ -27,8 +29,6 @@
 
   const siteValue = $derived(store.filter === undefined ? '*' : (store.filter ?? ''));
 </script>
-
-<h1>Dumps</h1>
 
 <section class="card strip">
   <div class="status">
@@ -79,7 +79,7 @@
 </section>
 
 {#if store.dumps.length === 0}
-  <p class="card empty">No dumps yet. Call <code>dump($value)</code> in a site or a command and it shows up here.</p>
+  <EmptyState art={art.inspect} title="Nothing captured yet" line="Call dump($value) in a site or a command and it shows up here" />
 {/if}
 
 {#each store.dumps as d (d.id)}
@@ -102,11 +102,6 @@
 {/each}
 
 <style>
-  h1 {
-    margin: 0 0 16px;
-    font-size: 22px;
-    font-weight: 650;
-  }
   .card {
     max-width: 960px;
     margin-bottom: 12px;
@@ -204,10 +199,6 @@
     margin: 0 14px 12px;
     color: var(--muted);
     font-size: 12px;
-  }
-  .empty {
-    padding: 18px 16px;
-    color: var(--muted);
   }
   .tag {
     padding: 0 8px;

@@ -143,8 +143,8 @@
     min-width: 0;
     padding: 5px 10px;
     border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--surface);
+    border-radius: 9px;
+    background: rgb(0 0 0 / 0.22);
     color: var(--text);
     font: inherit;
     text-align: left;
@@ -181,16 +181,18 @@
   }
   .list {
     position: fixed;
-    z-index: 50;
+    z-index: 60;
     max-height: 240px;
     margin: 0;
     padding: 4px;
     overflow: auto;
     list-style: none;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    box-shadow: 0 10px 28px rgb(0 0 0 / 0.22);
+    /* Dense glass: the page behind must not show through the options. */
+    background: rgb(34 27 23 / 0.94);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgb(255 255 255 / 0.12);
+    border-radius: 12px;
+    box-shadow: 0 16px 40px rgb(0 0 0 / 0.45);
   }
   .list.up {
     transform: translateY(-100%);

@@ -1,10 +1,19 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import { createSitesStore } from '../sites.svelte';
 
+  /** startLinking: open with the link form, as Home's Get started does. */
+  let { startLinking = false }: { startLinking?: boolean } = $props();
+
   const store = createSitesStore(api);
   let adding = $state<'link' | 'proxy' | null>(null);
+  onMount(() => {
+    if (startLinking) adding = 'link';
+  });
   let name = $state('');
   let target = $state('');
   let menu = $state<string | null>(null);
@@ -108,7 +117,15 @@
 
 <section class="card list" aria-label="Sites">
   {#if store.sites.length === 0}
-    <p class="empty">No sites yet. Park a folder to serve every project in it, or link a single project.</p>
+    <!-- A wrapper of this page: the list's grid rules below reach it, so it spans the card. -->
+    <div class="empty">
+      <EmptyState
+        art={art.sites}
+        title="No sites yet"
+        line="Link a folder and Hearth serves it at name.test"
+        action={{ label: 'Link a folder', onclick: () => (adding = 'link') }}
+      />
+    </div>
   {/if}
   {#each store.sites as site (site.name)}
     <div class="row">
@@ -315,22 +332,29 @@
     color: var(--muted);
   }
 
+  /* On: a soft ember light, not a solid block. */
   button.secure.on {
-    border-color: var(--ok);
-    background: var(--ok);
-    color: var(--accent-text);
+    border-color: rgb(240 122 64 / 0.5);
+    background: linear-gradient(180deg, rgb(240 122 64 / 0.3), rgb(240 122 64 / 0.16));
+    color: var(--text);
     font-weight: 600;
   }
 
   /* Name and controls on top, the full path and its notes below: nothing is cut off. */
-  /* One grid for the whole list (rows are subgrids): the PHP pickers and buttons line up. */
+  /* One grid for the whole list (rows are subgrids): the PHP pickers and buttons line up, and the
+     picker column is as wide as its longest choice, so "PHP 8.3 (not installed)" is never cut. */
   .list.card {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 200px auto;
+    grid-template-columns: minmax(0, 1fr) minmax(200px, max-content) auto;
   }
 
   .list.card > :not(.row) {
     grid-column: 1 / -1;
+  }
+
+  .empty {
+    display: flex;
+    justify-content: center;
   }
 
   .row {
@@ -424,11 +448,6 @@
     min-height: 36px;
   }
 
-  .empty {
-    margin: 0;
-    padding: 18px 20px;
-    color: var(--muted);
-  }
 
 
 
@@ -466,7 +485,7 @@
 
   @media (max-width: 860px) {
     .list.card {
-      grid-template-columns: minmax(0, 1fr) 180px;
+      grid-template-columns: minmax(0, 1fr) minmax(180px, max-content);
     }
 
     .row {

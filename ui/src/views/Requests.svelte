@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import type { RequestFinding, RequestSummary } from '../api';
@@ -52,8 +54,6 @@
   const siteValue = $derived(store.filter === undefined ? '*' : (store.filter ?? ''));
 </script>
 
-<h1>Requests</h1>
-
 <section class="card strip">
   <div class="status">
     <span class="dot" class:ok={store.status?.listening && store.status?.requests} class:bad={!!store.status?.error} aria-hidden="true"></span>
@@ -94,7 +94,7 @@
       <button onclick={() => store.clear()} disabled={store.requests.length === 0}>Clear</button>
     </div>
     {#if store.requests.length === 0}
-      <p class="empty">No requests yet. Open a page of a Laravel site, or run an artisan command.</p>
+      <EmptyState art={art.inspect} title="Nothing captured yet" line="Open a page of a Laravel site, or run an artisan command" />
     {/if}
     <ul>
       {#each store.requests as r (r.id)}
@@ -188,11 +188,6 @@
 </section>
 
 <style>
-  h1 {
-    margin: 0 0 16px;
-    font-size: 22px;
-    font-weight: 650;
-  }
   h2 {
     flex: 1;
     min-width: 0;
