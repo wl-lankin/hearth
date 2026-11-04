@@ -171,7 +171,7 @@
           <span class="muted">{version.version}</span>
         </button>
       {/each}
-      <button role="menuitem" class="row more" onclick={() => actions.open('runtimes', 'php')}>
+      <button role="menuitem" class="row" class:divided={php.installed.length > 0} onclick={() => actions.open('runtimes', 'php')}>
         <span class="check"></span>
         <span class="grow muted">Install another...</span>
       </button>
@@ -509,7 +509,8 @@
     font-weight: 700;
   }
 
-  .more {
+  /* A line above it only when there are versions to set it apart from. */
+  .divided {
     margin-top: 4px;
     border-top: 1px solid rgb(255 255 255 / 0.07);
     border-radius: 0 0 8px 8px;

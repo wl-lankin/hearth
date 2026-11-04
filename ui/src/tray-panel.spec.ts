@@ -62,6 +62,7 @@ test('the PHP flyout switches the default version and offers more', async () => 
   flushSync();
   expect(text()).toContain('8.3.19');
   expect(text()).toContain('Install another...');
+  expect(button('Install another...').classList.contains('divided')).toBe(true);
   button('PHP 8.3').click();
   await settle();
   expect(source.phpUse).toHaveBeenCalledWith('8.3');
@@ -131,6 +132,7 @@ test('without PHP the row says None and the flyout still offers an install', asy
   expect(text()).toContain('None');
   button('Default version').click();
   flushSync();
+  expect(button('Install another...').classList.contains('divided')).toBe(false);
   button('Install another...').click();
   expect(actions.open).toHaveBeenCalledWith('runtimes', 'php');
   unmount(panel);
