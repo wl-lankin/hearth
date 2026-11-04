@@ -219,3 +219,110 @@ pub fn clear(paths: &HearthPaths, site: &str, name: &str) -> Result<(), CoreErro
     let path = log_file(paths, site, name)?;
     std::fs::OpenOptions::new().write(true).truncate(true).open(&path).map(|_| ()).map_err(|e| CoreError::io(&path, e))
 }
+
+/// An exception Laravel logged: from `[object] (Class(code: N): message at file:line)` and the
+/// `[stacktrace]` after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Exception {
+    pub time: String,
+    pub level: String,
+    /// The log file it is in.
+    pub log: String,
+    pub class: String,
+    pub code: String,
+    pub message: String,
+    pub file: String,
+    pub line: Option<u64>,
+    pub trace: String,
+}
+
+/// Laravel writes the exception inside JSON: backslashes and quotes come escaped.
+fn unescape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match (c, chars.clone().next()) {
+            ('\\', Some(next @ ('\\' | '"' | '/'))) => {
+                out.push(next);
+                chars.next();
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+fn exception_of(entry: &Entry, log: &str) -> Option<Exception> {
+    let text = format!("{}\n{}", entry.message, entry.detail);
+    let object = text.find("[object] (");
+    let trace_at = text.find("[stacktrace]");
+    if object.is_none() && trace_at.is_none() {
+        return None;
+    }
+    let trace = trace_at
+        .map(|at| {
+            let lines: Vec<&str> = text[at..].lines().skip(1).filter(|l| l.trim() != "\"}").collect();
+            unescape(lines.join("\n").trim_end())
+        })
+        .unwrap_or_default();
+    let mut found = Exception {
+        time: entry.time.clone(),
+        level: entry.level.clone(),
+        log: log.to_string(),
+        class: String::new(),
+        code: String::new(),
+        message: entry.message.clone(),
+        file: String::new(),
+        line: None,
+        trace,
+    };
+    let Some(at) = object else { return Some(found) };
+    let head = text[at + "[object] (".len()..].lines().next().unwrap_or_default();
+    let head = head.trim_end().trim_end_matches("\"}").trim_end_matches(')');
+    if let Some((class, rest)) = head.split_once("(code: ") {
+        if let Some((code, rest)) = rest.split_once("): ") {
+            found.class = unescape(class);
+            found.code = code.to_string();
+            match rest.rsplit_once(" at ") {
+                Some((message, place)) => {
+                    found.message = unescape(message);
+                    match place.rsplit_once(':') {
+                        Some((file, line)) if line.parse::<u64>().is_ok() => {
+                            found.file = unescape(file);
+                            found.line = line.parse().ok();
+                        }
+                        _ => found.file = unescape(place),
+                    }
+                }
+                None => found.message = unescape(rest),
+            }
+        }
+    }
+    Some(found)
+}
+
+/// The newest exception in the site's logs (newest file first, the end of each), if any.
+pub fn last_exception(paths: &HearthPaths, site: &str) -> Result<Option<Exception>, CoreError> {
+    let folder = site_folder(paths, site)?;
+    let mut files: Vec<(u64, String)> = std::fs::read_dir(folder.join("storage").join("logs"))
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    let meta = e.metadata().ok()?;
+                    name.ends_with(".log").then(|| (modified_ms(&meta), name))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    files.sort_by(|a, b| b.cmp(a));
+    for (_, name) in files {
+        let Ok((entries, _)) = read(paths, site, &name) else { continue };
+        if let Some(found) = entries.iter().find_map(|e| exception_of(e, &name)) {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
+}

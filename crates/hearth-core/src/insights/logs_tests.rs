@@ -164,3 +164,52 @@ fn a_linked_log_file_is_never_followed() {
     assert!(logs::clear(&paths, "shop", "evil.log").is_err());
     assert_eq!(std::fs::read_to_string(&outside).unwrap(), "keep me");
 }
+
+const WINDOWS_LOG: &str = "[2026-11-03 10:00:00] local.INFO: User 3 logged in
+[2026-11-03 10:00:09] local.ERROR: Division by zero {\"exception\":\"[object] (DivisionByZeroError(code: 0): Division by zero at C:\\\\x\\\\app\\\\Pricing.php:18)
+[stacktrace]
+#0 C:\\\\x\\\\app\\\\Http\\\\Controllers\\\\CartController.php(40): App\\\\Pricing->total()
+#1 {main}
+\"}
+[2026-11-03 10:00:12] local.WARNING: Slow cart {\"user\":3,\"ms\":812}
+";
+
+#[test]
+fn the_last_exception_is_the_newest_entry_with_one() {
+    let (d, paths) = home();
+    let logs = shop(&d, &paths);
+    std::fs::write(logs.join("laravel.log"), WINDOWS_LOG).unwrap();
+    let e = logs::last_exception(&paths, "shop").unwrap().expect("an exception");
+    assert_eq!(e.class, "DivisionByZeroError");
+    assert_eq!(e.message, "Division by zero");
+    assert_eq!(e.file, r"C:\x\app\Pricing.php");
+    assert_eq!(e.line, Some(18));
+    assert_eq!((e.time.as_str(), e.level.as_str(), e.log.as_str()), ("2026-11-03 10:00:09", "error", "laravel.log"));
+    assert!(
+        e.trace.starts_with("#0 ") && e.trace.contains("CartController.php(40)") && e.trace.ends_with("#1 {main}"),
+        "{}",
+        e.trace
+    );
+}
+
+#[test]
+fn no_exception_or_no_log_is_none_and_a_huge_log_is_quick() {
+    let (d, paths) = home();
+    let logs = shop(&d, &paths);
+    assert_eq!(logs::last_exception(&paths, "shop").unwrap(), None, "no log file");
+    std::fs::write(logs.join("laravel.log"), "[2026-11-03 10:00:00] local.INFO: fine\n").unwrap();
+    assert_eq!(logs::last_exception(&paths, "shop").unwrap(), None);
+
+    let mut f = std::fs::File::create(logs.join("laravel.log")).unwrap();
+    f.write_all(WINDOWS_LOG.as_bytes()).unwrap();
+    let filler = "[2026-11-03 11:00:00] local.INFO: nothing to see here, just a line of filler text\n".repeat(1000);
+    for _ in 0..(50 * 1024 * 1024 / filler.len()) {
+        f.write_all(filler.as_bytes()).unwrap();
+    }
+    f.write_all(WINDOWS_LOG.as_bytes()).unwrap();
+    drop(f);
+    let start = std::time::Instant::now();
+    let e = logs::last_exception(&paths, "shop").unwrap();
+    assert!(start.elapsed() < std::time::Duration::from_secs(2), "{:?}", start.elapsed());
+    assert_eq!(e.map(|e| e.class), Some("DivisionByZeroError".into()));
+}

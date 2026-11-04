@@ -193,3 +193,25 @@ async fn an_unchanged_log_is_not_parsed_again() {
         call(&core, "logs.read", json!({ "site": "shop", "file": "laravel.log", "size": size })).await.unwrap();
     assert_eq!(changed["entries"][0]["message"], json!("three"));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn last_exception_answers_the_newest_or_null() {
+    let (d, core) = home();
+    let dir = d.path().join("shop");
+    std::fs::create_dir_all(dir.join("storage").join("logs")).unwrap();
+    std::fs::create_dir_all(dir.join("public")).unwrap();
+    crate::sites::registry::link(&core.paths, "shop", &dir).unwrap();
+    assert_eq!(call(&core, "logs.lastException", json!({ "site": "shop" })).await.unwrap(), Value::Null);
+    std::fs::write(
+        dir.join("storage").join("logs").join("laravel.log"),
+        "[2026-11-03 10:00:09] local.ERROR: boom {\"exception\":\"[object] (RuntimeException(code: 7): boom at /srv/a.php:3)\n[stacktrace]\n#0 {main}\n\"}\n",
+    )
+    .unwrap();
+    let e = call(&core, "logs.lastException", json!({ "site": "shop" })).await.unwrap();
+    assert_eq!(
+        (e["class"].as_str(), e["code"].as_str(), e["line"].as_u64()),
+        (Some("RuntimeException"), Some("7"), Some(3))
+    );
+    let err = call(&core, "logs.lastException", json!({ "site": "nope" })).await.unwrap_err();
+    assert!(err.message.contains("nope"), "{}", err.message);
+}
