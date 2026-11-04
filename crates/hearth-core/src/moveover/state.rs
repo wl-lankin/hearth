@@ -17,8 +17,11 @@ pub struct MoveState {
     pub uninstalled: bool,
     /// `<scheme>://<host>` of check results the owner accepted.
     pub accepted: Vec<String>,
-    /// The last check after the move (the uninstall waits for it).
+    /// The last check after the move (the uninstall waits for it): the sites, then the services and
+    /// Node.
     pub last_check: Vec<SiteCheck>,
+    /// Whether a check ran since the move.
+    pub checked: bool,
 }
 
 fn file(paths: &HearthPaths) -> PathBuf {

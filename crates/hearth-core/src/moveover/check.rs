@@ -68,6 +68,25 @@ pub fn gate(checks: &[SiteCheck], accepted: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// The services (name, running) and Node as rows of the check, so the uninstall waits for them too
+/// and each can be accepted: `service://<name>` and `node://node`.
+pub fn others(services: &[(String, bool)], node_from_hearth: bool) -> Vec<SiteCheck> {
+    let mut rows: Vec<SiteCheck> = services
+        .iter()
+        .map(|(name, running)| SiteCheck {
+            host: name.clone(),
+            scheme: "service".into(),
+            verdict: if *running { Verdict::Same } else { Verdict::Broken("not running".into()) },
+        })
+        .collect();
+    rows.push(SiteCheck {
+        host: "node".into(),
+        scheme: "node".into(),
+        verdict: if node_from_hearth { Verdict::Same } else { Verdict::Changed("still Herd's Node".into()) },
+    });
+    rows
+}
+
 /// Asks every site of the recording again, now on Hearth's ports, and compares.
 pub async fn check_sites(baseline: &[Answer], http_port: u16, https_port: u16) -> Vec<SiteCheck> {
     let targets: Vec<(String, bool)> = baseline.iter().map(|a| (a.host.clone(), a.scheme == "https")).collect();

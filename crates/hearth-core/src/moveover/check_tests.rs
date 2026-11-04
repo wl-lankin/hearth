@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
-use super::check::{compare, gate, SiteCheck, Verdict};
+use super::check::{compare, gate, others, SiteCheck, Verdict};
 use super::outside::MachineWrite;
 use super::probe::Answer;
 use super::record::{Done, Record};
 use super::state::{self, MoveState};
 use super::undo::{undo, Reverter};
-use super::uninstall::{uninstall, Uninstaller};
+use super::uninstall::{uninstall, Uninstalled, Uninstaller};
 use crate::dns::protocol::Request;
 use crate::herd::import::ImportPlan;
 use crate::{CoreError, HearthPaths};
@@ -200,51 +200,134 @@ fn undo_is_refused_once_herd_is_uninstalled() {
     assert_eq!(err.to_string(), "Herd is uninstalled: there is nothing to go back to");
 }
 
+/// `exit` is what the uninstaller returns; `removes` whether Herd is really gone afterwards.
 struct FakeUninstaller {
     exit: i32,
+    removes: bool,
+    ran: bool,
     trusted_after: bool,
     trusted_again: bool,
+    trust_fails: bool,
+    forgot: bool,
+}
+
+impl FakeUninstaller {
+    fn new(exit: i32, removes: bool) -> FakeUninstaller {
+        FakeUninstaller {
+            exit,
+            removes,
+            ran: false,
+            trusted_after: true,
+            trusted_again: false,
+            trust_fails: false,
+            forgot: false,
+        }
+    }
 }
 
 impl Uninstaller for FakeUninstaller {
     fn run(&mut self, program: &std::path::Path, args: &[String]) -> Result<i32, CoreError> {
         assert!(program.ends_with("Uninstall Herd.exe"));
         assert_eq!(args, ["/allusers"]);
+        self.ran = true;
         Ok(self.exit)
+    }
+    fn still_there(&self, _: &std::path::Path) -> bool {
+        !(self.ran && self.removes)
     }
     fn ca_trusted(&self) -> bool {
         self.trusted_after || self.trusted_again
     }
     fn trust(&mut self) -> Result<(), CoreError> {
+        if self.trust_fails {
+            return Err(CoreError::Tls("The trust store said no".into()));
+        }
         self.trusted_again = true;
         Ok(())
     }
+    fn forget_machine_env(&mut self) -> Result<(), CoreError> {
+        self.forgot = true;
+        Ok(())
+    }
+}
+
+fn checked(paths: &HearthPaths, rows: Vec<SiteCheck>) {
+    state::save(paths, &MoveState { moved: true, checked: true, last_check: rows, ..MoveState::default() }).unwrap();
+}
+
+fn same(host: &str) -> SiteCheck {
+    SiteCheck { host: host.into(), scheme: "http".into(), verdict: Verdict::Same }
+}
+
+const UNINSTALLER: &str = r"C:\Program Files\Herd\Uninstall Herd.exe";
+
+fn run_uninstall(paths: &HearthPaths, u: &mut FakeUninstaller) -> Result<Uninstalled, CoreError> {
+    uninstall(paths, &PathBuf::from(UNINSTALLER), &["/allusers".to_string()], u)
 }
 
 #[test]
 fn the_uninstall_marks_herd_gone_and_brings_trust_back() {
     let (_d, paths) = home();
-    let checks = vec![SiteCheck { host: "shop.test".into(), scheme: "http".into(), verdict: Verdict::Same }];
-    state::save(&paths, &MoveState { moved: true, ..MoveState::default() }).unwrap();
-    let program = PathBuf::from(r"C:\Program Files\Herd\Uninstall Herd.exe");
-    let args = vec!["/allusers".to_string()];
+    checked(&paths, vec![same("shop.test")]);
+    Record::default().push(&paths, Done::Ca { previous: Some((b"crt".to_vec(), b"key".to_vec())) }).unwrap();
 
-    let mut cancelled = FakeUninstaller { exit: 1, trusted_after: true, trusted_again: false };
-    assert_eq!(uninstall(&paths, &checks, &program, &args, &mut cancelled).unwrap(), 1);
+    let mut cancelled = FakeUninstaller::new(1, false);
+    assert_eq!(run_uninstall(&paths, &mut cancelled).unwrap().code, 1);
     assert!(!state::load(&paths).uninstalled, "a cancelled uninstall leaves Herd, and Undo");
 
-    let mut done = FakeUninstaller { exit: 0, trusted_after: false, trusted_again: false };
-    assert_eq!(uninstall(&paths, &checks, &program, &args, &mut done).unwrap(), 0);
+    let mut done = FakeUninstaller { trusted_after: false, ..FakeUninstaller::new(0, true) };
+    assert_eq!(run_uninstall(&paths, &mut done).unwrap(), Uninstalled { code: 0, trust_error: None });
     assert!(state::load(&paths).uninstalled);
     assert!(done.trusted_again, "the uninstaller took the CA out of the trust store; Hearth puts it back");
+    assert!(done.forgot, "the helper forgets Herd's machine entries: nothing to restore any more");
+    assert_eq!(Record::load(&paths), Record::default(), "the record (and the old CA key in it) is gone");
+}
 
-    let red = vec![SiteCheck {
-        host: "shop.test".into(),
-        scheme: "http".into(),
-        verdict: Verdict::Broken("no answer".into()),
-    }];
-    let mut blocked = FakeUninstaller { exit: 0, trusted_after: true, trusted_again: false };
-    assert!(uninstall(&paths, &red, &program, &args, &mut blocked).is_err());
+#[test]
+fn an_uninstaller_that_exits_0_while_herd_stays_is_not_an_uninstall() {
+    let (_d, paths) = home();
+    checked(&paths, vec![same("shop.test")]);
+    let mut cancelled_later = FakeUninstaller::new(0, false);
+    assert_ne!(run_uninstall(&paths, &mut cancelled_later).unwrap().code, 0);
+    assert!(!state::load(&paths).uninstalled, "Undo stays possible");
+    assert!(!cancelled_later.forgot);
+}
+
+#[test]
+fn a_failed_trust_still_finishes_the_uninstall_and_says_so() {
+    let (_d, paths) = home();
+    checked(&paths, vec![same("shop.test")]);
+    let mut u = FakeUninstaller { trusted_after: false, trust_fails: true, ..FakeUninstaller::new(0, true) };
+    let result = run_uninstall(&paths, &mut u).unwrap();
+    assert_eq!(result.code, 0);
+    assert!(result.trust_error.is_some_and(|e| e.contains("The trust store said no")));
+    assert!(state::load(&paths).uninstalled);
+}
+
+#[test]
+fn the_uninstall_waits_for_a_move_a_check_and_every_red_row() {
+    let (_d, paths) = home();
+    let mut u = FakeUninstaller::new(0, true);
+    assert!(run_uninstall(&paths, &mut u).is_err(), "nothing moved yet");
+    state::save(&paths, &MoveState { moved: true, ..MoveState::default() }).unwrap();
+    assert!(run_uninstall(&paths, &mut u).is_err(), "moved, but not checked");
+    let red =
+        SiteCheck { host: "shop.test".into(), scheme: "http".into(), verdict: Verdict::Broken("no answer".into()) };
+    checked(&paths, vec![red]);
+    assert!(run_uninstall(&paths, &mut u).is_err());
+    assert!(!u.ran, "the uninstaller never ran");
+}
+
+#[test]
+fn services_and_node_are_rows_of_the_check() {
+    let rows = others(&[("Redis 8".to_string(), true), ("MySQL 8".to_string(), false)], false);
+    let keys: Vec<String> = rows.iter().map(SiteCheck::key).collect();
+    assert_eq!(keys, ["service://Redis 8", "service://MySQL 8", "node://node"]);
+    assert_eq!(rows[0].verdict, Verdict::Same);
+    assert!(matches!(rows[1].verdict, Verdict::Broken(_)));
+    assert!(matches!(rows[2].verdict, Verdict::Changed(_)));
+    let err = gate(&rows, &["service://MySQL 8".to_string()]).unwrap_err();
+    assert!(err.contains("node://node"), "{err}");
 }
 
 /// The record holds the CA key from before the move (for Undo): only the user may read it.

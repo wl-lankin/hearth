@@ -4,9 +4,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+use super::check::others;
 use super::machine::RealMachine;
 use super::plan::plan;
 use super::probe::{probe_all, targets};
+use super::record::Record;
 use super::scan::{scan, HerdHome, Machine};
 use super::state;
 use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR};
@@ -51,9 +53,14 @@ async fn dry_run(core: &CoreState) -> Result<Value, RpcError> {
         .map_err(failed)?;
     let hearth_php: Vec<String> = crate::php::store::installed(&paths).into_iter().map(|p| p.minor).collect();
     let plan = plan(&paths, &inv, &hearth_php);
+    let mut st = state::load(&paths);
+    // A move that stopped halfway keeps its recording: Herd is not started again (it would take
+    // its ports back), and how the sites answer now is no longer how they answered under Herd.
+    if !Record::load(&paths).steps.is_empty() {
+        return Ok(json!({ "plan": plan, "baseline": st.baseline, "startedHerd": false }));
+    }
     let started_herd = ensure_herd_answers(&inv).await;
     let baseline = probe_all(&targets(&inv), 80, 443).await;
-    let mut st = state::load(&paths);
     st.baseline = baseline.clone();
     state::save(&paths, &st).map_err(failed)?;
     Ok(json!({ "plan": plan, "baseline": baseline, "startedHerd": started_herd }))
@@ -95,7 +102,14 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
     let result = match method {
         "moveover.state" => {
             let st = state::load(&core.paths);
-            Ok(json!({ "herd": HerdHome::find().is_some(), "moved": st.moved, "uninstalled": st.uninstalled }))
+            // Started but not finished: the wizard offers to continue or to go back.
+            let recorded = !st.moved && !Record::load(&core.paths).steps.is_empty();
+            Ok(json!({
+                "herd": HerdHome::find().is_some(),
+                "moved": st.moved,
+                "uninstalled": st.uninstalled,
+                "recorded": recorded,
+            }))
         }
         "moveover.scan" => dry_run(core).await,
         "moveover.apply" => start_apply(core),
@@ -114,16 +128,19 @@ async fn check(core: &CoreState) -> Result<Value, RpcError> {
     let mut st = state::load(&paths);
     let config = crate::sites::registry::load(&paths);
     let sites = super::check::check_sites(&st.baseline, config.http_port, config.https_port).await;
-    let services: Vec<Value> = crate::services::store::load(&paths)
+    let services: Vec<(String, bool)> = crate::services::store::load(&paths)
         .into_iter()
-        .map(|i| json!({ "name": i.name, "running": !crate::services::ports::port_free(i.port) }))
+        .map(|i| (i.name, !crate::services::ports::port_free(i.port)))
         .collect();
     let machine = RealMachine;
     let hearth_bin = paths.bin.to_string_lossy().to_ascii_lowercase();
     let node_from_hearth = machine.user_path().to_ascii_lowercase().contains(&hearth_bin)
         && !machine.machine_path().to_ascii_lowercase().contains(r"\.config\herd");
-    st.last_check = sites.clone();
+    st.last_check = sites.iter().cloned().chain(others(&services, node_from_hearth)).collect();
+    st.checked = st.moved;
     state::save(&paths, &st).map_err(failed)?;
+    let services: Vec<Value> =
+        services.iter().map(|(name, running)| json!({ "name": name, "running": running })).collect();
     Ok(
         json!({ "sites": sites, "services": services, "node": { "fromHearth": node_from_hearth }, "accepted": st.accepted }),
     )
@@ -168,7 +185,6 @@ fn start_undo(core: &CoreState) -> Result<Value, RpcError> {
 async fn uninstall_herd(core: &CoreState) -> Result<Value, RpcError> {
     let herd = HerdHome::find().ok_or_else(|| RpcError::new(INTERNAL_ERROR, "Herd is not installed here"))?;
     let paths = core.paths.clone();
-    let st = state::load(&paths);
     let inv = tokio::task::spawn_blocking(move || scan(&herd, &RealMachine))
         .await
         .map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?
@@ -176,13 +192,13 @@ async fn uninstall_herd(core: &CoreState) -> Result<Value, RpcError> {
     let uninstaller =
         inv.uninstaller.ok_or_else(|| RpcError::new(INTERNAL_ERROR, "Herd's uninstaller could not be found"))?;
     let p2 = paths.clone();
-    let code = tokio::task::spawn_blocking(move || {
+    let done = tokio::task::spawn_blocking(move || {
         let mut real = super::real::RealUninstaller { paths: p2.clone() };
-        super::uninstall::uninstall(&p2, &st.last_check, &uninstaller.program, &uninstaller.args, &mut real)
+        super::uninstall::uninstall(&p2, &uninstaller.program, &uninstaller.args, &mut real)
     })
     .await
     .map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?
     .map_err(failed)?;
     let after = check(core).await?;
-    Ok(json!({ "exitCode": code, "check": after }))
+    Ok(json!({ "exitCode": done.code, "trustError": done.trust_error, "check": after }))
 }

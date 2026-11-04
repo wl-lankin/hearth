@@ -77,5 +77,7 @@ pub fn undo(paths: &HearthPaths, rev: &mut dyn Reverter, outside: &mut dyn Machi
     Record::clear(paths)?;
     st.moved = false;
     st.accepted.clear();
+    st.checked = false;
+    st.last_check.clear();
     state::save(paths, &st)
 }

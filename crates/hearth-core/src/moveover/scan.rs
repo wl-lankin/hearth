@@ -369,14 +369,22 @@ pub fn scan(herd: &HerdHome, machine: &dyn Machine) -> Result<Inventory, CoreErr
     let herd_root = herd.root.to_string_lossy().to_ascii_lowercase();
     let into_herd = |p: &str| p.to_ascii_lowercase().starts_with(&herd_root) || points_into_herd(p);
     let user_path = split_path(&machine.user_path()).into_iter().filter(|p| into_herd(p)).collect();
+    // The machine environment: only what lies in Herd's home (what the helper agrees to take out),
+    // and nvm's link and variables only when nvm is Herd's own.
+    let in_root = |p: &str| p.to_ascii_lowercase().starts_with(&herd_root);
+    let herds_nvm = machine.machine_var("NVM_HOME").is_some_and(|home| in_root(&home));
     let machine_path = split_path(&machine.machine_path())
         .into_iter()
-        .filter(|p| into_herd(p) || symlink.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(p)))
+        .filter(|p| in_root(p) || (herds_nvm && symlink.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(p))))
         .collect();
-    let machine_vars = ["NVM_HOME", "NVM_SYMLINK"]
-        .iter()
-        .filter_map(|name| machine.machine_var(name).map(|v| (name.to_string(), v)))
-        .collect();
+    let machine_vars = if herds_nvm {
+        ["NVM_HOME", "NVM_SYMLINK"]
+            .iter()
+            .filter_map(|name| machine.machine_var(name).map(|v| (name.to_string(), v)))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let autostart = machine.run_values().into_iter().find(|(name, command)| {
         name.to_ascii_lowercase().contains("herd") && command.to_ascii_lowercase().contains("herd")

@@ -201,3 +201,15 @@ memory_limit = 512M ; more for big imports
     );
     assert_eq!(lines.last().unwrap().value, "512M", "the comment is no part of the value");
 }
+
+#[test]
+fn a_node_setup_outside_herds_folder_is_not_herds() {
+    let d = tempfile::tempdir().unwrap();
+    let (herd, mut machine) = fake_herd(d.path());
+    machine.machine_path = r"C:\Windows\System32;C:\Program Files\nodejs;C:\Program Files\Herd\resources".into();
+    machine.vars =
+        vec![("NVM_HOME".into(), r"C:\nvm".into()), ("NVM_SYMLINK".into(), r"C:\Program Files\nodejs".into())];
+    let inv = scan(&herd, &machine).unwrap();
+    assert!(inv.machine_path.is_empty(), "{:?}", inv.machine_path);
+    assert!(inv.machine_vars.is_empty(), "{:?}", inv.machine_vars);
+}

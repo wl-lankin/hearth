@@ -278,6 +278,7 @@ pub fn run(
     step(10.0, "Finishing");
     let mut st = state::load(paths);
     st.moved = true;
+    st.checked = false;
     state::save(paths, &st)?;
     mover.sync();
     step(11.0, "Moved");

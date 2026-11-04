@@ -12,7 +12,7 @@ use crate::dns::hosts::{apply_block, names_in_block, valid_host};
 /// The pipe the helper listens on.
 pub const PIPE: &str = r"\\.\pipe\hearth-helper";
 /// Raised when requests or answers change, so Hearth can ask for a re-install of an older helper.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 /// What a client may open the pipe with: read data, write data, read attributes, synchronize.
 /// Plain read/write access would also ask for rights the pipe does not grant.
 pub const CLIENT_ACCESS: u32 = 0x0010_0083;
@@ -35,8 +35,11 @@ pub enum Request {
         #[serde(default)]
         remove_vars: Vec<String>,
     },
-    /// Puts back exactly what `MachineEnv` took out (the client names nothing: nothing to inject).
+    /// Puts back what `MachineEnv` took out (the client names nothing: nothing to inject), as far as
+    /// the folders still exist and the variables were not set again since.
     MachineEnvRestore,
+    /// Forgets what `MachineEnv` took out, once Herd is uninstalled: nothing is to be restored then.
+    MachineEnvForget,
 }
 
 /// What the helper took out of the machine environment, kept where only administrators can write.
@@ -48,7 +51,10 @@ pub struct Removed {
 
 /// The machine environment, as the helper changes it (the real one is the registry).
 pub trait MachineEnv {
-    fn path(&self) -> String;
+    /// The machine PATH as stored; an error when it cannot be read (then nothing writes it).
+    fn path(&self) -> Result<String, String>;
+    /// Whether `folder` exists.
+    fn exists(&self, folder: &str) -> bool;
     fn set_path(&mut self, value: &str) -> Result<(), String>;
     fn var(&self, name: &str) -> Option<String>;
     fn set_var(&mut self, name: &str, value: Option<&str>) -> Result<(), String>;
@@ -63,15 +69,23 @@ const HERD_VARS: [&str; 2] = ["NVM_HOME", "NVM_SYMLINK"];
 /// (`X:\Users\<name>\.config\herd` or below), or Herd's Node link `C:\Program Files\nodejs`. Anchored,
 /// no network paths, no `%`, `..`, `;`, quotes or control characters.
 pub fn herds_entry(value: &str) -> bool {
+    is_node_link(value) || in_herd_folder(value)
+}
+
+/// `C:\Program Files\nodejs`, the folder Herd's Node manager (like any nvm) links to.
+fn is_node_link(value: &str) -> bool {
+    value.trim().trim_end_matches('\\').eq_ignore_ascii_case(r"c:\program files\nodejs")
+}
+
+/// In a user's Herd folder (`X:\Users\<name>\.config\herd` or below), anchored, no network paths,
+/// no `%`, `..`, `;`, quotes or control characters.
+pub fn in_herd_folder(value: &str) -> bool {
     let v = value.trim().trim_end_matches('\\');
     if v.starts_with(r"\\") || v.contains("..") || v.contains(|c: char| c.is_control() || matches!(c, '%' | ';' | '"'))
     {
         return false;
     }
     let lower = v.to_ascii_lowercase();
-    if lower == r"c:\program files\nodejs" {
-        return true;
-    }
     let mut parts = lower.split('\\');
     let drive = parts.next().unwrap_or_default();
     let drive_ok = drive.len() == 2 && drive.as_bytes()[0].is_ascii_alphabetic() && drive.ends_with(':');
@@ -90,9 +104,19 @@ fn take_out(env: &mut dyn MachineEnv, remove_path: &[String], remove_vars: &[Str
     if let Some(bad) = bad_entry.or(bad_var) {
         return Response::error(format!("Not one of Herd's entries: {bad:?}"));
     }
-    let current = env.path();
-    let present = |e: &String| current.split(';').any(|c| c.eq_ignore_ascii_case(e));
     let mut removed = env.removed();
+    // The Node link and the nvm variables are Herd's only while nvm lives in a Herd folder (after a
+    // first, partial run the helper's own record still says where it lived).
+    let recorded_home = removed.vars.iter().find(|(n, _)| n == "NVM_HOME").map(|(_, v)| v.clone());
+    let herds_nvm = env.var("NVM_HOME").or(recorded_home).is_some_and(|home| in_herd_folder(&home));
+    if !herds_nvm && (!remove_vars.is_empty() || remove_path.iter().any(|e| is_node_link(e))) {
+        return Response::error("Not one of Herd's entries: this Node setup is not Herd's");
+    }
+    let current = match env.path() {
+        Ok(path) => path,
+        Err(e) => return Response::error(e),
+    };
+    let present = |e: &String| current.split(';').any(|c| c.eq_ignore_ascii_case(e));
     for entry in remove_path.iter().filter(|e| present(e)) {
         if !removed.path.iter().any(|r| r.eq_ignore_ascii_case(entry)) {
             removed.path.push(entry.clone());
@@ -127,12 +151,17 @@ fn take_out(env: &mut dyn MachineEnv, remove_path: &[String], remove_vars: &[Str
     Response::default()
 }
 
-/// Puts back what `take_out` recorded, then forgets it.
+/// Puts back what `take_out` recorded, then forgets it. Only entries that are still Herd's and
+/// whose folder exists come back (a missing folder in a profile on the machine PATH is a place to
+/// plant programs), and a variable only when nobody set it since.
 fn put_back(env: &mut dyn MachineEnv) -> Response {
     let removed = env.removed();
-    let current = env.path();
+    let current = match env.path() {
+        Ok(path) => path,
+        Err(e) => return Response::error(e),
+    };
     let mut entries: Vec<String> = current.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect();
-    for entry in &removed.path {
+    for entry in removed.path.iter().filter(|e| herds_entry(e) && env.exists(e)) {
         if !entries.iter().any(|e| e.eq_ignore_ascii_case(entry)) {
             entries.push(entry.clone());
         }
@@ -143,11 +172,16 @@ fn put_back(env: &mut dyn MachineEnv) -> Response {
             return Response::error(e);
         }
     }
-    for (name, value) in &removed.vars {
+    let unset: Vec<&(String, String)> = removed.vars.iter().filter(|(name, _)| env.var(name).is_none()).collect();
+    for (name, value) in unset {
         if let Err(e) = env.set_var(name, Some(value)) {
             return Response::error(e);
         }
     }
+    forget(env)
+}
+
+fn forget(env: &mut dyn MachineEnv) -> Response {
     match env.set_removed(&Removed::default()) {
         Ok(()) => Response::default(),
         Err(e) => Response::error(e),
@@ -187,6 +221,7 @@ pub fn handle_with(line: &[u8], hosts: &Path, env: &mut dyn MachineEnv) -> Respo
     match &request {
         Request::MachineEnv { remove_path, remove_vars } => return take_out(env, remove_path, remove_vars),
         Request::MachineEnvRestore => return put_back(env),
+        Request::MachineEnvForget => return forget(env),
         _ => {}
     }
     let current = match std::fs::read(hosts) {
@@ -199,7 +234,7 @@ pub fn handle_with(line: &[u8], hosts: &Path, env: &mut dyn MachineEnv) -> Respo
             names: Some(names_in_block(&current).into_iter().collect()),
             error: None,
         },
-        Request::MachineEnv { .. } | Request::MachineEnvRestore => Response::default(),
+        Request::MachineEnv { .. } | Request::MachineEnvRestore | Request::MachineEnvForget => Response::default(),
         Request::Hosts { names } => {
             if names.len() > MAX_NAMES {
                 return Response::error("Too many names");
@@ -276,16 +311,25 @@ mod tests {
         assert_eq!(std::fs::read(&p).unwrap(), BASE.as_bytes());
     }
 
+    /// `gone`: folders that no longer exist; `unreadable`: reading the PATH fails.
     #[derive(Default)]
     struct FakeEnv {
         path: String,
         vars: BTreeMap<String, String>,
         removed: Removed,
+        gone: Vec<String>,
+        unreadable: bool,
     }
 
     impl MachineEnv for FakeEnv {
-        fn path(&self) -> String {
-            self.path.clone()
+        fn path(&self) -> Result<String, String> {
+            if self.unreadable {
+                return Err("The machine PATH could not be read".into());
+            }
+            Ok(self.path.clone())
+        }
+        fn exists(&self, folder: &str) -> bool {
+            !self.gone.iter().any(|g| g.eq_ignore_ascii_case(folder))
         }
         fn set_path(&mut self, value: &str) -> Result<(), String> {
             self.path = value.into();
@@ -335,6 +379,60 @@ mod tests {
         // A second restore has nothing to put back.
         assert_eq!(handle_with(br#"{"op":"machineenvrestore"}"#, &p, &mut env), Response::default());
         assert_eq!(env.path, format!(r"C:\Windows\System32;{NVM};C:\Program Files\nodejs"));
+    }
+
+    #[test]
+    fn a_node_setup_that_is_not_herds_stays() {
+        let (_d, p) = hosts_file(BASE);
+        let path = r"C:\Windows\System32;C:\Program Files\nodejs";
+        let mut env = FakeEnv { path: path.into(), ..FakeEnv::default() };
+        env.vars.insert("NVM_HOME".into(), r"C:\nvm".into());
+        env.vars.insert("NVM_SYMLINK".into(), r"C:\Program Files\nodejs".into());
+        let out = serde_json::json!({
+            "op": "machineenv", "removePath": [r"C:\Program Files\nodejs"], "removeVars": ["NVM_HOME", "NVM_SYMLINK"]
+        });
+        assert!(handle_with(out.to_string().as_bytes(), &p, &mut env).error.is_some());
+        assert_eq!(env.path, path);
+        assert_eq!(env.vars.len(), 2);
+    }
+
+    #[test]
+    fn forgotten_entries_are_not_restored() {
+        let (_d, p) = hosts_file(BASE);
+        let mut env = FakeEnv { path: format!(r"C:\Windows\System32;{NVM}"), ..FakeEnv::default() };
+        env.vars.insert("NVM_HOME".into(), NVM.into());
+        let out = serde_json::json!({ "op": "machineenv", "removePath": [NVM], "removeVars": ["NVM_HOME"] });
+        handle_with(out.to_string().as_bytes(), &p, &mut env);
+        assert_eq!(handle_with(br#"{"op":"machineenvforget"}"#, &p, &mut env), Response::default());
+        assert_eq!(env.removed, Removed::default());
+        handle_with(br#"{"op":"machineenvrestore"}"#, &p, &mut env);
+        assert_eq!(env.path, r"C:\Windows\System32");
+        assert!(env.vars.is_empty());
+    }
+
+    #[test]
+    fn a_restore_skips_folders_that_are_gone_and_variables_set_since() {
+        let (_d, p) = hosts_file(BASE);
+        let mut env = FakeEnv { path: format!(r"C:\Windows\System32;{NVM}"), ..FakeEnv::default() };
+        env.vars.insert("NVM_HOME".into(), NVM.into());
+        let out = serde_json::json!({ "op": "machineenv", "removePath": [NVM], "removeVars": ["NVM_HOME"] });
+        handle_with(out.to_string().as_bytes(), &p, &mut env);
+        env.gone.push(NVM.into());
+        env.vars.insert("NVM_HOME".into(), r"C:\nvm".into());
+        assert_eq!(handle_with(br#"{"op":"machineenvrestore"}"#, &p, &mut env), Response::default());
+        assert_eq!(env.path, r"C:\Windows\System32", "a missing folder in a profile is not put on the PATH");
+        assert_eq!(env.vars.get("NVM_HOME").map(String::as_str), Some(r"C:\nvm"), "set since: it stays");
+    }
+
+    #[test]
+    fn an_unreadable_machine_path_is_never_written() {
+        let (_d, p) = hosts_file(BASE);
+        let mut env = FakeEnv { path: r"C:\Windows\System32".into(), unreadable: true, ..FakeEnv::default() };
+        env.removed = Removed { path: vec![NVM.into()], vars: vec![] };
+        let out = serde_json::json!({ "op": "machineenv", "removePath": [NVM] });
+        assert!(handle_with(out.to_string().as_bytes(), &p, &mut env).error.is_some());
+        assert!(handle_with(br#"{"op":"machineenvrestore"}"#, &p, &mut env).error.is_some());
+        assert_eq!(env.path, r"C:\Windows\System32");
     }
 
     #[test]

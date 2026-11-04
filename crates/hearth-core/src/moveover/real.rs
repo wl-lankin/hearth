@@ -7,8 +7,11 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use super::apply::Mover;
+use super::machine::RealWrite;
+use super::outside::MachineWrite;
 use super::scan::Inventory;
 use super::stop;
+use crate::dns::protocol::Request;
 use crate::herd::import::ImportPlan;
 use crate::ipc::{router, CoreState};
 use crate::sites::registry;
@@ -429,6 +432,19 @@ impl super::uninstall::Uninstaller for RealUninstaller {
             .status()
             .map_err(|e| CoreError::Php(format!("Herd's uninstaller could not be started: {e}")))?;
         Ok(status.code().unwrap_or(1))
+    }
+
+    fn still_there(&self, program: &Path) -> bool {
+        // Herd's uninstaller removes itself last; give it a moment after its window closed.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while program.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        program.exists()
+    }
+
+    fn forget_machine_env(&mut self) -> Result<(), CoreError> {
+        RealWrite.helper(&Request::MachineEnvForget)
     }
 
     fn ca_trusted(&self) -> bool {
