@@ -78,11 +78,15 @@ pub fn linked_worktree_parent(dir: &Path) -> Option<PathBuf> {
     (common.file_name()? == ".git").then(|| common.parent().map(Path::to_path_buf)).flatten()
 }
 
-/// Removes the worktree at `path` and forgets it; the branch stays. Read-only files (Windows) do not
-/// stop it.
-pub fn remove(repo: &Path, path: &Path) -> Result<(), CoreError> {
+/// Removes the worktree at `path` and forgets it; the branch stays. When git cannot (read-only
+/// files on Windows), `delete_folder` allows deleting the folder by hand.
+pub fn remove(repo: &Path, path: &Path, delete_folder: bool) -> Result<(), CoreError> {
     let target = path.to_string_lossy();
-    if run(repo, &["worktree", "remove", "--force", &target]).is_err() && path.exists() {
+    let removed = run(repo, &["worktree", "remove", "--force", &target]);
+    if removed.is_err() && path.exists() {
+        if !delete_folder {
+            return removed.map(|_| ());
+        }
         clear_read_only(path);
         std::fs::remove_dir_all(path).map_err(|e| CoreError::io(path, e))?;
     }

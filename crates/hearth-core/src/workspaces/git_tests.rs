@@ -85,7 +85,7 @@ fn a_worktree_with_read_only_files_is_removed() {
     std::fs::set_permissions(&file, perms).unwrap();
     std::fs::create_dir_all(wt.join("vendor").join("x")).unwrap();
     std::fs::write(wt.join("vendor").join("x").join("y.php"), "<?php").unwrap();
-    git::remove(&repo, &wt).unwrap();
+    git::remove(&repo, &wt, true).unwrap();
     assert!(!wt.exists());
     assert!(!sh(&repo, &["worktree", "list"]).contains("ws"));
     assert!(sh(&repo, &["branch", "--list", "feature"]).contains("feature"), "the branch stays");
