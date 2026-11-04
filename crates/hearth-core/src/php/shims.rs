@@ -90,13 +90,43 @@ pub fn render_shims(os: Os, default: Option<&str>, installed: &[String], node: b
 }
 
 /// Writes the shims into `<home>/bin` and removes Hearth's own shims that are no longer needed.
+/// Commands that only forward to a program elsewhere (`mysql` to the MariaDB service's client), kept
+/// in `<home>/config/forwarders.json` as (name, program).
+fn forwarders_file(paths: &HearthPaths) -> std::path::PathBuf {
+    paths.config.join("forwarders.json")
+}
+
+pub fn forwarders(paths: &HearthPaths) -> Vec<(String, std::path::PathBuf)> {
+    std::fs::read(forwarders_file(paths)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+/// Saves the forwarders; the next `write_shims` writes (or removes) their scripts.
+pub fn set_forwarders(paths: &HearthPaths, list: &[(String, std::path::PathBuf)]) -> Result<(), CoreError> {
+    let bytes = serde_json::to_vec_pretty(list).map_err(|e| CoreError::Php(e.to_string()))?;
+    atomic::write(&forwarders_file(paths), &bytes)
+}
+
+fn forwarder_shim(os: Os, target: &std::path::Path) -> String {
+    match os {
+        Os::Windows => format!("@echo off\r\nrem {MARKER}\r\n\"{}\" %*\r\n", target.display()),
+        Os::Macos => format!("#!/bin/sh\n# {MARKER}\nexec \"{}\" \"$@\"\n", target.display()),
+    }
+}
+
 pub fn write_shims(
     paths: &HearthPaths,
     default: Option<&str>,
     installed: &[String],
     node: bool,
 ) -> Result<(), CoreError> {
-    let shims = render_shims(Os::current(), default, installed, node);
+    let os = Os::current();
+    let ext = if os == Os::Windows { ".bat" } else { "" };
+    let mut shims = render_shims(os, default, installed, node);
+    for (name, target) in forwarders(paths) {
+        if !shims.iter().any(|(n, _)| *n == format!("{name}{ext}")) {
+            shims.push((format!("{name}{ext}"), forwarder_shim(os, &target)));
+        }
+    }
     for (name, contents) in &shims {
         let path = paths.bin.join(name);
         atomic::write(&path, contents.as_bytes())?;
@@ -194,5 +224,22 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             assert_eq!(std::fs::metadata(p.bin.join("php")).unwrap().permissions().mode() & 0o777, 0o755);
         }
+    }
+
+    #[test]
+    fn forwarders_from_the_config_become_shims_and_go_again() {
+        let d = tempfile::tempdir().unwrap();
+        let p = HearthPaths::at(d.path().join("hearth"));
+        p.ensure().unwrap();
+        let target = d.path().join("MariaDB 11.4").join("bin").join("mysql.exe");
+        set_forwarders(&p, &[("mysql".to_string(), target.clone())]).unwrap();
+        write_shims(&p, None, &[], false).unwrap();
+        let name = if cfg!(windows) { "mysql.bat" } else { "mysql" };
+        let text = std::fs::read_to_string(p.bin.join(name)).unwrap();
+        assert!(text.contains(MARKER), "{text}");
+        assert!(text.contains(&target.to_string_lossy().into_owned()), "{text}");
+        set_forwarders(&p, &[]).unwrap();
+        write_shims(&p, None, &[], false).unwrap();
+        assert!(!p.bin.join(name).exists(), "a forwarder no longer listed is removed like any shim");
     }
 }

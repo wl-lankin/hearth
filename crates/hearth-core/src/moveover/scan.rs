@@ -80,6 +80,8 @@ pub struct Uninstaller {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Inventory {
+    /// Herd's home folder (`~/.config/herd`).
+    pub root: PathBuf,
     pub sites: HerdSetup,
     pub php_versions: Vec<String>,
     pub php_default: Option<String>,
@@ -392,6 +394,7 @@ pub fn scan(herd: &HerdHome, machine: &dyn Machine) -> Result<Inventory, CoreErr
     other_hosts.dedup();
 
     Ok(Inventory {
+        root: herd.root.clone(),
         sites,
         php_versions,
         php_default,
