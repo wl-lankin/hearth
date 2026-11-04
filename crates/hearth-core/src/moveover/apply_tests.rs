@@ -3,19 +3,21 @@ use std::path::{Path, PathBuf};
 use super::apply::{run, Mover};
 use super::outside::MachineWrite;
 use super::plan::plan;
-use super::record::Record;
+use super::record::{Done, Record};
 use super::scan::{scan, Inventory};
 use super::scan_tests::fake_herd;
 use crate::dns::protocol::Request;
 use crate::herd::import::ImportPlan;
 use crate::{CoreError, HearthPaths};
 
-/// Logs every call; fails once at `fail_at`; reports `busy` ports as taken by "nginx.exe".
+/// Logs every call; fails once at `fail_at`; reports `busy` ports as taken by "nginx.exe";
+/// `redis_before` is a Hearth Redis that was there before the move.
 #[derive(Default)]
 struct FakeMover {
     calls: Vec<String>,
     fail_at: Option<String>,
     busy: Vec<u16>,
+    redis_before: Option<String>,
 }
 
 impl FakeMover {
@@ -53,7 +55,9 @@ impl Mover for FakeMover {
         self.call(format!("set_ports {http} {https}"))
     }
     fn php_installed(&self) -> Vec<String> {
-        vec!["8.4".into()]
+        let mut have = vec!["8.4".to_string()];
+        have.extend(self.calls.iter().filter_map(|c| c.strip_prefix("install_php ")).map(str::to_string));
+        have
     }
     fn install_php(&mut self, minor: &str) -> Result<(), CoreError> {
         self.call(format!("install_php {minor}"))
@@ -73,9 +77,15 @@ impl Mover for FakeMover {
     fn set_extension(&mut self, minor: &str, name: &str) -> Result<(), CoreError> {
         self.call(format!("set_extension {minor} {name}"))
     }
-    fn create_redis(&mut self, port: u16, dump: Option<&Path>) -> Result<String, CoreError> {
-        self.call(format!("create_redis {port} {}", dump.is_some()))?;
+    fn existing_redis(&self, _: u16) -> Option<String> {
+        self.redis_before.clone()
+    }
+    fn create_redis(&mut self, port: u16) -> Result<String, CoreError> {
+        self.call(format!("create_redis {port}"))?;
         Ok("redis".into())
+    }
+    fn fill_redis(&mut self, id: &str, dump: Option<&Path>) -> Result<(), CoreError> {
+        self.call(format!("fill_redis {id} {}", dump.is_some()))
     }
     fn smtp_port(&self) -> u16 {
         2525
@@ -84,7 +94,7 @@ impl Mover for FakeMover {
         self.call(format!("set_smtp {port}"))
     }
     fn node_installed(&self) -> Vec<String> {
-        vec![]
+        self.calls.iter().filter_map(|c| c.strip_prefix("install_node ")).map(str::to_string).collect()
     }
     fn install_node(&mut self, version: &str) -> Result<(), CoreError> {
         self.call(format!("install_node {version}"))
@@ -120,11 +130,13 @@ impl Mover for FakeMover {
 struct FakeWrite {
     user_path: String,
     log: Vec<String>,
+    /// A `claude` call starting with this fails once.
+    fail_claude: Option<String>,
 }
 
 impl MachineWrite for FakeWrite {
-    fn user_path(&self) -> String {
-        self.user_path.clone()
+    fn user_path(&self) -> Result<String, CoreError> {
+        Ok(self.user_path.clone())
     }
     fn set_user_path(&mut self, value: &str) -> Result<(), CoreError> {
         self.user_path = value.into();
@@ -136,7 +148,12 @@ impl MachineWrite for FakeWrite {
         Ok(())
     }
     fn claude(&mut self, args: &[String]) -> Result<(), CoreError> {
-        self.log.push(format!("claude {}", args.join(" ")));
+        let line = format!("claude {}", args.join(" "));
+        if self.fail_claude.as_deref().is_some_and(|f| line.starts_with(f)) {
+            self.fail_claude = None;
+            return Err(CoreError::Php("claude failed".into()));
+        }
+        self.log.push(line);
         Ok(())
     }
     fn helper(&mut self, _: &Request) -> Result<(), CoreError> {
@@ -177,7 +194,8 @@ fn the_move_runs_every_step_in_order_and_records_it() {
             "set_ini_user 8.5 short_open_tag = On|memory_limit = 2048M|",
             "set_extension 8.5 redis",
             "set_extension 8.5 xdebug",
-            "create_redis 6379 true",
+            "create_redis 6379",
+            "fill_redis redis true",
             "set_smtp 2525",
             "install_node v21.7.0",
             "install_node v22.9.0",
@@ -222,7 +240,7 @@ fn the_move_runs_every_step_in_order_and_records_it() {
 fn a_second_run_after_a_failure_continues_without_redoing_anything() {
     let (_d, paths, inv) = setup();
     let plan = plan(&paths, &inv, &["8.4".to_string()]);
-    let mut mover = FakeMover { fail_at: Some("create_redis 6379 true".into()), ..FakeMover::default() };
+    let mut mover = FakeMover { fail_at: Some("create_redis 6379".into()), ..FakeMover::default() };
     let mut write = FakeWrite::default();
     let mut record = Record::default();
     assert!(run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).is_err());
@@ -232,9 +250,94 @@ fn a_second_run_after_a_failure_continues_without_redoing_anything() {
     let mut record = Record::load(&paths);
     run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap();
     let again = &mover.calls[done_before..];
-    assert_eq!(again.first().map(String::as_str), Some("create_redis 6379 true"), "{again:?}");
-    assert!(!again.iter().any(|c| c == "stop_herd" || c.starts_with("install_php")), "{again:?}");
+    assert_eq!(&again[..2], ["stop_herd", "create_redis 6379"], "Herd is stopped and the ports checked again");
+    assert!(!again.iter().any(|c| c.starts_with("install_php") || c == "import_sites"), "{again:?}");
     assert_eq!(write.log.iter().filter(|l| l.starts_with("run ")).count(), 1, "autostart is switched off once");
+}
+
+#[test]
+fn a_port_still_taken_on_the_second_run_stops_it_again() {
+    let (_d, paths, inv) = setup();
+    let plan = plan(&paths, &inv, &[]);
+    let mut mover = FakeMover { busy: vec![443], ..FakeMover::default() };
+    let mut write = FakeWrite::default();
+    let mut record = Record::default();
+    assert!(run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).is_err());
+    let mut record = Record::load(&paths);
+    let err = run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap_err();
+    assert_eq!(err.to_string(), "Port 443 is still in use by nginx.exe");
+    assert!(!mover.calls.iter().any(|c| c == "import_sites" || c.starts_with("set_ports")), "{:?}", mover.calls);
+}
+
+#[test]
+fn a_step_that_failed_halfway_runs_again_for_what_is_missing() {
+    let (_d, paths, inv) = setup();
+    let plan = plan(&paths, &inv, &["8.4".to_string()]);
+    let mut mover = FakeMover { fail_at: Some("install_php 8.5".into()), ..FakeMover::default() };
+    let mut write = FakeWrite::default();
+    let mut record = Record::default();
+    assert!(run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).is_err());
+    let done_before = mover.calls.len();
+
+    let mut record = Record::load(&paths);
+    run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap();
+    let again = &mover.calls[done_before..];
+    assert!(again.iter().any(|c| c == "install_php 8.5"), "{again:?}");
+    assert!(again.iter().any(|c| c == "set_php_default 8.5"), "{again:?}");
+    assert!(!again.iter().any(|c| c == "install_php 8.1"), "8.1 is there already: {again:?}");
+    let record = Record::load(&paths);
+    assert_eq!(record.steps.iter().filter(|s| s.kind() == "php").count(), 1);
+    match record.get("php") {
+        Some(Done::Php { installed, .. }) => assert_eq!(installed, &["8.1", "8.5"], "Undo still knows both"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_mcp_entry_is_added_again_when_the_add_failed() {
+    let (_d, paths, inv) = setup();
+    let plan = plan(&paths, &inv, &[]);
+    let mut mover = FakeMover::default();
+    let mut write = FakeWrite { fail_claude: Some("claude mcp add".into()), ..FakeWrite::default() };
+    let mut record = Record::default();
+    assert!(run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).is_err());
+    let mut record = Record::load(&paths);
+    run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap();
+    assert_eq!(
+        write.log.last().map(String::as_str),
+        Some(r"claude mcp add --scope user herd -- C:\h\bin\hearth.exe mcp")
+    );
+    assert_eq!(Record::load(&paths).steps.iter().filter(|s| s.kind() == "mcp").count(), 1);
+}
+
+#[test]
+fn a_redis_that_was_created_is_filled_on_the_next_run_not_created_twice() {
+    let (_d, paths, inv) = setup();
+    let plan = plan(&paths, &inv, &[]);
+    let mut mover = FakeMover { fail_at: Some("fill_redis redis true".into()), ..FakeMover::default() };
+    let mut write = FakeWrite::default();
+    let mut record = Record::default();
+    assert!(run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).is_err());
+    assert_eq!(Record::load(&paths).get("redis"), Some(&Done::Redis { id: "redis".into(), created: true }));
+    let mut record = Record::load(&paths);
+    run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap();
+    assert_eq!(mover.calls.iter().filter(|c| c.starts_with("create_redis")).count(), 1, "{:?}", mover.calls);
+    assert!(mover.calls.iter().any(|c| c == "fill_redis redis true"));
+}
+
+#[test]
+fn a_hearth_redis_already_on_the_port_is_used_and_kept() {
+    let (_d, paths, inv) = setup();
+    let plan = plan(&paths, &inv, &[]);
+    let mut mover = FakeMover { redis_before: Some("mine".into()), ..FakeMover::default() };
+    let mut write = FakeWrite::default();
+    let mut record = Record::default();
+    run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap();
+    assert!(
+        !mover.calls.iter().any(|c| c.starts_with("create_redis") || c.starts_with("fill_redis")),
+        "its data stays"
+    );
+    assert_eq!(Record::load(&paths).get("redis"), Some(&Done::Redis { id: "mine".into(), created: false }));
 }
 
 #[test]

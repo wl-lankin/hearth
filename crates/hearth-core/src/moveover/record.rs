@@ -57,8 +57,12 @@ pub enum Done {
         default_before: Option<String>,
         ini_before: BTreeMap<String, String>,
     },
+    /// Hearth's Redis that holds Herd's data; `created` is false for one that was there before
+    /// (Undo leaves that one).
     Redis {
         id: String,
+        #[serde(default = "yes")]
+        created: bool,
     },
     #[serde(rename_all = "camelCase")]
     Node {
@@ -94,6 +98,13 @@ impl Done {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Record {
     pub steps: Vec<Done>,
+    /// Kinds of the steps carried out to the end; a recorded step missing here runs again.
+    #[serde(default)]
+    pub finished: Vec<String>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn file(paths: &HearthPaths) -> PathBuf {
@@ -120,6 +131,32 @@ impl Record {
     /// Whether a step of this kind ("ports", "redis", ...) is recorded.
     pub fn has(&self, kind: &str) -> bool {
         self.steps.iter().any(|s| s.kind() == kind)
+    }
+
+    /// The recorded step of this kind.
+    pub fn get(&self, kind: &str) -> Option<&Done> {
+        self.steps.iter().find(|s| s.kind() == kind)
+    }
+
+    /// Whether the step of this kind was carried out to the end.
+    pub fn finished(&self, kind: &str) -> bool {
+        self.finished.iter().any(|k| k == kind)
+    }
+
+    /// Marks the step of this kind as carried out to the end.
+    pub fn finish(&mut self, paths: &HearthPaths, kind: &str) -> Result<(), CoreError> {
+        if !self.finished(kind) {
+            self.finished.push(kind.to_string());
+        }
+        self.save(paths)
+    }
+
+    /// Takes the newest step out (Undo put it back) and writes the record.
+    pub fn pop(&mut self, paths: &HearthPaths) -> Result<(), CoreError> {
+        if let Some(step) = self.steps.pop() {
+            self.finished.retain(|k| k != step.kind());
+        }
+        self.save(paths)
     }
 
     /// Forgets the record (after an Undo, or once Herd is gone).

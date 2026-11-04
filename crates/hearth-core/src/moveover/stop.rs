@@ -58,13 +58,21 @@ pub fn listener(port: u16) -> Option<u32> {
     })
 }
 
-/// A name for the program holding `port`: its file name, or its process id.
-pub fn holder(port: u16) -> Option<String> {
+/// The process listening on `port`: its id and, if known, its program.
+pub fn holder(port: u16) -> Option<(u32, Option<String>)> {
     let pid = listener(port)?;
-    let name = processes()
-        .into_iter()
-        .find(|(p, _)| *p == pid)
-        .and_then(|(_, path)| Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()));
+    let program = processes().into_iter().find(|(p, _)| *p == pid).map(|(_, path)| path);
+    Some((pid, program))
+}
+
+/// A name for a port's holder (its file name, or its process id), unless it is Hearth itself
+/// (`own_pid`) or one of Hearth's programs (inside `ours`): those may hold the port.
+pub fn foreign(holder: (u32, Option<String>), own_pid: u32, ours: &[&Path]) -> Option<String> {
+    let (pid, program) = holder;
+    if pid == own_pid || program.as_deref().is_some_and(|p| inside(p, ours)) {
+        return None;
+    }
+    let name = program.and_then(|p| Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()));
     Some(name.unwrap_or_else(|| format!("process {pid}")))
 }
 
@@ -72,7 +80,17 @@ pub fn holder(port: u16) -> Option<String> {
 mod tests {
     use std::path::Path;
 
-    use super::inside;
+    use super::{foreign, inside};
+
+    #[test]
+    fn hearths_own_programs_may_hold_a_port() {
+        let home = Path::new(r"C:\Users\x\.config\hearth");
+        let redis = r"C:\Users\x\.config\hearth\data\services\bin\redis\8\redis-server.exe";
+        assert_eq!(foreign((7, Some(redis.into())), 1, &[home]), None);
+        assert_eq!(foreign((1, None), 1, &[home]), None, "Hearth itself");
+        assert_eq!(foreign((7, Some(r"C:\nginx\nginx.exe".into())), 1, &[home]).as_deref(), Some("nginx.exe"));
+        assert_eq!(foreign((7, None), 1, &[home]).as_deref(), Some("process 7"));
+    }
 
     #[test]
     fn a_program_is_inside_a_folder_only_below_it() {

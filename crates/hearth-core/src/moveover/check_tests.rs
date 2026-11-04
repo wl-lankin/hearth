@@ -55,57 +55,57 @@ fn the_uninstall_waits_for_every_red_row_to_be_accepted() {
     assert!(gate(&checks, &["https://blog.test".to_string()]).is_ok());
 }
 
+/// Logs every call; a call whose line starts with the second field fails once.
 #[derive(Default)]
-struct Log(Vec<String>);
+struct Log(Vec<String>, Option<String>);
+
+impl Log {
+    fn note(&mut self, line: String) -> Result<(), CoreError> {
+        if self.1.as_deref().is_some_and(|f| line.starts_with(f)) {
+            self.1 = None;
+            return Err(CoreError::Php(format!("{line} failed")));
+        }
+        self.0.push(line);
+        Ok(())
+    }
+}
 
 impl Reverter for Log {
     fn start_herd(&mut self, app: &str) -> Result<(), CoreError> {
-        self.0.push(format!("start_herd {app}"));
-        Ok(())
+        self.note(format!("start_herd {app}"))
     }
     fn remove_sites(&mut self, _: &ImportPlan) -> Result<(), CoreError> {
-        self.0.push("remove_sites".into());
-        Ok(())
+        self.note("remove_sites".into())
     }
     fn restore_ca(&mut self, previous: Option<&(Vec<u8>, Vec<u8>)>) -> Result<(), CoreError> {
-        self.0.push(format!("restore_ca {}", previous.is_some()));
-        Ok(())
+        self.note(format!("restore_ca {}", previous.is_some()))
     }
     fn set_ports(&mut self, http: u16, https: u16) -> Result<(), CoreError> {
-        self.0.push(format!("set_ports {http} {https}"));
-        Ok(())
+        self.note(format!("set_ports {http} {https}"))
     }
     fn uninstall_php(&mut self, minor: &str) -> Result<(), CoreError> {
-        self.0.push(format!("uninstall_php {minor}"));
-        Ok(())
+        self.note(format!("uninstall_php {minor}"))
     }
     fn set_php_default(&mut self, minor: Option<&str>) -> Result<(), CoreError> {
-        self.0.push(format!("set_php_default {minor:?}"));
-        Ok(())
+        self.note(format!("set_php_default {minor:?}"))
     }
     fn set_ini_user(&mut self, minor: &str, user: &str) -> Result<(), CoreError> {
-        self.0.push(format!("set_ini_user {minor} {}", user.trim()));
-        Ok(())
+        self.note(format!("set_ini_user {minor} {}", user.trim()))
     }
     fn delete_service(&mut self, id: &str) -> Result<(), CoreError> {
-        self.0.push(format!("delete_service {id}"));
-        Ok(())
+        self.note(format!("delete_service {id}"))
     }
     fn set_smtp(&mut self, port: u16) -> Result<(), CoreError> {
-        self.0.push(format!("set_smtp {port}"));
-        Ok(())
+        self.note(format!("set_smtp {port}"))
     }
     fn uninstall_node(&mut self, version: &str) -> Result<(), CoreError> {
-        self.0.push(format!("uninstall_node {version}"));
-        Ok(())
+        self.note(format!("uninstall_node {version}"))
     }
     fn set_node_default(&mut self, version: Option<&str>) -> Result<(), CoreError> {
-        self.0.push(format!("set_node_default {version:?}"));
-        Ok(())
+        self.note(format!("set_node_default {version:?}"))
     }
     fn remove_forwarders(&mut self) -> Result<(), CoreError> {
-        self.0.push("remove_forwarders".into());
-        Ok(())
+        self.note("remove_forwarders".into())
     }
     fn sync(&mut self) {
         self.0.push("sync".into());
@@ -113,24 +113,20 @@ impl Reverter for Log {
 }
 
 impl MachineWrite for Log {
-    fn user_path(&self) -> String {
-        String::new()
+    fn user_path(&self) -> Result<String, CoreError> {
+        Ok(String::new())
     }
     fn set_user_path(&mut self, value: &str) -> Result<(), CoreError> {
-        self.0.push(format!("user_path {value}"));
-        Ok(())
+        self.note(format!("user_path {value}"))
     }
     fn set_run(&mut self, name: &str, command: Option<&str>) -> Result<(), CoreError> {
-        self.0.push(format!("run {name} {}", command.is_some()));
-        Ok(())
+        self.note(format!("run {name} {}", command.is_some()))
     }
     fn claude(&mut self, args: &[String]) -> Result<(), CoreError> {
-        self.0.push(format!("claude {}", args[1]));
-        Ok(())
+        self.note(format!("claude {}", args[1]))
     }
     fn helper(&mut self, _: &Request) -> Result<(), CoreError> {
-        self.0.push("helper restore".into());
-        Ok(())
+        self.note("helper restore".into())
     }
 }
 
@@ -156,7 +152,7 @@ fn undo_walks_the_record_backwards_and_forgets_it() {
             default_before: Some("8.4".into()),
             ini_before: [("8.5".to_string(), "short_open_tag = On\n".to_string())].into(),
         },
-        Done::Redis { id: "redis".into() },
+        Done::Redis { id: "redis".into(), created: true },
         Done::Smtp { previous: 2526 },
         Done::Node { installed: vec!["v22.9.0".into()], default_before: None },
         Done::Forwarders { names: vec!["mysql".into()] },
@@ -261,4 +257,36 @@ fn the_record_with_the_previous_ca_key_is_private() {
     record.push(&paths, Done::Ca { previous: Some((b"crt".to_vec(), b"key".to_vec())) }).unwrap();
     let mode = std::fs::metadata(paths.config.join("moveover-record.json")).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o600);
+}
+
+#[test]
+fn a_failed_undo_continues_where_it_stopped() {
+    let (_d, paths) = home();
+    let mut record = Record::default();
+    for step in [
+        Done::Imported { plan: ImportPlan::default() },
+        Done::Ports { http: 8080, https: 8443 },
+        Done::Smtp { previous: 2526 },
+    ] {
+        record.push(&paths, step).unwrap();
+    }
+    state::save(&paths, &MoveState { moved: true, ..MoveState::default() }).unwrap();
+    let mut log = Log(vec![], Some("set_ports".into()));
+    assert!(undo(&paths, &mut log, &mut Log::default()).is_err());
+    let kinds: Vec<&str> = Record::load(&paths).steps.iter().map(|s| s.kind()).collect();
+    assert_eq!(kinds, ["imported", "ports"], "what was put back is out of the record");
+    undo(&paths, &mut log, &mut Log::default()).unwrap();
+    assert_eq!(log.0, ["set_smtp 2526", "set_ports 8080 8443", "remove_sites", "sync"], "nothing twice");
+    assert!(!state::load(&paths).moved);
+}
+
+#[test]
+fn undo_keeps_a_redis_that_was_there_before_the_move() {
+    let (_d, paths) = home();
+    let mut record = Record::default();
+    record.push(&paths, Done::Redis { id: "mine".into(), created: false }).unwrap();
+    state::save(&paths, &MoveState { moved: true, ..MoveState::default() }).unwrap();
+    let mut log = Log::default();
+    undo(&paths, &mut log, &mut Log::default()).unwrap();
+    assert_eq!(log.0, ["sync"]);
 }

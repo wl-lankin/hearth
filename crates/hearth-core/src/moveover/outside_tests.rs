@@ -6,14 +6,21 @@ use crate::CoreError;
 #[derive(Default)]
 struct FakeWrite {
     user_path: String,
+    /// Reading the user PATH fails.
+    unreadable: bool,
+    /// `claude mcp remove` fails (no such entry).
+    no_entry: bool,
     run: Vec<(String, String)>,
     claude: Vec<Vec<String>>,
     helper: Vec<Request>,
 }
 
 impl MachineWrite for FakeWrite {
-    fn user_path(&self) -> String {
-        self.user_path.clone()
+    fn user_path(&self) -> Result<String, CoreError> {
+        if self.unreadable {
+            return Err(CoreError::Php("The user PATH could not be read".into()));
+        }
+        Ok(self.user_path.clone())
     }
     fn set_user_path(&mut self, value: &str) -> Result<(), CoreError> {
         self.user_path = value.into();
@@ -27,6 +34,9 @@ impl MachineWrite for FakeWrite {
         Ok(())
     }
     fn claude(&mut self, args: &[String]) -> Result<(), CoreError> {
+        if self.no_entry && args[1] == "remove" {
+            return Err(CoreError::Php("No MCP server named herd".into()));
+        }
         self.claude.push(args.to_vec());
         Ok(())
     }
@@ -54,11 +64,40 @@ fn the_user_path_loses_herds_entries_and_gets_them_back_exactly() {
     undo_outside(&mut m, &step).unwrap();
     assert_eq!(m.user_path, before, "nothing else changed: the exact old value");
 
-    // Changed in between: only Hearth's entry goes and Herd's come back; the other change stays.
+    // Changed in between: only Hearth's entry goes and Herd's come back at their places; the other
+    // change stays.
     apply_outside(&mut m, &step).unwrap();
     m.user_path.push_str(r";C:\new");
     undo_outside(&mut m, &step).unwrap();
-    assert_eq!(m.user_path, format!(r"C:\a;C:\b;C:\new;{HERD_BIN};{HERD_REDIS}"));
+    assert_eq!(m.user_path, format!(r"C:\a;{HERD_BIN};C:\b;{HERD_REDIS};C:\new"));
+}
+
+#[test]
+fn undo_keeps_hearths_entry_when_it_was_there_before_the_move() {
+    let before = format!(r"{HEARTH_BIN};C:\a;{HERD_BIN}");
+    let mut m = FakeWrite { user_path: before.clone(), ..FakeWrite::default() };
+    let step = Done::UserPath { removed: vec![HERD_BIN.into()], added: HEARTH_BIN.into(), before };
+    apply_outside(&mut m, &step).unwrap();
+    m.user_path.push_str(r";C:\new");
+    undo_outside(&mut m, &step).unwrap();
+    assert_eq!(m.user_path, format!(r"{HEARTH_BIN};C:\a;{HERD_BIN};C:\new"));
+}
+
+#[test]
+fn an_unreadable_user_path_is_never_overwritten() {
+    let mut m = FakeWrite { user_path: r"C:\a".into(), unreadable: true, ..FakeWrite::default() };
+    let step = Done::UserPath { removed: vec![HERD_BIN.into()], added: HEARTH_BIN.into(), before: r"C:\a".into() };
+    assert!(apply_outside(&mut m, &step).is_err());
+    assert!(undo_outside(&mut m, &step).is_err());
+    assert_eq!(m.user_path, r"C:\a");
+}
+
+#[test]
+fn the_mcp_swap_runs_again_when_herds_entry_is_gone_already() {
+    let mut m = FakeWrite { no_entry: true, ..FakeWrite::default() };
+    let step = Done::Mcp { herd_entry: serde_json::json!({}), hearth: "hearth.exe".into() };
+    apply_outside(&mut m, &step).unwrap();
+    assert_eq!(m.claude.last().map(|a| a[1].as_str()), Some("add"));
 }
 
 #[test]

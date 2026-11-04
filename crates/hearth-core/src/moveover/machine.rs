@@ -65,11 +65,11 @@ impl Machine for RealMachine {
 pub struct RealWrite;
 
 impl MachineWrite for RealWrite {
-    fn user_path(&self) -> String {
+    fn user_path(&self) -> Result<String, CoreError> {
         #[cfg(windows)]
-        return crate::path_env::read_user_path().unwrap_or_default();
+        return crate::path_env::read_user_path();
         #[cfg(not(windows))]
-        String::new()
+        Ok(String::new())
     }
 
     fn set_user_path(&mut self, value: &str) -> Result<(), CoreError> {

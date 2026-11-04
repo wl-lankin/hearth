@@ -7,7 +7,8 @@ use crate::CoreError;
 
 /// Where those changes land; the real one is this computer, tests pass their own.
 pub trait MachineWrite {
-    fn user_path(&self) -> String;
+    /// The user PATH as stored; an error when it cannot be read (then nothing writes it).
+    fn user_path(&self) -> Result<String, CoreError>;
     fn set_user_path(&mut self, value: &str) -> Result<(), CoreError>;
     /// Sets (or with `None` removes) a value of the current user's `Run` key.
     fn set_run(&mut self, name: &str, command: Option<&str>) -> Result<(), CoreError>;
@@ -32,7 +33,7 @@ fn args(list: &[&str]) -> Vec<String> {
 pub fn apply_outside(m: &mut dyn MachineWrite, step: &Done) -> Result<(), CoreError> {
     match step {
         Done::UserPath { removed, added, .. } => {
-            let mut next: Vec<String> = entries(&m.user_path()).into_iter().filter(|e| !has(removed, e)).collect();
+            let mut next: Vec<String> = entries(&m.user_path()?).into_iter().filter(|e| !has(removed, e)).collect();
             if !has(&next, added) {
                 next.insert(0, added.clone());
             }
@@ -44,7 +45,8 @@ pub fn apply_outside(m: &mut dyn MachineWrite, step: &Done) -> Result<(), CoreEr
         }),
         Done::Autostart { name, .. } => m.set_run(name, None),
         Done::Mcp { hearth, .. } => {
-            m.claude(&args(&["mcp", "remove", "--scope", "user", "herd"]))?;
+            // No entry to remove (a run before removed it) is fine: the add is what counts.
+            let _ = m.claude(&args(&["mcp", "remove", "--scope", "user", "herd"]));
             m.claude(&args(&["mcp", "add", "--scope", "user", "herd", "--", hearth, "mcp"]))
         }
         _ => Ok(()),
@@ -54,20 +56,22 @@ pub fn apply_outside(m: &mut dyn MachineWrite, step: &Done) -> Result<(), CoreEr
 pub fn undo_outside(m: &mut dyn MachineWrite, step: &Done) -> Result<(), CoreError> {
     match step {
         Done::UserPath { removed, added, before } => {
-            let current = m.user_path();
+            let current = m.user_path()?;
             let mut moved: Vec<String> = entries(before).into_iter().filter(|e| !has(removed, e)).collect();
             if !has(&moved, added) {
                 moved.insert(0, added.clone());
             }
-            // Untouched since the move: the exact old value. Else only Hearth's entry goes and Herd's come back.
+            // Untouched since the move: the exact old value. Else Hearth's entry goes (unless it was
+            // there before) and Herd's come back at their old places.
             if current == moved.join(";") {
                 return m.set_user_path(before);
             }
+            let old = entries(before);
             let mut next: Vec<String> =
-                entries(&current).into_iter().filter(|e| !e.eq_ignore_ascii_case(added)).collect();
-            for entry in removed {
+                entries(&current).into_iter().filter(|e| has(&old, added) || !e.eq_ignore_ascii_case(added)).collect();
+            for (index, entry) in old.iter().enumerate().filter(|(_, e)| has(removed, e)) {
                 if !has(&next, entry) {
-                    next.push(entry.clone());
+                    next.insert(index.min(next.len()), entry.clone());
                 }
             }
             m.set_user_path(&next.join(";"))
@@ -76,7 +80,7 @@ pub fn undo_outside(m: &mut dyn MachineWrite, step: &Done) -> Result<(), CoreErr
         Done::MachineEnv { .. } => m.helper(&Request::MachineEnvRestore),
         Done::Autostart { name, value } => m.set_run(name, Some(value)),
         Done::Mcp { herd_entry, .. } => {
-            m.claude(&args(&["mcp", "remove", "--scope", "user", "herd"]))?;
+            let _ = m.claude(&args(&["mcp", "remove", "--scope", "user", "herd"]));
             let json = herd_entry.to_string();
             m.claude(&args(&["mcp", "add-json", "--scope", "user", "herd", &json]))
         }

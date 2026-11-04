@@ -96,7 +96,15 @@ impl Mover for RealMover {
         if crate::services::ports::port_free(port) {
             return None;
         }
-        Some(stop::holder(port).unwrap_or_else(|| "another program".into()))
+        // Hearth's own web server, Redis or mail catcher may hold it (a run before, or Hearth won the
+        // race for the port at login): that is no reason to stop.
+        let Some(holder) = stop::holder(port) else {
+            return Some("another program".into());
+        };
+        let exe = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+        let mut ours: Vec<&Path> = vec![self.paths().root.as_path()];
+        ours.extend(exe.as_deref());
+        stop::foreign(holder, std::process::id(), &ours)
     }
 
     fn import_sites(&mut self, plan: &ImportPlan) -> Result<(), CoreError> {
@@ -174,7 +182,14 @@ impl Mover for RealMover {
         self.ipc("php.extension", json!({ "minor": minor, "name": name, "on": true })).map(|_| ())
     }
 
-    fn create_redis(&mut self, port: u16, dump: Option<&Path>) -> Result<String, CoreError> {
+    fn existing_redis(&self, port: u16) -> Option<String> {
+        crate::services::store::load(self.paths())
+            .into_iter()
+            .find(|i| i.kind == "redis" && i.port == port)
+            .map(|i| i.id)
+    }
+
+    fn create_redis(&mut self, port: u16) -> Result<String, CoreError> {
         let available = self.ipc("services.available", Value::Null)?;
         let line = available["builds"]
             .as_array()
@@ -186,16 +201,21 @@ impl Mover for RealMover {
             .ok_or_else(|| CoreError::Php("No Redis build for this computer".into()))?
             .to_string();
         let made = self.ipc("services.create", json!({ "kind": "redis", "line": line, "port": port }))?;
-        let id = made["id"].as_str().or_else(|| made["instance"]["id"].as_str()).unwrap_or("redis").to_string();
+        Ok(made["id"].as_str().or_else(|| made["instance"]["id"].as_str()).unwrap_or("redis").to_string())
+    }
+
+    fn fill_redis(&mut self, id: &str, dump: Option<&Path>) -> Result<(), CoreError> {
         if let Some(dump) = dump {
-            let inst = crate::services::store::get(self.paths(), &id)?;
+            // Stopped first: a running Redis would write its own data over the copy.
+            let _ = self.ipc("services.stop", json!({ "id": id }));
+            let inst = crate::services::store::get(self.paths(), id)?;
             let data = crate::services::store::data_dir(self.paths(), &inst);
             std::fs::create_dir_all(&data).map_err(|e| CoreError::io(&data, e))?;
             std::fs::copy(dump, data.join("dump.rdb")).map_err(|e| CoreError::io(dump, e))?;
         }
         self.ipc("services.autostart", json!({ "id": id, "on": true }))?;
         self.ipc("services.start", json!({ "id": id }))?;
-        Ok(id)
+        Ok(())
     }
 
     fn smtp_port(&self) -> u16 {
@@ -332,6 +352,9 @@ impl super::undo::Reverter for RealMover {
     }
 
     fn uninstall_php(&mut self, minor: &str) -> Result<(), CoreError> {
+        if !crate::php::store::installed(self.paths()).iter().any(|p| p.minor == minor) {
+            return Ok(());
+        }
         self.ipc("php.uninstall", json!({ "minor": minor })).map(|_| ())
     }
 
@@ -347,6 +370,9 @@ impl super::undo::Reverter for RealMover {
     }
 
     fn delete_service(&mut self, id: &str) -> Result<(), CoreError> {
+        if crate::services::store::get(self.paths(), id).is_err() {
+            return Ok(());
+        }
         let _ = self.ipc("services.stop", json!({ "id": id }));
         self.ipc("services.delete", json!({ "id": id })).map(|_| ())
     }
@@ -356,6 +382,9 @@ impl super::undo::Reverter for RealMover {
     }
 
     fn uninstall_node(&mut self, version: &str) -> Result<(), CoreError> {
+        if !self.node_installed().iter().any(|v| v == version) {
+            return Ok(());
+        }
         self.ipc("node.uninstall", json!({ "spec": version.trim_start_matches('v') })).map(|_| ())
     }
 
