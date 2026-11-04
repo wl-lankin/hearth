@@ -99,7 +99,9 @@ pub fn foreign(holder: (u32, Option<String>), own_pid: u32, ours: &[&Path]) -> O
 mod tests {
     use std::path::Path;
 
-    use super::{database_server, foreign, inside};
+    use super::inside;
+    #[cfg(windows)]
+    use super::{database_server, foreign};
 
     // Windows paths: only Windows reads them as paths.
     #[cfg(windows)]
