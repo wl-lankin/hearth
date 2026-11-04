@@ -54,3 +54,10 @@ test('motion stops when the OS asks', () => {
   expect(reduced).toContain('animation: none');
   expect(reduced).toContain('transition: none');
 });
+
+test('only fields let text be selected', () => {
+  const body = styles.slice(styles.indexOf('html,\nbody {'));
+  expect(body.slice(0, body.indexOf('}'))).toContain('user-select: none');
+  const fields = styles.slice(styles.indexOf('input,\ntextarea,\n[contenteditable'));
+  expect(fields.slice(0, fields.indexOf('}'))).toContain('user-select: text');
+});
