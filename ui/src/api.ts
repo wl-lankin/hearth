@@ -719,3 +719,101 @@ export const profileClear = async (): Promise<{ deleted: number }> => {
   demoReports = [];
   return { deleted };
 };
+
+export interface ProcessRow {
+  name: string;
+  command: string;
+  autostart: boolean;
+  running: boolean;
+  pid: number | null;
+  restarts: number;
+  lastError: string | null;
+}
+
+export interface ProcessList {
+  sites: { site: string; processes: ProcessRow[] }[];
+}
+
+export interface ProcessOutput {
+  /** Where the next read starts. */
+  offset: number;
+  text: string;
+  /** The log was emptied (a restart): the text replaces what is shown. */
+  reset: boolean;
+}
+
+export interface ProcessSuggestion {
+  name: string;
+  command: string;
+  autostart: boolean;
+}
+
+let demoProcesses: ProcessList = {
+  sites: [
+    {
+      site: 'shop',
+      processes: [
+        { name: 'vite', command: 'npm run dev', autostart: true, running: true, pid: 4120, restarts: 0, lastError: null },
+        { name: 'queue', command: 'php artisan queue:listen --tries=1', autostart: false, running: false, pid: null, restarts: 0, lastError: null },
+      ],
+    },
+  ],
+};
+const demoOutput = `
+> dev
+> vite
+
+
+  VITE v7.1.4  ready in 412 ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+  ➜  press h + enter to show help
+
+  LARAVEL v12.30.1  plugin v2.0.1
+
+  ➜  APP_URL: http://shop.test:8080
+11:02:16 [vite] (client) hmr update /resources/js/app.js
+`;
+
+const demoAct = (site: string, name: string, running: boolean) => {
+  const row = demoProcesses.sites.find((s) => s.site === site)?.processes.find((p) => p.name === name);
+  if (row) row.running = running;
+};
+
+export const processesList = (): Promise<ProcessList> =>
+  demo ? Promise.resolve(structuredClone(demoProcesses)) : core('processes.list');
+export const processesOutput = (site: string, name: string, offset?: number): Promise<ProcessOutput> =>
+  demo
+    ? Promise.resolve(offset === undefined && site === 'shop' && name === 'vite' ? { offset: demoOutput.length, text: demoOutput, reset: false } : { offset: offset ?? 0, text: '', reset: false })
+    : core('processes.output', offset === undefined ? { site, name } : { site, name, offset });
+export const processesStart = async (site: string, name: string): Promise<void> => {
+  if (demo) return demoAct(site, name, true);
+  await core('processes.start', { site, name });
+};
+export const processesRestart = async (site: string, name: string): Promise<void> => {
+  if (demo) return demoAct(site, name, true);
+  await core('processes.restart', { site, name });
+};
+export const processesStop = async (site: string, name: string): Promise<void> => {
+  if (demo) return demoAct(site, name, false);
+  await core('processes.stop', { site, name });
+};
+export const processesAdd = async (site: string, name: string, command: string, autostart: boolean): Promise<void> => {
+  if (!demo) return void (await core('processes.add', { site, name, command, autostart }));
+  let group = demoProcesses.sites.find((s) => s.site === site);
+  if (!group) demoProcesses.sites.push((group = { site, processes: [] }));
+  group.processes.push({ name, command, autostart, running: false, pid: null, restarts: 0, lastError: null });
+};
+export const processesRemove = async (site: string, name: string): Promise<void> => {
+  if (!demo) return void (await core('processes.remove', { site, name }));
+  demoProcesses = { sites: demoProcesses.sites.map((s) => (s.site === site ? { ...s, processes: s.processes.filter((p) => p.name !== name) } : s)).filter((s) => s.processes.length) };
+};
+export const processesSuggest = (site: string): Promise<ProcessSuggestion[]> =>
+  demo
+    ? Promise.resolve([
+        { name: 'vite', command: 'npm run dev', autostart: false },
+        { name: 'queue', command: 'php artisan queue:listen --tries=1', autostart: false },
+        { name: 'pail', command: 'php artisan pail', autostart: false },
+      ])
+    : core('processes.suggest', { site });
