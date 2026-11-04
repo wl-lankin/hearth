@@ -107,3 +107,10 @@ async fn proxies_and_unknown_sites_have_no_env() {
     let err = call(&core, "env.get", json!({ "site": "nope" })).await.unwrap_err();
     assert_eq!(err.message, "No site named nope.test");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unknown_env_method_is_not_found() {
+    let (_d, core, _shop) = home();
+    let err = call(&core, "env.nope", json!({})).await.unwrap_err();
+    assert_eq!(err.message, "unknown method: env.nope");
+}

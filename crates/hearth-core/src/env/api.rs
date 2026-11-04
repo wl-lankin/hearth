@@ -2,7 +2,7 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR, INVALID_PARAMS};
+use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND};
 use crate::CoreError;
 
 fn failed(e: CoreError) -> RpcError {
@@ -55,7 +55,7 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
                 let changed = super::use_service(paths, site, category, selection).map_err(failed)?;
                 Ok(json!({ "changed": changed }))
             }
-            _ => Err(RpcError::new(INVALID_PARAMS, String::new())),
+            _ => Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {method}"))),
         }
     })();
     method.starts_with("env.").then_some(result)
