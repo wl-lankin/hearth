@@ -889,6 +889,8 @@ export interface MoveStatus {
   herd: boolean;
   moved: boolean;
   uninstalled: boolean;
+  /** A move started but did not finish: it can continue or go back. */
+  recorded?: boolean;
 }
 export interface MoveItem {
   area: string;
@@ -912,6 +914,12 @@ export interface MoveCheck {
   services: { name: string; running: boolean }[];
   node: { fromHearth: boolean };
   accepted: string[];
+}
+export interface MoveUninstall {
+  exitCode: number;
+  /** Hearth could not trust its certificate authority again after the uninstall. */
+  trustError?: string | null;
+  check: MoveCheck;
 }
 
 const demoMoveItems: MoveItem[] = [
@@ -946,5 +954,5 @@ export const moveoverCheck = (): Promise<MoveCheck> =>
 export const moveoverAccept = (key: string): Promise<{ accepted: string[] }> =>
   demo ? Promise.resolve({ accepted: [key] }) : core('moveover.accept', { key });
 export const moveoverUndo = (): Promise<{ jobId: number }> => (demo ? Promise.resolve({ jobId: 10 }) : core('moveover.undo'));
-export const moveoverUninstall = (): Promise<{ exitCode: number; check: MoveCheck }> =>
+export const moveoverUninstall = (): Promise<MoveUninstall> =>
   demo ? Promise.resolve({ exitCode: 0, check: structuredClone(demoMoveCheck) }) : core('moveover.uninstallHerd');

@@ -1,4 +1,4 @@
-import type { JobStatus, MoveCheck, MoveItem, MoveScan, MoveStatus, SiteCheck } from './api';
+import type { JobStatus, MoveCheck, MoveItem, MoveScan, MoveStatus, MoveUninstall, SiteCheck } from './api';
 
 export type MoveApi = {
   moveoverState(): Promise<MoveStatus>;
@@ -7,16 +7,35 @@ export type MoveApi = {
   moveoverCheck(): Promise<MoveCheck>;
   moveoverAccept(key: string): Promise<{ accepted: string[] }>;
   moveoverUndo(): Promise<{ jobId: number }>;
-  moveoverUninstall(): Promise<{ exitCode: number; check: MoveCheck }>;
+  moveoverUninstall(): Promise<MoveUninstall>;
   jobGet(id: number): Promise<JobStatus>;
 };
 
-export type Step = 'loading' | 'dry' | 'moving' | 'check' | 'uninstalling' | 'done' | 'none';
+export type Step = 'loading' | 'dry' | 'partial' | 'moving' | 'check' | 'uninstalling' | 'done' | 'none';
 
 /** `https://shop.test`: how a check row is named, and accepted. */
 export const keyOf = (c: SiteCheck) => `${c.scheme}://${c.host}`;
 
 const message = (e: unknown) => String(e).replace(/^Error: /, '');
+
+/** Every row the uninstall waits for: the sites, then the services and Node (as the core keeps them). */
+export function rowsOf(check: MoveCheck): SiteCheck[] {
+  const services: SiteCheck[] = check.services.map((s) => ({
+    host: s.name,
+    scheme: 'service',
+    verdict: s.running ? { kind: 'same' } : { kind: 'broken', detail: 'not running' },
+  }));
+  const node: SiteCheck = {
+    host: 'node',
+    scheme: 'node',
+    verdict: check.node.fromHearth ? { kind: 'same' } : { kind: 'changed', detail: "still Herd's Node" },
+  };
+  return [...check.sites, ...services, node];
+}
+
+/** A row that needs a look: changed or broken, and not accepted. */
+export const isOpen = (check: MoveCheck, row: SiteCheck) =>
+  (row.verdict.kind === 'changed' || row.verdict.kind === 'broken') && !check.accepted.includes(keyOf(row));
 
 /** The move-over wizard: dry run, move, check, uninstall, done. */
 export function createMoveStore(api: MoveApi, opts: { pollMs?: number } = {}) {
@@ -29,6 +48,9 @@ export function createMoveStore(api: MoveApi, opts: { pollMs?: number } = {}) {
   let current = $state('');
   let error = $state<string | null>(null);
   let busy = $state(false);
+  // After the uninstall: the check that ran then, and a trust problem if there was one.
+  let after = $state<MoveCheck | null>(null);
+  let trustError = $state<string | null>(null);
 
   async function waitFor(jobId: number) {
     for (;;) {
@@ -91,18 +113,23 @@ export function createMoveStore(api: MoveApi, opts: { pollMs?: number } = {}) {
     get busy() {
       return busy;
     },
+    get after() {
+      return after;
+    },
+    get trustError() {
+      return trustError;
+    },
     /** Every red row (changed or broken) either accepted or gone. */
     get canUninstall() {
-      return (
-        !!check &&
-        check.sites.every((c) => c.verdict.kind === 'same' || c.verdict.kind === 'better' || check!.accepted.includes(keyOf(c)))
-      );
+      const current = check;
+      return !!current && !rowsOf(current).some((row) => isOpen(current, row));
     },
     load: () =>
       guarded(async () => {
         const state = await api.moveoverState();
         if (state.uninstalled) step = 'done';
         else if (state.moved) await runCheck();
+        else if (state.recorded) step = 'partial';
         else if (state.herd) await scan();
         else step = 'none';
       }),
@@ -113,8 +140,8 @@ export function createMoveStore(api: MoveApi, opts: { pollMs?: number } = {}) {
         try {
           await waitFor((await api.moveoverApply()).jobId);
         } catch (e) {
-          // A failed move can run again: it continues where it stopped.
-          step = 'dry';
+          // A failed move can run again (it continues where it stopped), or go back.
+          step = 'partial';
           throw e;
         }
         await runCheck();
@@ -127,8 +154,16 @@ export function createMoveStore(api: MoveApi, opts: { pollMs?: number } = {}) {
       }),
     undo: () =>
       guarded(async () => {
+        const back = check ? 'check' : 'partial';
         step = 'moving';
-        await waitFor((await api.moveoverUndo()).jobId);
+        try {
+          await waitFor((await api.moveoverUndo()).jobId);
+        } catch (e) {
+          // Undo continues where it stopped the next time.
+          step = back;
+          throw e;
+        }
+        check = null;
         await scan();
       }),
     uninstall: () =>
@@ -136,6 +171,10 @@ export function createMoveStore(api: MoveApi, opts: { pollMs?: number } = {}) {
         step = 'uninstalling';
         const result = await api.moveoverUninstall();
         check = result.check;
+        if (result.exitCode === 0) {
+          after = result.check;
+          trustError = result.trustError ?? null;
+        }
         step = result.exitCode === 0 ? 'done' : 'check';
         if (result.exitCode !== 0) throw new Error("Herd's uninstaller stopped without uninstalling. Herd is still there.");
       }),

@@ -24,7 +24,7 @@ const red: MoveCheck = {
   accepted: [],
 };
 
-function fakeApi(state = { herd: true, moved: false, uninstalled: false }) {
+function fakeApi(state: api.MoveStatus = { herd: true, moved: false, uninstalled: false }) {
   return {
     ...api,
     moveoverState: vi.fn(async () => state),
@@ -33,7 +33,7 @@ function fakeApi(state = { herd: true, moved: false, uninstalled: false }) {
     moveoverAccept: vi.fn(async (key: string) => ({ accepted: [key] })),
     moveoverUndo: vi.fn(async () => ({ jobId: 2 })),
     moveoverUninstall: vi.fn(async () => ({ exitCode: 0, check: { ...structuredClone(red), accepted: ['http://blog.test'] } })),
-    jobGet: vi.fn(async (id: number) => ({
+    jobGet: vi.fn(async (id: number): Promise<api.JobStatus> => ({
       id, kind: 'moveover', key: '', label: '', progress: 1, message: 'Moved', state: 'done' as const, error: null,
     })),
   };
@@ -79,6 +79,103 @@ test('moving leads to the check, and the uninstall waits for every red row', asy
   expect(source.moveoverUninstall).toHaveBeenCalled();
   expect(text()).toContain('Claude updates your CLAUDE.md and skills');
   expect(button('Undo')).toBeUndefined();
+  unmount(page);
+});
+
+test('a move that stopped halfway offers to continue or go back, without a new scan', async () => {
+  const source = fakeApi({ herd: true, moved: false, uninstalled: false, recorded: true });
+  source.moveoverScan = vi.fn(source.moveoverScan);
+  const { page, text, button } = render(source);
+  await settle();
+  expect(text()).toContain('The move stopped halfway');
+  expect(source.moveoverScan).not.toHaveBeenCalled();
+  expect(button('Continue the move')).toBeTruthy();
+  button('Continue the move')!.click();
+  await settle(12);
+  expect(source.moveoverApply).toHaveBeenCalled();
+  expect(text()).toContain('302 to / instead of 200');
+  unmount(page);
+});
+
+test('a failed undo leaves its buttons, with the error', async () => {
+  const source = fakeApi({ herd: true, moved: false, uninstalled: false, recorded: true });
+  source.jobGet = vi.fn(async (id: number) => ({
+    id, kind: 'moveover', key: '', label: '', progress: 0.5, message: 'Undo', state: 'failed' as const,
+    error: 'PHP 8.1 could not be removed',
+  }));
+  const { page, text, button } = render(source);
+  await settle();
+  button('Undo')!.click();
+  await settle(12);
+  expect(text()).toContain('PHP 8.1 could not be removed');
+  expect(button('Undo')).toBeTruthy();
+  expect(button('Continue the move')).toBeTruthy();
+  unmount(page);
+});
+
+test('a stopped service and Herd\'s Node hold the uninstall until accepted', async () => {
+  const source = fakeApi({ herd: true, moved: true, uninstalled: false });
+  const check: MoveCheck = {
+    sites: [{ host: 'shop.test', scheme: 'http', verdict: { kind: 'same' } }],
+    services: [{ name: 'MySQL 8', running: false }],
+    node: { fromHearth: false },
+    accepted: [],
+  };
+  source.moveoverCheck = vi.fn(async () => structuredClone(check));
+  // Like the core: the whole list of accepted rows.
+  const accepted: string[] = [];
+  source.moveoverAccept = vi.fn(async (key: string) => {
+    accepted.push(key);
+    return { accepted: [...accepted] };
+  });
+  const { page, button, target } = render(source);
+  await settle();
+  expect(button('Uninstall Herd')!.disabled).toBe(true);
+  const accepts = () => [...target.querySelectorAll('button')].filter((b) => b.textContent?.trim() === 'Accept');
+  expect(accepts()).toHaveLength(2);
+  accepts()[0].click();
+  await settle();
+  expect(source.moveoverAccept).toHaveBeenCalledWith('service://MySQL 8');
+  expect(button('Uninstall Herd')!.disabled).toBe(true);
+  accepts()[0].click();
+  await settle();
+  expect(source.moveoverAccept).toHaveBeenCalledWith('node://node');
+  expect(button('Uninstall Herd')!.disabled).toBe(false);
+  unmount(page);
+});
+
+test('the done screen shows what the check after the uninstall found', async () => {
+  const source = fakeApi({ herd: true, moved: true, uninstalled: false });
+  source.moveoverAccept = vi.fn(async () => ({ accepted: ['http://blog.test'] }));
+  source.moveoverUninstall = vi.fn(async () => ({
+    exitCode: 0,
+    trustError: 'The trust store said no',
+    check: {
+      ...structuredClone(red),
+      sites: [{ host: 'shop.test', scheme: 'http', verdict: { kind: 'broken' as const, detail: 'no answer' } }],
+    },
+  }));
+  const { page, text, button } = render(source);
+  await settle();
+  button('Accept')!.click();
+  await settle();
+  button('Uninstall Herd')!.click();
+  await settle();
+  expect(text()).toContain('Herd is gone');
+  expect(text()).toContain('http://shop.test');
+  expect(text()).toContain('no answer');
+  expect(text()).toContain('The trust store said no');
+  unmount(page);
+});
+
+test('two dry run rows with the same name both show', async () => {
+  const source = fakeApi();
+  const item = { area: 'php', what: 'memory_limit (PHP 8.4)', action: 'memory_limit = 1G', moved: true, reason: null };
+  source.moveoverScan = vi.fn(async () => ({ plan: { items: [item, { ...item, action: 'memory_limit = 2G' }] }, startedHerd: false }));
+  const { page, text } = render(source);
+  await settle();
+  expect(text()).toContain('memory_limit = 1G');
+  expect(text()).toContain('memory_limit = 2G');
   unmount(page);
 });
 
