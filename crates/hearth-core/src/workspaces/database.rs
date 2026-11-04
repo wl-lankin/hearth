@@ -8,6 +8,7 @@ use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 
+use crate::db::{client, finish, mysql, mysql_args, psql, quote_pg, tick, Conn, Driver};
 use crate::workspaces::{env_file, names};
 use crate::{CoreError, HearthPaths};
 
@@ -50,57 +51,18 @@ impl Prepared {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Driver {
-    Mysql,
-    Pgsql,
-    Sqlite,
-}
-
-impl Driver {
-    fn name(self) -> &'static str {
-        match self {
-            Driver::Mysql => "mysql",
-            Driver::Pgsql => "pgsql",
-            Driver::Sqlite => "sqlite",
-        }
-    }
-}
-
-/// A server connection from a `.env`.
-struct Conn {
-    driver: Driver,
-    host: String,
-    port: u16,
-    user: String,
-    password: String,
-    database: String,
-}
-
-/// The driver of a `.env` (Laravel's default is SQLite), or why it is not supported.
+/// The driver of a `.env`, or why the workspace keeps the parent's database.
 fn driver(env: &str) -> Result<Driver, String> {
-    let name = env_file::get(env, "DB_CONNECTION").unwrap_or_else(|| "sqlite".into());
-    match name.to_lowercase().as_str() {
-        "mysql" | "mariadb" => Ok(Driver::Mysql),
-        "pgsql" | "postgres" | "postgresql" => Ok(Driver::Pgsql),
-        "sqlite" => Ok(Driver::Sqlite),
-        other => Err(format!("Hearth cannot make a {other} database: the workspace uses the parent's")),
-    }
+    crate::db::driver(env)
+        .map_err(|other| format!("Hearth cannot make a {other} database: the workspace uses the parent's"))
 }
 
 fn conn(env: &str, driver: Driver) -> Result<Conn, String> {
-    let get = |k: &str| env_file::get(env, k).filter(|v| !v.is_empty());
-    let database =
-        get("DB_DATABASE").ok_or("DB_DATABASE is empty in .env: the workspace uses the parent's database")?;
-    let default_port = if driver == Driver::Pgsql { 5432 } else { 3306 };
-    Ok(Conn {
-        driver,
-        host: get("DB_HOST").unwrap_or_else(|| "127.0.0.1".into()),
-        port: get("DB_PORT").and_then(|p| p.parse().ok()).unwrap_or(default_port),
-        user: get("DB_USERNAME").unwrap_or_else(|| "root".into()),
-        password: env_file::get(env, "DB_PASSWORD").unwrap_or_default(),
-        database,
-    })
+    let c = crate::db::conn(env, driver);
+    if c.database.is_empty() {
+        return Err("DB_DATABASE is empty in .env: the workspace uses the parent's database".into());
+    }
+    Ok(c)
 }
 
 /// Makes the workspace's database as `mode` asks, from the workspace's `.env` (a copy of the
@@ -326,77 +288,6 @@ fn server(paths: &HearthPaths, c: &Conn, mode: Mode, branch: &str) -> Result<Str
     Ok(name)
 }
 
-fn tick(name: &str) -> String {
-    format!("`{}`", name.replace('`', "``"))
-}
-
-fn quote_pg(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
-}
-
-/// The client program `names` (first found): in the Hearth service listening on `port`, else on PATH.
-fn client(paths: &HearthPaths, kinds: &[&str], port: u16, names: &[&str]) -> PathBuf {
-    let exe = std::env::consts::EXE_SUFFIX;
-    for inst in
-        crate::services::store::load(paths).iter().filter(|i| i.port == port && kinds.contains(&i.kind.as_str()))
-    {
-        let Ok(versions) = std::fs::read_dir(paths.data.join("services").join("bin").join(&inst.kind)) else {
-            continue;
-        };
-        // The instance's own version line (`8.4` holds `8.4.11`), newest patch first.
-        let line = format!("{}.", inst.line);
-        let mut dirs: Vec<(String, PathBuf)> = versions
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().is_dir())
-            .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
-            .filter(|(v, _)| *v == inst.line || v.starts_with(&line) || inst.line == "current")
-            .collect();
-        dirs.sort_by(|a, b| crate::php::manifest::compare_versions(&a.0, &b.0));
-        let dirs: Vec<PathBuf> = dirs.into_iter().map(|(_, p)| p).collect();
-        for dir in dirs.iter().rev() {
-            for name in names {
-                let p = dir.join("bin").join(format!("{name}{exe}"));
-                if p.is_file() {
-                    return p;
-                }
-            }
-        }
-    }
-    // PATH: the first of the names that is there, else the first name (the error then says so).
-    for name in names {
-        if let Some(found) = std::env::var_os("PATH")
-            .and_then(|p| std::env::split_paths(&p).map(|d| d.join(format!("{name}{exe}"))).find(|p| p.is_file()))
-        {
-            return found;
-        }
-    }
-    PathBuf::from(names[0])
-}
-
-fn mysql_args(c: &Conn) -> Vec<String> {
-    vec!["--protocol=TCP".into(), "-h".into(), c.host.clone(), format!("-P{}", c.port), "-u".into(), c.user.clone()]
-}
-
-fn finish(what: &str, out: std::io::Result<std::process::Output>) -> Result<String, CoreError> {
-    let out = out.map_err(|e| CoreError::Php(format!("{what} could not be started: {e}")))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-    } else {
-        Err(CoreError::Php(format!("{what}: {}", String::from_utf8_lossy(&out.stderr).trim())))
-    }
-}
-
-/// Runs one statement with the `mysql` client; tab-separated rows without a header.
-fn mysql(paths: &HearthPaths, c: &Conn, database: Option<&str>, sql: &str) -> Result<String, CoreError> {
-    let program = client(paths, &["mysql", "mariadb"], c.port, &["mysql", "mariadb"]);
-    let mut cmd = crate::workspaces::command(&program);
-    cmd.args(mysql_args(c)).args(["-N", "-B", "-e", sql]).env("MYSQL_PWD", &c.password);
-    if let Some(db) = database {
-        cmd.arg(db);
-    }
-    finish("mysql", cmd.stdin(Stdio::null()).output())
-}
-
 /// `mysqldump <parent> | mysql <name>`.
 fn mysql_copy(paths: &HearthPaths, c: &Conn, name: &str) -> Result<(), CoreError> {
     let mut dump =
@@ -446,17 +337,6 @@ fn pipe(
         Ok(_) => Err(CoreError::Php(format!("{dump_name}: {}", dump_errors.trim()))),
         Err(e) => Err(CoreError::Php(format!("{dump_name}: {e}"))),
     }
-}
-/// Runs one statement with `psql` against `database`; unaligned rows without a header.
-fn psql(paths: &HearthPaths, c: &Conn, database: &str, sql: &str) -> Result<String, CoreError> {
-    let program = client(paths, &["postgresql"], c.port, &["psql"]);
-    let out = crate::workspaces::command(&program)
-        .args(["-h", &c.host, "-p", &c.port.to_string(), "-U", &c.user, "-d", database])
-        .args(["-v", "ON_ERROR_STOP=1", "-At", "-c", sql])
-        .env("PGPASSWORD", &c.password)
-        .stdin(Stdio::null())
-        .output();
-    finish("psql", out)
 }
 
 /// `pg_dump <parent> | psql <name>`.
