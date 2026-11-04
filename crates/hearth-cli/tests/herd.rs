@@ -140,7 +140,7 @@ fn commands_of_later_milestones_say_what_is_missing() {
     for (args, line) in [
         (vec!["mail:list"], "Hearth has no mail catcher yet\n"),
         (vec!["services:clone", "mysql"], "Hearth cannot clone services yet\n"),
-        (vec!["workspace", "feature"], "Hearth has no workspaces yet\n"),
+        (vec!["share"], "Hearth has no site sharing yet\n"),
         (vec!["studio"], "Hearth has no Studio, and none is planned\n"),
         (vec!["frobnicate"], "Hearth has no `frobnicate` command (see `hearth --help`)\n"),
     ] {
