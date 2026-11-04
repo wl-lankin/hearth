@@ -24,6 +24,7 @@ pub mod supervisor;
 mod supervisor_tests;
 pub mod tls;
 pub mod web;
+pub mod workspaces;
 
 pub use error::CoreError;
 pub use paths::HearthPaths;
