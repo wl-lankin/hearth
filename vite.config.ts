@@ -19,6 +19,6 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.spec.ts'],
     // The design tests read the stylesheet's text.
-    css: { include: [/styles\.css$/] },
+    css: { include: [/styles\.css/] },
   },
 });
