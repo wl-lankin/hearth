@@ -17,9 +17,8 @@ const DEFAULT_PROTOCOL: &str = "2025-03-26";
 
 const INSTRUCTIONS: &str = "Hearth serves the user's PHP sites locally at http(s)://<site>.test: never start a web server (no `php artisan serve`, no `php -S`).
 - Start with `site info` to learn the site's URL, PHP version and services.
-- Debugging: `site error` for the last exception, `logs read` for the log, `insights analyze` for N+1, duplicate and slow queries (pass the printed cursor as `after` next time).
+- Debugging: `logs read` for the log and its exceptions, `insights analyze` for N+1, duplicate and slow queries (pass the printed cursor as `after` next time).
 - Mail: call `mail wait`, then trigger the sending; it returns the mail.
-- Use `env` and `db` instead of editing .env by hand.
 - Use `workspaces create` instead of `git worktree add`: the branch gets its own .test domain and .env.
 - Use `processes` for long-running dev processes (Vite, queue workers), not background shell jobs.
 Site-scoped actions take an optional `site` (a name or a path inside it); the default is the project this server was started in.";
@@ -42,6 +41,14 @@ fn error(id: &Value, code: i64, message: &str) -> Value {
 
 /// Answers one request; `None` for a notification.
 async fn answer(paths: &HearthPaths, message: &Value) -> Option<Value> {
+    // Batches were dropped from MCP (2025-06-18); anything but one object is an invalid request.
+    if !message.is_object() {
+        return Some(error(
+            &Value::Null,
+            -32600,
+            "Send one JSON-RPC request object per line (batches are not supported)",
+        ));
+    }
     let id = message.get("id")?.clone();
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     let method = message.get("method").and_then(Value::as_str).unwrap_or_default();
@@ -99,17 +106,23 @@ async fn answer(paths: &HearthPaths, message: &Value) -> Option<Value> {
 
 /// Serves until stdin closes. Requests are answered one at a time, in order.
 pub async fn serve(paths: &HearthPaths) {
-    let stdin = std::io::stdin();
+    let mut input = std::io::stdin().lock();
     let mut out = std::io::stdout().lock();
-    for line in stdin.lock().lines() {
-        let Ok(line) = line else { break };
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
+    let mut bytes = Vec::new();
+    loop {
+        bytes.clear();
+        match input.read_until(b'\n', &mut bytes) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
         }
-        let answer = match serde_json::from_str::<Value>(line) {
-            Ok(message) => answer(paths, &message).await,
-            Err(e) => Some(error(&Value::Null, -32700, &format!("Parse error: {e}"))),
+        // A line that is no UTF-8 is a parse error, not the end of the conversation.
+        let answer = match std::str::from_utf8(&bytes) {
+            Err(_) => Some(error(&Value::Null, -32700, "Parse error: the line is not UTF-8")),
+            Ok(line) if line.trim().is_empty() => continue,
+            Ok(line) => match serde_json::from_str::<Value>(line.trim()) {
+                Ok(message) => answer(paths, &message).await,
+                Err(e) => Some(error(&Value::Null, -32700, &format!("Parse error: {e}"))),
+            },
         };
         if let Some(answer) = answer {
             if writeln!(out, "{answer}").and_then(|()| out.flush()).is_err() {

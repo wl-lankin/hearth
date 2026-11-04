@@ -48,11 +48,15 @@ impl Agent {
         }
     }
 
-    fn entry(self, exe: &Path) -> Value {
-        match self {
-            Agent::Vscode => json!({ "type": "stdio", "command": exe, "args": ["mcp"] }),
-            _ => json!({ "command": exe, "args": ["mcp"] }),
+    fn entry(self, command: &str, env: Option<&Value>) -> Value {
+        let mut entry = match self {
+            Agent::Vscode => json!({ "type": "stdio", "command": command, "args": ["mcp"] }),
+            _ => json!({ "command": command, "args": ["mcp"] }),
+        };
+        if let Some(env) = env {
+            entry["env"] = env.clone();
         }
+        entry
     }
 }
 
@@ -79,30 +83,69 @@ pub fn write_entry(file: &Path, key: &str, entry: Value, force: bool) -> Result<
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let text = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    std::fs::write(file, text + "\n").map_err(|e| format!("{}: {e}", file.display()))
+    hearth_core::atomic::write(file, (text + "\n").as_bytes()).map_err(|e| format!("{}: {e}", file.display()))
 }
 
 /// Registers Hearth for `agent` in the project folder `dir`; the file written.
+#[cfg(test)]
 pub fn write_project(agent: Agent, dir: &Path, exe: &Path, force: bool) -> Result<PathBuf, String> {
+    write_project_with(agent, dir, &exe.to_string_lossy(), None, force)
+}
+
+/// As `write_project`, with the command and environment `launch` worked out.
+pub fn write_project_with(
+    agent: Agent,
+    dir: &Path,
+    command: &str,
+    env: Option<&Value>,
+    force: bool,
+) -> Result<PathBuf, String> {
     let (file, key) = agent.project_file(dir);
-    write_entry(&file, key, agent.entry(exe), force)?;
+    write_entry(&file, key, agent.entry(command, env), force)?;
     Ok(file)
 }
 
 /// Registers Hearth in `agent`'s user-wide config file; the file written.
-pub fn write_global(agent: Agent, exe: &Path, force: bool) -> Result<PathBuf, String> {
+pub fn write_global(agent: Agent, command: &str, env: Option<&Value>, force: bool) -> Result<PathBuf, String> {
     let (file, key) = agent.global_file().ok_or("This agent has no user-wide config file Hearth knows")?;
-    write_entry(&file, key, agent.entry(exe), force)?;
+    write_entry(&file, key, agent.entry(command, env), force)?;
     Ok(file)
 }
 
 /// Claude Code's own command that adds Hearth to its user-wide list.
-pub fn global_claude_command(exe: &Path) -> Vec<String> {
-    ["claude", "mcp", "add", "--scope", "user", "hearth", "--"]
-        .iter()
-        .map(|s| s.to_string())
-        .chain([exe.to_string_lossy().into_owned(), "mcp".into()])
-        .collect()
+pub fn global_claude_command(command: &str, home: Option<&Path>) -> Vec<String> {
+    let mut out: Vec<String> = ["claude", "mcp", "add", "--scope", "user"].iter().map(|s| s.to_string()).collect();
+    if let Some(home) = home {
+        out.extend(["-e".to_string(), format!("HEARTH_HOME={}", home.display())]);
+    }
+    out.extend(["hearth".to_string(), "--".to_string(), command.to_string(), "mcp".to_string()]);
+    out
+}
+
+/// How agents start the server: plain `hearth` when Hearth's `bin` is on `path_var` (config files
+/// are often committed: no machine path, no user name), else the program's full path; with
+/// `HEARTH_HOME` when `home` is set, or the server would talk to the default home's core.
+pub fn launch(exe: &Path, bin: &Path, path_var: Option<&str>, home: Option<&Path>) -> (String, Option<Value>) {
+    let on_path = path_var.is_some_and(|p| std::env::split_paths(p).any(|d| same_dir(&d, bin)));
+    let command = if on_path && exe.parent().is_some_and(|d| same_dir(d, bin)) {
+        "hearth".to_string()
+    } else {
+        exe.to_string_lossy().into_owned()
+    };
+    (command, home.map(|h| json!({ "HEARTH_HOME": h })))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| {
+        let s = p.to_string_lossy().replace('\\', "/");
+        let s = s.trim_end_matches('/').to_string();
+        if cfg!(windows) {
+            s.to_lowercase()
+        } else {
+            s
+        }
+    };
+    norm(a) == norm(b)
 }
 
 /// The program agents start: the `hearth` in Hearth's bin folder when it is there, else this one.
@@ -121,7 +164,7 @@ mod tests {
 
     use serde_json::{json, Value};
 
-    use super::{global_claude_command, write_project, Agent};
+    use super::{global_claude_command, launch, write_project, Agent};
 
     fn read(p: &Path) -> Value {
         serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
@@ -175,7 +218,7 @@ mod tests {
     fn claude_codes_user_wide_list_is_changed_through_its_own_command() {
         let exe = Path::new(r"C:\Users\Jörg Müller\.config\hearth\bin\hearth.exe");
         assert_eq!(
-            global_claude_command(exe),
+            global_claude_command(&exe.to_string_lossy(), None),
             [
                 "claude",
                 "mcp",
@@ -188,5 +231,26 @@ mod tests {
                 "mcp"
             ]
         );
+    }
+
+    /// `.mcp.json` is shared and committed: a plain `hearth` when Hearth's bin folder is on PATH,
+    /// so no machine path (and no user name) lands in the repository.
+    #[test]
+    fn the_command_is_plain_hearth_when_its_folder_is_on_path() {
+        let d = tempfile::tempdir().unwrap();
+        let bin = d.path().join("hearth").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let exe = bin.join(format!("hearth{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&exe, b"").unwrap();
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let on_path = format!("C:\\other{sep}{}", bin.display());
+        let (command, env) = launch(&exe, &bin, Some(&on_path), None);
+        assert_eq!(command, "hearth");
+        assert!(env.is_none());
+        let (command, _) = launch(&exe, &bin, Some("C:\\other"), None);
+        assert_eq!(command, exe.to_string_lossy());
+        // A test home travels along, or the server would talk to the default home's core.
+        let (_, env) = launch(&exe, &bin, Some(&on_path), Some(d.path()));
+        assert_eq!(env, Some(json!({ "HEARTH_HOME": d.path() })));
     }
 }

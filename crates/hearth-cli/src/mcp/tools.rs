@@ -266,8 +266,12 @@ impl Tool {
             .iter()
             .find(|a| a.name == wanted)
             .ok_or_else(|| format!("Unknown action \"{wanted}\". Use one of: {}", names.join(", ")))?;
-        let missing: Vec<&str> =
-            action.required.iter().copied().filter(|p| args.get(*p).is_none_or(Value::is_null)).collect();
+        let missing: Vec<&str> = action
+            .required
+            .iter()
+            .copied()
+            .filter(|p| args.get(*p).is_none_or(|v| v.is_null() || v.as_str().is_some_and(|s| s.trim().is_empty())))
+            .collect();
         if missing.is_empty() {
             Ok(action)
         } else {

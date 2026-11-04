@@ -37,6 +37,12 @@ impl Server {
         self.input.flush().unwrap();
     }
 
+    pub fn send_bytes(&mut self, bytes: &[u8]) {
+        self.input.write_all(bytes).unwrap();
+        self.input.write_all(b"\n").unwrap();
+        self.input.flush().unwrap();
+    }
+
     pub fn reply(&mut self) -> Value {
         let mut line = String::new();
         self.output.read_line(&mut line).unwrap();
@@ -119,6 +125,17 @@ fn errors_are_answered_as_mcp_expects() {
     let (text, error) = s.tool(5, "site", json!({ "action": "isolate", "phpVersion": null }));
     assert!(error);
     assert_eq!(text, "The isolate action needs: phpVersion.");
+    let (text, _) = s.tool(6, "mail", json!({ "action": "show", "id": "" }));
+    assert_eq!(text, "The show action needs: id.", "an empty value is no value");
+    // Batches (dropped from MCP in 2025-06-18) and non-objects get an answer, not silence.
+    s.send(r#"[{"jsonrpc":"2.0","id":7,"method":"ping"}]"#);
+    assert_eq!(s.reply()["error"]["code"], -32600);
+    s.send("5");
+    assert_eq!(s.reply()["error"]["code"], -32600);
+    // A line that is no UTF-8 is a parse error, and the server keeps going.
+    s.send_bytes(b"{\xff}");
+    assert_eq!(s.reply()["error"]["code"], -32700);
+    assert_eq!(s.request(8, "ping", json!({}))["result"], json!({}));
 }
 
 /// A home with the site `shop` (a Laravel-like folder with a log), and a core serving it.
@@ -155,7 +172,10 @@ async fn the_actions_answer_from_hearths_core() {
     mail(&paths, "Welcome");
     let mut core = hearth_core::ipc::CoreState::new(paths.clone());
     core.web_sync = false;
-    let server = hearth_core::ipc::serve(&paths, hearth_core::ipc::router(core)).await.unwrap();
+    // mail wait needs a running catcher (on a free port, never 2525).
+    let smtp = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    core.mail.start(&paths, smtp).await.unwrap();
+    let server = hearth_core::ipc::serve(&paths, hearth_core::ipc::router(core.clone())).await.unwrap();
     let (p, cwd) = (paths.clone(), shop.join("public"));
     let results = tokio::task::spawn_blocking(move || {
         let mut s = Server::start(&p, &cwd);
@@ -194,6 +214,7 @@ async fn the_actions_answer_from_hearths_core() {
     .await
     .unwrap();
     server.shutdown().await;
+    core.mail.stop();
     let ok = |i: usize| {
         assert!(!results[i].1, "call {i} failed: {}", results[i].0);
         results[i].0.clone()
@@ -248,4 +269,68 @@ fn mcp_install_registers_hearth_in_the_projects_mcp_json() {
         .output()
         .unwrap();
     assert!(!bad.status.success());
+}
+
+/// A fake Redis 8 in the home (the core's `fake_service` example listening on its --port).
+fn fake_redis(paths: &HearthPaths) {
+    let fake = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("debug")
+        .join("examples")
+        .join(format!("fake_service{}", std::env::consts::EXE_SUFFIX));
+    let program = paths
+        .data
+        .join("services")
+        .join("bin")
+        .join("redis")
+        .join("8.10.3")
+        .join(format!("redis-server{}", std::env::consts::EXE_SUFFIX));
+    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+    std::fs::copy(&fake, &program)
+        .unwrap_or_else(|e| panic!("{}: {e} (build hearth-core's examples first)", fake.display()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn install_starts_the_service_and_link_takes_folders_and_names_as_given() {
+    let (d, paths, _shop) = shop_home();
+    fake_redis(&paths);
+    let api = d.path().join("api");
+    std::fs::create_dir_all(api.join("public")).unwrap();
+    std::fs::write(api.join("public").join("index.php"), "<?php").unwrap();
+    std::fs::write(api.join(".env"), "APP_NAME=Api\nAPP_URL=http://localhost\n").unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut core = hearth_core::ipc::CoreState::new(paths.clone());
+    core.web_sync = false;
+    let server = hearth_core::ipc::serve(&paths, hearth_core::ipc::router(core.clone())).await.unwrap();
+    let (p, cwd) = (paths.clone(), d.path().join("shop"));
+    let results = tokio::task::spawn_blocking(move || {
+        let mut s = Server::start(&p, &cwd);
+        vec![
+            s.tool(1, "services", json!({ "action": "install", "type": "redis", "version": "8", "port": port })),
+            s.tool(2, "services", json!({ "action": "list" })),
+            // A relative folder is relative to where the server runs; a `.test` name is the site name.
+            s.tool(3, "site", json!({ "action": "link", "path": "../api", "name": "Api.test" })),
+            s.tool(4, "insights", json!({ "action": "capture", "enabled": "true" })),
+            s.tool(5, "mail", json!({ "action": "list", "since": "a while back" })),
+        ]
+    })
+    .await
+    .unwrap();
+    hearth_core::services::run::stop_all(&core).await;
+    server.shutdown().await;
+    assert!(!results[0].1, "{}", results[0].0);
+    let list: Value = serde_json::from_str(&results[1].0).unwrap();
+    assert_eq!(list[0]["running"], true, "install also starts it: {list}");
+    assert!(!results[2].1, "{}", results[2].0);
+    assert_eq!(results[2].0, "api is now served at http://api.test:8080 (APP_URL in its .env points there now)");
+    let sites = hearth_core::sites::registry::list(&paths);
+    assert!(
+        sites.iter().any(|s| s.name == "api" && s.path.as_deref().is_some_and(|p| p.ends_with("api"))),
+        "linked under its name"
+    );
+    assert!(std::fs::read_to_string(api.join(".env")).unwrap().contains("APP_URL=http://api.test:8080"));
+    assert!(!results[3].1 && results[3].0.contains(" on"), "a string flag counts: {}", results[3].0);
+    assert!(results[4].1 && results[4].0.contains("since"), "an unreadable since is an error: {}", results[4].0);
 }

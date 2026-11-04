@@ -843,9 +843,17 @@ async fn services_available(paths: &HearthPaths, kind: Option<&str>, as_json: bo
 
 /// Registers the MCP server for each agent; Claude Code's user-wide list goes through `claude`.
 fn mcp_install(paths: &HearthPaths, global: bool, agents: Vec<String>, path: Option<PathBuf>, force: bool) -> ExitCode {
-    use mcp::install::{global_claude_command, hearth_exe, write_global, write_project, Agent};
+    use mcp::install::{global_claude_command, hearth_exe, launch, write_global, write_project_with, Agent};
     let agents = if agents.is_empty() { vec!["claude".to_string()] } else { agents };
     let exe = hearth_exe(paths);
+    let home = std::env::var_os("HEARTH_HOME").map(PathBuf::from);
+    let path_var = std::env::var("PATH").ok();
+    let (command, env) = launch(&exe, &paths.bin, path_var.as_deref(), home.as_deref());
+    if command != "hearth" {
+        eprintln!(
+            "Note: Hearth's bin folder is not on PATH, so the config names {command}. Switch on \"Use Hearth's PHP in terminals\" to keep machine paths out of shared files."
+        );
+    }
     let dir = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
     let mut failed = false;
     for name in agents {
@@ -859,17 +867,23 @@ fn mcp_install(paths: &HearthPaths, global: bool, agents: Vec<String>, path: Opt
         };
         let result = match (global, agent) {
             (true, Agent::Claude) => {
-                let command = global_claude_command(&exe);
-                match std::process::Command::new(&command[0]).args(&command[1..]).status() {
+                let add = global_claude_command(&command, home.as_deref());
+                match std::process::Command::new(&add[0]).args(&add[1..]).status() {
                     Ok(s) if s.success() => Ok("Claude Code (user-wide)".to_string()),
-                    _ => Err(format!(
-                        "Claude Code's `claude` command did not run. Register Hearth with:\n  {}",
-                        command.join(" ")
+                    Ok(_) => Err(format!(
+                        "`claude mcp add` refused it (an existing `hearth` entry? `claude mcp remove --scope user hearth` removes it). The command was:\n  {}",
+                        add.join(" ")
+                    )),
+                    Err(_) => Err(format!(
+                        "Claude Code's `claude` command was not found. Register Hearth with:\n  {}",
+                        add.join(" ")
                     )),
                 }
             }
-            (true, _) => write_global(agent, &exe, force).map(|f| f.display().to_string()),
-            (false, _) => write_project(agent, &dir, &exe, force).map(|f| f.display().to_string()),
+            (true, _) => write_global(agent, &command, env.as_ref(), force).map(|f| f.display().to_string()),
+            (false, _) => {
+                write_project_with(agent, &dir, &command, env.as_ref(), force).map(|f| f.display().to_string())
+            }
         };
         match result {
             Ok(where_) => println!("Hearth's MCP server is registered as `hearth` in {where_}"),

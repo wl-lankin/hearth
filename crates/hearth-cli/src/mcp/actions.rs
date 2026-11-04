@@ -30,8 +30,28 @@ fn number(args: &Value, key: &str) -> Option<i64> {
     args.get(key).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
 }
 
+/// A yes/no argument; agents also send `"true"`, `"false"`, `1` and `0`.
 fn flag(args: &Value, key: &str) -> Option<bool> {
-    args.get(key).and_then(Value::as_bool)
+    match args.get(key)? {
+        Value::Bool(b) => Some(*b),
+        Value::Number(n) => n.as_i64().map(|n| n != 0),
+        Value::String(s) => match s.trim().to_lowercase().as_str() {
+            "true" | "yes" | "on" | "1" => Some(true),
+            "false" | "no" | "off" | "0" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The `since` argument as unix seconds; an error for a value it cannot read (never "all").
+fn since_arg(args: &Value) -> Result<Option<i64>, String> {
+    match text(args, "since") {
+        None => Ok(None),
+        Some(v) => since(&v).map(Some).ok_or_else(|| {
+            format!("Could not read since=\"{v}\": use a date like 2026-11-04 10:00, a unix time or a phrase like `10 minutes ago`")
+        }),
+    }
 }
 
 async fn call(paths: &HearthPaths, method: &str, params: Value) -> Result<Value, String> {
@@ -69,6 +89,11 @@ pub async fn run(paths: &HearthPaths, tool: &str, action: &str, args: &Value) ->
 
 // site --------------------------------------------------------------------------------------------
 
+/// `8.4` from `8.4.1` or `8.4`: Hearth isolates sites to a minor version.
+fn minor_of(version: &str) -> String {
+    version.trim().split('.').take(2).collect::<Vec<_>>().join(".")
+}
+
 fn url(list: &Value, name: &str, secured: bool) -> String {
     let (scheme, port, default) = if secured {
         ("https", list["httpsPort"].as_u64().unwrap_or(443), 443)
@@ -83,6 +108,8 @@ async fn site_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
     let list = call(paths, "sites.list", Value::Null).await?;
     match action {
         "list" => {
+            let default =
+                call(paths, "php.list", Value::Null).await.map(|p| p["default"].clone()).unwrap_or(Value::Null);
             let sites: Vec<Value> = list["sites"]
                 .as_array()
                 .into_iter()
@@ -95,27 +122,57 @@ async fn site_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
                         "kind": s["kind"],
                         "path": s["path"].as_str().or(s["upstream"].as_str()),
                         "secure": s["secured"],
-                        "php": s["php"],
+                        // The version it runs on, as Herd shows it; `phpIsolated` when it is not the default.
+                        "php": if s["php"].is_null() { default.clone() } else { s["php"].clone() },
+                        "phpIsolated": !s["php"].is_null(),
                     })
                 })
                 .collect();
             Ok(pretty(&json!(sites)))
         }
         "link" => {
-            let dir = text(args, "path").map(std::path::PathBuf::from).unwrap_or_else(start_dir);
+            // A relative folder is relative to where the server runs, not to Hearth's core.
+            let dir = match text(args, "path").map(std::path::PathBuf::from) {
+                Some(p) if p.is_relative() => start_dir().join(p),
+                Some(p) => p,
+                None => start_dir(),
+            };
+            let dir = std::fs::canonicalize(&dir)
+                .map(|p| std::path::PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\").to_string()))
+                .map_err(|_| format!("{} is not a folder", dir.display()))?;
             let folder = dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            let name = text(args, "name")
-                .or_else(|| hearth_core::sites::registry::name_from_folder(&folder))
-                .ok_or("Name the site: the folder's name is no valid site name")?;
+            // `Shop.test` and `shop` are the same site name.
+            let name = match text(args, "name") {
+                Some(n) => {
+                    let lower = n.to_lowercase();
+                    lower.strip_suffix(".test").unwrap_or(&lower).to_string()
+                }
+                None => hearth_core::sites::registry::name_from_folder(&folder)
+                    .ok_or("Name the site: the folder's name is no valid site name")?,
+            };
             call(paths, "sites.link", json!({ "name": name, "dir": dir })).await?;
-            if flag(args, "secure") == Some(true) {
+            let secure = flag(args, "secure") == Some(true);
+            if secure {
                 call(paths, "sites.secure", json!({ "name": name })).await?;
             }
             if let Some(v) = text(args, "phpVersion") {
-                call(paths, "sites.isolate", json!({ "name": name, "minor": v })).await?;
+                call(paths, "sites.isolate", json!({ "name": name, "minor": minor_of(&v) })).await?;
             }
             let list = call(paths, "sites.list", Value::Null).await?;
-            Ok(format!("{name} is now served at {}", url(&list, &name, flag(args, "secure") == Some(true))))
+            let address = url(&list, &name, secure);
+            // As Herd does: the app's own URL follows the site.
+            let env_path = dir.join(".env");
+            let env = std::fs::read_to_string(&env_path).unwrap_or_default();
+            let note = if hearth_core::workspaces::env_file::get(&env, "APP_URL").is_some() {
+                let updated = hearth_core::workspaces::env_file::set(&env, &[("APP_URL", address.as_str())]);
+                match hearth_core::atomic::write(&env_path, updated.as_bytes()) {
+                    Ok(()) => " (APP_URL in its .env points there now)".to_string(),
+                    Err(e) => format!(" (APP_URL could not be updated: {e})"),
+                }
+            } else {
+                String::new()
+            };
+            Ok(format!("{name} is now served at {address}{note}"))
         }
         "studio" => Err("Hearth has no Studio: open the site's URL in the browser instead".into()),
         "error" => Err(format!("`site error` {NOT_YET}: read the last exception with `logs read`")),
@@ -148,7 +205,8 @@ async fn site_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
                         "docroot": site.docroot,
                         "upstream": site.upstream,
                         "secure": site.secured,
-                        "php": site.php,
+                        "php": site.php.clone().map(Value::from).unwrap_or_else(|| php["default"].clone()),
+                        "phpIsolated": site.php.is_some(),
                         "phpDefault": php["default"],
                         "node": node["version"],
                         "debug": site.debug,
@@ -166,7 +224,7 @@ async fn site_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
                     Ok(format!("{name} is now served at {}", url(&list, &name, false)))
                 }
                 "isolate" => {
-                    let v = text(args, "phpVersion").unwrap_or_default();
+                    let v = minor_of(&text(args, "phpVersion").unwrap_or_default());
                     call(paths, "sites.isolate", json!({ "name": name, "minor": v })).await?;
                     Ok(format!("{name} now uses PHP {v}"))
                 }
@@ -220,7 +278,10 @@ fn since(value: &str) -> Option<i64> {
     }
     if let Some(rest) = v.strip_suffix(" ago") {
         let mut parts = rest.split_whitespace();
-        let n: i64 = parts.next()?.parse().ok()?;
+        let n: i64 = match parts.next()? {
+            "a" | "an" | "one" => 1,
+            n => n.parse().ok()?,
+        };
         let unit = parts.next()?.trim_end_matches('s');
         let secs = match unit {
             "second" | "sec" => 1,
@@ -233,13 +294,23 @@ fn since(value: &str) -> Option<i64> {
         return Some(now() - n * secs);
     }
     let (date, time) = v.split_once([' ', 't']).unwrap_or((&v, "00:00:00"));
-    let d: Vec<i64> = date.split('-').filter_map(|p| p.parse().ok()).collect();
-    let t: Vec<i64> = time.trim_end_matches('z').split(':').filter_map(|p| p.parse().ok()).collect();
-    if d.len() != 3 {
+    // An offset (`+01:00`, `-0500`, `z`) shifts the time to UTC.
+    let time = time.trim_end_matches('z');
+    let (time, offset) = match time.rfind(['+', '-']) {
+        Some(i) => {
+            let (sign, digits) = (if &time[i..=i] == "-" { -1 } else { 1 }, time[i + 1..].replace(':', ""));
+            let hm: i64 = digits.parse().ok()?;
+            (&time[..i], sign * ((hm / 100) * 3600 + (hm % 100) * 60))
+        }
+        None => (time, 0),
+    };
+    let d: Vec<i64> = date.split('-').map(|p| p.parse().ok()).collect::<Option<_>>()?;
+    let t: Vec<i64> = time.split(':').map(|p| p.split('.').next().unwrap_or(p).parse().ok()).collect::<Option<_>>()?;
+    if d.len() != 3 || t.len() > 3 {
         return None;
     }
     let (h, mi, s) = (t.first().copied().unwrap_or(0), t.get(1).copied().unwrap_or(0), t.get(2).copied().unwrap_or(0));
-    Some(days_from_civil(d[0], d[1], d[2]) * 86_400 + h * 3600 + mi * 60 + s)
+    Some(days_from_civil(d[0], d[1], d[2]) * 86_400 + h * 3600 + mi * 60 + s - offset)
 }
 
 fn contains(haystack: &str, needle: &Option<String>) -> bool {
@@ -247,11 +318,11 @@ fn contains(haystack: &str, needle: &Option<String>) -> bool {
 }
 
 /// The mails matching the list filters (mailbox, to, from, subject, since).
-fn matching(mails: &Value, args: &Value) -> Vec<Value> {
+fn matching(mails: &Value, args: &Value) -> Result<Vec<Value>, String> {
     let mailbox = text(args, "mailbox");
     let (to, from, subject) = (text(args, "to"), text(args, "from"), text(args, "subject"));
-    let after = text(args, "since").and_then(|s| since(&s));
-    mails
+    let after = since_arg(args)?;
+    Ok(mails
         .as_array()
         .into_iter()
         .flatten()
@@ -270,7 +341,7 @@ fn matching(mails: &Value, args: &Value) -> Vec<Value> {
                 && after.is_none_or(|a| m["received"].as_i64().unwrap_or(0) >= a)
         })
         .cloned()
-        .collect()
+        .collect())
 }
 
 fn summary(m: &Value) -> Value {
@@ -357,7 +428,7 @@ async fn mail_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
         "list" => {
             let mails = call(paths, "mail.list", Value::Null).await?;
             let limit = number(args, "limit").unwrap_or(50).clamp(1, 1000) as usize;
-            let rows: Vec<Value> = matching(&mails, args).iter().take(limit).map(summary).collect();
+            let rows: Vec<Value> = matching(&mails, args)?.iter().take(limit).map(summary).collect();
             Ok(pretty(&json!(rows)))
         }
         "show" => {
@@ -370,6 +441,12 @@ async fn mail_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
             Ok(pretty(&json!(links(&body))))
         }
         "wait" => {
+            // No catcher, no mail: say so now instead of after the whole timeout.
+            let status = call(paths, "mail.status", Value::Null).await?;
+            if status["listening"] != true {
+                let why = status["error"].as_str().map(|e| format!(": {e}")).unwrap_or_default();
+                return Err(format!("Hearth's mail catcher is not running{why}. Check the Mail page."));
+            }
             let timeout = number(args, "timeout").unwrap_or(30).clamp(1, 300);
             let known: Vec<String> = call(paths, "mail.list", Value::Null)
                 .await?
@@ -381,7 +458,7 @@ async fn mail_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
             let deadline = std::time::Instant::now() + Duration::from_secs(timeout as u64);
             loop {
                 let mails = call(paths, "mail.list", Value::Null).await?;
-                let fresh = matching(&mails, args)
+                let fresh = matching(&mails, args)?
                     .into_iter()
                     .find(|m| m["id"].as_str().is_some_and(|id| !known.iter().any(|k| k == id)));
                 if let Some(m) = fresh {
@@ -397,7 +474,19 @@ async fn mail_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
         "clear" => {
             let params = match text(args, "mailbox") {
                 Some(b) if b.eq_ignore_ascii_case("default") => json!({ "site": null }),
-                Some(b) => json!({ "site": b }),
+                Some(b) => {
+                    // The inbox's own spelling: `list` matches any case, the store exactly.
+                    let mails = call(paths, "mail.list", Value::Null).await?;
+                    let inbox = mails
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|m| m["site"].as_str())
+                        .find(|s| s.eq_ignore_ascii_case(&b))
+                        .ok_or_else(|| format!("There is no mailbox {b}: call `mail list` to see them"))?
+                        .to_string();
+                    json!({ "site": inbox })
+                }
                 None => json!({}),
             };
             call(paths, "mail.clear", params).await?;
@@ -533,7 +622,7 @@ async fn logs_action(paths: &HearthPaths, action: &str, args: &Value) -> Result<
             let levels: Option<Vec<String>> =
                 text(args, "levels").map(|l| l.split(',').map(|x| x.trim().to_lowercase()).collect());
             let search = text(args, "search");
-            let after = text(args, "since").and_then(|s| since(&s)).map(datetime);
+            let after = since_arg(args)?.map(datetime);
             let limit = number(args, "limit").unwrap_or(20).clamp(1, 500) as usize;
             let mut entries: Vec<Value> = read["entries"].as_array().cloned().unwrap_or_default();
             entries.reverse();
@@ -609,23 +698,29 @@ async fn services_action(paths: &HearthPaths, action: &str, args: &Value) -> Res
         "available" => Ok(pretty(&call(paths, "services.available", Value::Null).await?)),
         "install" => {
             let kind = text(args, "type").unwrap_or_default().to_lowercase();
-            let available = call(paths, "services.available", Value::Null).await?;
-            let builds: Vec<&Value> =
-                available["builds"].as_array().into_iter().flatten().filter(|b| b["kind"] == kind.as_str()).collect();
-            let wanted = text(args, "version");
-            let build = match &wanted {
-                Some(v) => builds.iter().find(|b| {
-                    b["line"] == v.as_str() || b["version"].as_str().is_some_and(|x| x.starts_with(v.as_str()))
-                }),
-                None => builds.first(),
-            }
-            .ok_or_else(|| {
-                format!(
-                    "Hearth has no {kind}{} to install. Call `services available`.",
-                    wanted.map(|v| format!(" {v}")).unwrap_or_default()
-                )
-            })?;
-            let mut params = json!({ "kind": kind, "line": build["line"] });
+            // A version names its line (`8.4.11` and `8.4` are both the 8.4 line); without one,
+            // the catalog's newest line of the type.
+            let line = match text(args, "version") {
+                Some(v) => {
+                    let parts: Vec<&str> = v.split('.').collect();
+                    if parts.len() >= 3 {
+                        parts[..2].join(".")
+                    } else {
+                        v
+                    }
+                }
+                None => {
+                    let available = call(paths, "services.available", Value::Null).await?;
+                    available["builds"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|b| b["kind"] == kind.as_str())
+                        .and_then(|b| b["line"].as_str().map(str::to_string))
+                        .ok_or_else(|| format!("Hearth has no {kind} to install. Call `services available`."))?
+                }
+            };
+            let mut params = json!({ "kind": kind, "line": line });
             if let Some(port) = number(args, "port") {
                 params["port"] = json!(port);
             }
@@ -633,11 +728,17 @@ async fn services_action(paths: &HearthPaths, action: &str, args: &Value) -> Res
                 params["name"] = json!(name);
             }
             let made = call_long(paths, "services.create", params, 600).await?;
-            Ok(pretty(&made))
+            // Created is not running: the first start downloads the build, which takes a while.
+            let id = made["id"].as_str().unwrap_or_default().to_string();
+            call_long(paths, "services.start", json!({ "id": id }), 900).await?;
+            let list = call(paths, "services.list", Value::Null).await?;
+            let row = list.as_array().into_iter().flatten().find(|s| s["id"] == id.as_str()).cloned();
+            Ok(pretty(&row.unwrap_or(made)))
         }
         _ => {
             let id = service_id(paths, &text(args, "service").unwrap_or_default()).await?;
-            call_long(paths, &format!("services.{action}"), json!({ "id": id }), 120).await?;
+            // A first start downloads the build.
+            call_long(paths, &format!("services.{action}"), json!({ "id": id }), 900).await?;
             Ok(format!("{id} {}", if action == "start" { "runs" } else { "is stopped" }))
         }
     }
