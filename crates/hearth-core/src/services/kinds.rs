@@ -209,6 +209,7 @@ pub fn spec(paths: &HearthPaths, inst: &Instance, install: &Path) -> Result<Proc
         ready_port: Some(inst.port),
         ready_socket: None,
         guard_port: Some(inst.port),
+        raw_args: false,
     })
 }
 

@@ -33,6 +33,8 @@ fn change(core: &CoreState, f: impl FnOnce() -> Result<(), CoreError>) -> Result
         let _guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
         f().map_err(failed)?;
     }
+    // A site that is gone (unlinked, unparked) takes its processes with it.
+    crate::processes::run::prune(core).map_err(failed)?;
     schedule_sync(core);
     Ok(Value::Null)
 }

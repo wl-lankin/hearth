@@ -143,6 +143,9 @@ pub async fn handle(state: &CoreState, method: &str, params: &Value) -> Result<V
     if let Some(result) = crate::profile::api::handle(state, method, params).await {
         return result;
     }
+    if let Some(result) = crate::processes::api::handle(state, method, params).await {
+        return result;
+    }
     Err(RpcError::new(METHOD_NOT_FOUND, format!("unknown method: {method}")))
 }
 

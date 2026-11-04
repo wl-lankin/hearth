@@ -38,6 +38,8 @@ pub struct ProcessSpec {
     /// After a crash, the process is only restarted while this port is free: when another program
     /// took it, restarting would fail forever, so the process is parked with that reason instead.
     pub guard_port: Option<u16>,
+    /// Windows: rgs reach the program exactly as written, unquoted (cmd reads its own quoting).
+    pub raw_args: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -404,7 +406,23 @@ fn command(spec: &ProcessSpec) -> Result<Command, CoreError> {
     let out = open_log().map_err(|e| CoreError::io(&spec.log, e))?;
     let err = open_log().map_err(|e| CoreError::io(&spec.log, e))?;
     let mut cmd = Command::new(&spec.program);
-    cmd.args(&spec.args).envs(spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(out).stderr(err);
+    #[cfg(windows)]
+    if spec.raw_args {
+        use std::os::windows::process::CommandExt;
+        let mut joined = OsString::new();
+        for (i, arg) in spec.args.iter().enumerate() {
+            if i > 0 {
+                joined.push(" ");
+            }
+            joined.push(arg);
+        }
+        cmd.raw_arg(joined);
+    } else {
+        cmd.args(&spec.args);
+    }
+    #[cfg(unix)]
+    cmd.args(&spec.args);
+    cmd.envs(spec.env.iter().map(|(k, v)| (k, v))).stdin(Stdio::null()).stdout(out).stderr(err);
     if let Some(cwd) = &spec.cwd {
         cmd.current_dir(cwd);
     }

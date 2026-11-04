@@ -30,6 +30,7 @@ fn spec(dir: &tempfile::TempDir, key: &str, port: u16, crash_after_ms: Option<u6
         ready_port: Some(port),
         ready_socket: None,
         guard_port: None,
+        raw_args: false,
     }
 }
 
@@ -196,6 +197,7 @@ fn shell_spec(dir: &tempfile::TempDir, key: &str, port: u16) -> ProcessSpec {
         ready_port: Some(port),
         ready_socket: None,
         guard_port: None,
+        raw_args: false,
     }
 }
 
