@@ -192,7 +192,14 @@ fn generated_ini(paths: &HearthPaths, minor: &str) -> Result<String, CoreError> 
         .iter()
         .filter(|(name, _)| switches.and_then(|s| s.get(*name)).copied().unwrap_or(false))
         .map(|(name, source)| (name.clone(), source.clone()))
-        .collect();
+        .collect::<Vec<_>>();
+    let spx = if extensions_on.iter().any(|(name, _)| name == "spx") {
+        let dir = crate::profile::data_dir(paths);
+        std::fs::create_dir_all(&dir).map_err(|e| CoreError::io(&dir, e))?;
+        Some((crate::profile::spx_key(paths)?, dir))
+    } else {
+        None
+    };
     Ok(render_ini(&IniContext {
         os: Os::current(),
         minor: minor.into(),
@@ -200,6 +207,7 @@ fn generated_ini(paths: &HearthPaths, minor: &str) -> Result<String, CoreError> 
         cacert: cacert_path(paths),
         extensions_on,
         prepend: crate::insights::prepend::for_ini(paths)?,
+        spx,
     }))
 }
 

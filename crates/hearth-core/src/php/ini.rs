@@ -38,6 +38,8 @@ pub struct IniContext {
     pub extensions_on: Vec<(String, ExtensionSource)>,
     /// Hearth's dump script, loaded before every PHP run; `None` when dumps are off.
     pub prepend: Option<PathBuf>,
+    /// SPX's web key and report folder, written when spx is switched on.
+    pub spx: Option<(String, PathBuf)>,
 }
 
 fn quoted(path: &Path) -> String {
@@ -83,6 +85,16 @@ pub fn render_ini(ctx: &IniContext) -> String {
                 // macOS archives: always a "/" path, also when rendered elsewhere (tests on Windows).
                 let _ = writeln!(ini, "zend_extension=\"{}/{}\"", ctx.install_dir.display(), file);
             }
+            ExtensionSource::So { file } => {
+                let _ = writeln!(ini, "extension=\"{}/{}\"", ctx.install_dir.display(), file);
+            }
+        }
+        if let ("spx", Some((key, dir))) = (name.as_str(), &ctx.spx) {
+            // Profiles start only for requests that carry the key, and only from this machine.
+            let _ = writeln!(ini, "spx.http_enabled = 1");
+            let _ = writeln!(ini, "spx.http_key = \"{key}\"");
+            let _ = writeln!(ini, "spx.http_ip_whitelist = \"127.0.0.1\"");
+            let _ = writeln!(ini, "spx.data_dir = {}", quoted(dir));
         }
         if name == "xdebug" {
             // Debugging starts only when a request asks for it (browser extension, XDEBUG_TRIGGER).
@@ -146,6 +158,7 @@ mod tests {
             cacert: Path::new(r"C:\Users\Jörg Müller\.config\hearth\data\php\cacert.pem").into(),
             extensions_on: on,
             prepend: None,
+            spx: None,
         })
     }
 
@@ -160,6 +173,7 @@ mod tests {
             cacert: "/h/cacert.pem".into(),
             extensions_on: vec![],
             prepend: Some("/h/data/collector/prepend.php".into()),
+            spx: None,
         });
         assert!(on.contains("\nauto_prepend_file = \"/h/data/collector/prepend.php\"\n"), "{on}");
         assert!(
@@ -225,6 +239,7 @@ mod tests {
                 ("xdebug".into(), ExtensionSource::ZendSo { file: "lib/xdebug.so".into() }),
             ],
             prepend: None,
+            spx: None,
         });
         assert!(
             ini.contains("\nzend_extension=\"/Users/j/.config/hearth/data/php/versions/8.4/lib/xdebug.so\"\n"),
@@ -233,6 +248,28 @@ mod tests {
         assert!(!ini.contains("extension_dir"), "{ini}");
         assert!(!ini.contains("extension=redis"), "{ini}");
         assert!(!ini.contains("extension=mbstring"), "{ini}");
+    }
+
+    #[test]
+    fn macos_loads_spx_with_hearths_key_and_folder() {
+        let source: ExtensionSource = serde_json::from_str(r#"{"kind":"so","file":"lib/spx.so"}"#).unwrap();
+        assert_eq!(source, ExtensionSource::So { file: "lib/spx.so".into() });
+        let ctx = |on: Vec<(String, ExtensionSource)>| IniContext {
+            os: Os::Macos,
+            minor: "8.4".into(),
+            install_dir: "/Users/j/hearth/php/8.4".into(),
+            cacert: "/Users/j/hearth/cacert.pem".into(),
+            extensions_on: on,
+            prepend: None,
+            spx: Some(("k123".into(), "/Users/j/hearth/data/spx".into())),
+        };
+        let ini = render_ini(&ctx(vec![("spx".into(), source)]));
+        assert!(ini.contains("\nextension=\"/Users/j/hearth/php/8.4/lib/spx.so\"\n"), "{ini}");
+        assert!(ini.contains("\nspx.http_enabled = 1\n"), "{ini}");
+        assert!(ini.contains("\nspx.http_key = \"k123\"\n"), "{ini}");
+        assert!(ini.contains("\nspx.http_ip_whitelist = \"127.0.0.1\"\n"), "{ini}");
+        assert!(ini.contains("\nspx.data_dir = \"/Users/j/hearth/data/spx\"\n"), "{ini}");
+        assert!(!render_ini(&ctx(vec![])).contains("spx."), "spx off: no settings");
     }
 
     #[test]
