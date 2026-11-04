@@ -58,6 +58,59 @@ impl Machine for RealMachine {
     }
 }
 
+/// This computer, for the move's outside changes. Outside Windows each write says it can't.
+pub struct RealWrite;
+
+impl super::outside::MachineWrite for RealWrite {
+    fn user_path(&self) -> String {
+        #[cfg(windows)]
+        return crate::path_env::read_user_path().unwrap_or_default();
+        #[cfg(not(windows))]
+        String::new()
+    }
+
+    fn set_user_path(&mut self, value: &str) -> Result<(), crate::CoreError> {
+        #[cfg(windows)]
+        return crate::path_env::write_user_path(value);
+        #[cfg(not(windows))]
+        {
+            let _ = value;
+            Err(crate::CoreError::Php("Only on Windows".into()))
+        }
+    }
+
+    fn set_run(&mut self, name: &str, command: Option<&str>) -> Result<(), crate::CoreError> {
+        reg::set_run(name, command).map_err(crate::CoreError::Php)
+    }
+
+    fn claude(&mut self, args: &[String]) -> Result<(), crate::CoreError> {
+        // `claude` is a command script on Windows: run it through cmd.
+        let mut cmd = crate::workspaces::command(if cfg!(windows) { "cmd" } else { "claude" });
+        if cfg!(windows) {
+            cmd.args(["/c", "claude"]);
+        }
+        let out =
+            cmd.args(args).output().map_err(|e| crate::CoreError::Php(format!("Claude Code could not be run: {e}")))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(crate::CoreError::Php(format!(
+                "claude {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )))
+        }
+    }
+
+    fn helper(&mut self, request: &crate::dns::protocol::Request) -> Result<(), crate::CoreError> {
+        let answer = crate::dns::client::request_on(crate::dns::protocol::PIPE, request)?;
+        match answer.error {
+            Some(e) => Err(crate::CoreError::Php(e)),
+            None => Ok(()),
+        }
+    }
+}
+
 #[cfg(windows)]
 mod reg {
     use std::ptr::null_mut;
@@ -161,6 +214,39 @@ mod reg {
         out
     }
 
+    /// Sets (or with `None` removes) a value of the current user's `Run` key.
+    pub fn set_run(name: &str, command: Option<&str>) -> Result<(), String> {
+        use windows_sys::Win32::Foundation::ERROR_FILE_NOT_FOUND;
+        use windows_sys::Win32::System::Registry::{RegDeleteValueW, RegSetValueExW, KEY_SET_VALUE};
+        let mut key: HKEY = null_mut();
+        let path = wide(r"Software\Microsoft\Windows\CurrentVersion\Run");
+        // SAFETY: valid NUL-terminated path and out pointer.
+        let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, KEY_SET_VALUE, &mut key) };
+        if status != ERROR_SUCCESS {
+            return Err(format!("Could not open the Run key (Windows error {status})"));
+        }
+        let key = Key(key);
+        let wname = wide(name);
+        let status = match command {
+            Some(c) => {
+                let data = wide(c);
+                // SAFETY: NUL-terminated UTF-16 data with its byte length.
+                unsafe {
+                    RegSetValueExW(key.0, wname.as_ptr(), 0, REG_SZ, data.as_ptr().cast(), (data.len() * 2) as u32)
+                }
+            }
+            // SAFETY: valid key and NUL-terminated name.
+            None => match unsafe { RegDeleteValueW(key.0, wname.as_ptr()) } {
+                ERROR_FILE_NOT_FOUND => ERROR_SUCCESS,
+                other => other,
+            },
+        };
+        if status != ERROR_SUCCESS {
+            return Err(format!("Could not change {name} in the Run key (Windows error {status})"));
+        }
+        Ok(())
+    }
+
     /// The names of a key's subkeys.
     pub fn subkeys(r: Root, path: &str) -> Vec<String> {
         let Some(key) = open(r, path) else { return Vec::new() };
@@ -199,5 +285,9 @@ mod reg {
 
     pub fn subkeys(_: Root, _: &str) -> Vec<String> {
         Vec::new()
+    }
+
+    pub fn set_run(_: &str, _: Option<&str>) -> Result<(), String> {
+        Err("Only on Windows".into())
     }
 }

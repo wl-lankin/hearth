@@ -3,11 +3,15 @@
 
 pub mod api;
 pub mod machine;
+pub mod outside;
 pub mod plan;
 pub mod probe;
+pub mod record;
 pub mod scan;
 pub mod state;
 
+#[cfg(test)]
+mod outside_tests;
 #[cfg(test)]
 mod plan_tests;
 #[cfg(test)]
