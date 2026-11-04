@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import type { RequestFinding, RequestSummary } from '../api';
@@ -92,7 +94,7 @@
       <button onclick={() => store.clear()} disabled={store.requests.length === 0}>Clear</button>
     </div>
     {#if store.requests.length === 0}
-      <p class="empty">No requests yet. Open a page of a Laravel site, or run an artisan command.</p>
+      <EmptyState art={art.inspect} title="Nothing captured yet" line="Open a page of a Laravel site, or run an artisan command" />
     {/if}
     <ul>
       {#each store.requests as r (r.id)}

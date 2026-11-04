@@ -1,10 +1,19 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import { createSitesStore } from '../sites.svelte';
 
+  /** startLinking: open with the link form, as Home's Get started does. */
+  let { startLinking = false }: { startLinking?: boolean } = $props();
+
   const store = createSitesStore(api);
   let adding = $state<'link' | 'proxy' | null>(null);
+  onMount(() => {
+    if (startLinking) adding = 'link';
+  });
   let name = $state('');
   let target = $state('');
   let menu = $state<string | null>(null);
@@ -108,7 +117,12 @@
 
 <section class="card list" aria-label="Sites">
   {#if store.sites.length === 0}
-    <p class="empty">No sites yet. Park a folder to serve every project in it, or link a single project.</p>
+    <EmptyState
+      art={art.sites}
+      title="No sites yet"
+      line="Link a folder and Hearth serves it at name.test"
+      action={{ label: 'Link a folder', onclick: () => (adding = 'link') }}
+    />
   {/if}
   {#each store.sites as site (site.name)}
     <div class="row">
@@ -424,11 +438,6 @@
     min-height: 36px;
   }
 
-  .empty {
-    margin: 0;
-    padding: 18px 20px;
-    color: var(--muted);
-  }
 
 
 

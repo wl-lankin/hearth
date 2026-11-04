@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import { tick } from 'svelte';
   import * as api from '../api';
@@ -56,7 +58,12 @@
 <section class="split">
   <div class="card list" aria-label="Processes">
     {#if store.sites.length === 0 && !adding}
-      <p class="empty">No processes yet. Add Vite, a queue worker or Pail for a site, and start them here.</p>
+      <EmptyState
+        art={art.processes}
+        title="Nothing running"
+        line="Vite, queue workers and other long-running commands"
+        action={{ label: 'Start a process', onclick: openForm }}
+      />
     {/if}
     <ul>
       {#each store.sites as group (group.site)}

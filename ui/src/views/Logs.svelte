@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import { formatSize } from '../format';
@@ -39,7 +41,7 @@
 <h1>Logs</h1>
 
 {#if store.sites.length === 0}
-  <p class="card empty">No logs yet. Sites with a <code>storage/logs</code> folder show their Laravel logs here.</p>
+  <EmptyState art={art.logs} title="No logs yet" line="Sites with a storage/logs folder show their Laravel logs here" />
 {:else}
   <section class="card bar">
     <span class="pick">
@@ -73,7 +75,11 @@
 
   <section class="card list" aria-label="Log entries">
     {#if store.entries.length === 0}
-      <p class="empty">{store.search || store.level !== 'all' ? 'No entries match.' : 'This log is empty.'}</p>
+      {#if store.search || store.level !== 'all'}
+        <p class="empty">No entries match.</p>
+      {:else}
+        <EmptyState art={art.logs} title="All quiet" line="No errors in your logs" />
+      {/if}
     {/if}
     {#each store.entries as e (e.key)}
       <article class="entry">
@@ -226,10 +232,6 @@
   }
   .banner {
     margin: 0 0 12px;
-  }
-  code {
-    font-family: ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
-    font-size: 12px;
   }
   input {
     min-width: 0;

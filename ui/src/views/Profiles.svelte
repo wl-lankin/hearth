@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import * as api from '../api';
   import type { ProfileReport } from '../api';
   import { formatReceived, formatSize } from '../format';
@@ -30,7 +32,7 @@
   {#if store.unavailable}
     <p class="empty">{store.unavailable}</p>
   {:else if store.reports.length === 0}
-    <p class="empty">No profiles yet. Switch Profile on for a site, then open one of its pages.</p>
+    <EmptyState art={art.inspect} title="Nothing captured yet" line="Switch Profile on for a site, then open one of its pages" />
   {:else}
     <table>
       <thead>

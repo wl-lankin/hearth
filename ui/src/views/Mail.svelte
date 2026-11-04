@@ -1,4 +1,6 @@
 <script lang="ts">
+  import EmptyState from '../EmptyState.svelte';
+  import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
   import { formatReceived, formatSize } from '../format';
@@ -127,7 +129,7 @@
       <button onclick={() => store.clear()} disabled={store.mails.length === 0}>Clear</button>
     </div>
     {#if store.mails.length === 0}
-      <p class="empty">No mail yet. Send some from an app that uses the .env lines above.</p>
+      <EmptyState art={art.mail} title="The inbox is empty" line="Mail your sites send lands here" />
     {/if}
     <ul>
       {#each store.mails as m (m.id)}
