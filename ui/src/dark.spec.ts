@@ -47,3 +47,10 @@ test('Windows gets Hearth window buttons in a draggable strip; macOS keeps its o
   expect(target.querySelectorAll('button').length).toBe(0);
   unmount(mac);
 });
+
+test('motion stops when the OS asks', () => {
+  const reduced = styles.slice(styles.indexOf('@media (prefers-reduced-motion: reduce)'));
+  expect(styles).toContain('@media (prefers-reduced-motion: reduce)');
+  expect(reduced).toContain('animation: none');
+  expect(reduced).toContain('transition: none');
+});

@@ -44,6 +44,7 @@
   ];
 </script>
 
+<div class="glow" aria-hidden="true"></div>
 <TitleBar platform={platformOf(navigator.userAgent)} />
 <div class="shell">
   <aside>
@@ -92,7 +93,32 @@
 </div>
 
 <style>
+  /* The ember glow behind everything: warm from the bottom right, a faint gold at the top left.
+     It breathes slowly. */
+  .glow {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(65% 55% at 78% 108%, rgb(240 122 64 / 0.34), transparent 70%),
+      radial-gradient(45% 40% at 40% 115%, rgb(194 54 31 / 0.22), transparent 70%),
+      radial-gradient(40% 32% at 8% -4%, rgb(255 210 122 / 0.08), transparent 70%);
+    animation: breathe 8s ease-in-out infinite alternate;
+  }
+
+  @keyframes breathe {
+    from {
+      opacity: 0.85;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
   .shell {
+    position: relative;
+    z-index: 1;
     display: grid;
     grid-template-columns: 208px 1fr;
     height: 100%;
