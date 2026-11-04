@@ -219,6 +219,21 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Lists every site's dev processes and whether they run.
+    #[command(name = "processes", visible_alias = "processes:list")]
+    Processes {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Starts a site's process, e.g. `hearth processes:start shop vite`.
+    #[command(name = "processes:start")]
+    ProcessesStart { site: String, name: String },
+    /// Stops a site's process and everything it started.
+    #[command(name = "processes:stop")]
+    ProcessesStop { site: String, name: String },
+    /// Restarts a site's process (its output starts over).
+    #[command(name = "processes:restart")]
+    ProcessesRestart { site: String, name: String },
     /// Anything else, e.g. a Herd command for a feature Hearth does not have yet.
     #[command(external_subcommand)]
     Other(Vec<String>),
@@ -415,6 +430,10 @@ async fn main() -> ExitCode {
         Command::ServicesStart { id } => service_call(&paths, &["services.start"], &id).await,
         Command::ServicesStop { id } => service_call(&paths, &["services.stop"], &id).await,
         Command::ServicesDelete { id, force } => services_delete(&paths, &id, force).await,
+        Command::Processes { json } => processes_list(&paths, json).await,
+        Command::ProcessesStart { site, name } => process_call(&paths, "processes.start", &site, &name).await,
+        Command::ProcessesStop { site, name } => process_call(&paths, "processes.stop", &site, &name).await,
+        Command::ProcessesRestart { site, name } => process_call(&paths, "processes.restart", &site, &name).await,
         Command::Restart { .. } => {
             print_call(&paths, "web.restart", Value::Null, false, |_| println!("The web server and PHP restart")).await
         }
@@ -686,6 +705,44 @@ async fn services_available(paths: &HearthPaths, kind: Option<&str>, as_json: bo
     }
 }
 
+async fn processes_list(paths: &HearthPaths, as_json: bool) -> ExitCode {
+    print_call(paths, "processes.list", Value::Null, as_json, |list| {
+        let sites = list["sites"].as_array().cloned().unwrap_or_default();
+        if sites.is_empty() {
+            println!("No processes yet. Add them on Hearth's Processes page.");
+        }
+        for site in sites {
+            for p in site["processes"].as_array().into_iter().flatten() {
+                let state = if p["running"] == true { "running" } else { "stopped" };
+                println!(
+                    "{}  {}  {state}  {}",
+                    site["site"].as_str().unwrap_or_default(),
+                    p["name"].as_str().unwrap_or_default(),
+                    p["command"].as_str().unwrap_or_default()
+                );
+            }
+        }
+    })
+    .await
+}
+
+/// Starts, stops or restarts a site's process, then says whether it runs.
+async fn process_call(paths: &HearthPaths, method: &str, site: &str, name: &str) -> ExitCode {
+    if let Err(e) = ipc::call(paths, method, json!({ "site": site, "name": name })).await {
+        return fail(&message(e));
+    }
+    let list = ipc::call(paths, "processes.list", Value::Null).await.unwrap_or(Value::Null);
+    let running = list["sites"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["site"] == site)
+        .flat_map(|s| s["processes"].as_array().cloned().unwrap_or_default())
+        .any(|p| p["name"] == name && p["running"] == true);
+    println!("{site} {name} {}", if running { "runs" } else { "is stopped" });
+    ExitCode::SUCCESS
+}
+
 async fn services_list(paths: &HearthPaths, as_json: bool) -> ExitCode {
     match ipc::call(paths, "services.list", Value::Null).await {
         Ok(list) if as_json => {
@@ -779,7 +836,6 @@ fn missing(command: &str) -> String {
         "db" => "database tools",
         "debug" | "coverage" => "one-click Xdebug",
         "log" | "logs" | "insights" => "log and insights viewer",
-        "processes" => "process manager",
         "workspace" | "workspaces" => "workspaces",
         "mcp" => "MCP server",
         "share" | "fetch-share-url" => "site sharing",
