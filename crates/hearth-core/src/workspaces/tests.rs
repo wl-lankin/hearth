@@ -48,10 +48,19 @@ fn env_edits_keep_line_endings_comments_and_unknown_lines() {
         env_file::set(text, &[("APP_URL", "http://x.shop.test"), ("DB_DATABASE", "shop_x"), ("APP_NAME", "My Shop")]);
     assert_eq!(
         out,
-        "# app\r\nAPP_NAME=\"My Shop\"\r\nexport APP_URL=http://old\r\nAPP_URL=http://x.shop.test\r\nAPP_URL=http://second\r\n\r\nDB_HOST=127.0.0.1\r\nDB_DATABASE=shop_x\r\n"
+        "# app\r\nAPP_NAME='My Shop'\r\nexport APP_URL=http://x.shop.test\r\nAPP_URL=http://x.shop.test\r\nAPP_URL=http://x.shop.test\r\n\r\nDB_HOST=127.0.0.1\r\nDB_DATABASE=shop_x\r\n"
     );
     let lf = env_file::set("A=1\n", &[("B", "say \"hi\" $X #1")]);
-    assert_eq!(lf, "A=1\nB=\"say \\\"hi\\\" $X #1\"\n");
+    assert_eq!(lf, "A=1\nB='say \"hi\" $X #1'\n");
+    // Windows paths: single quotes keep backslashes literal (phpdotenv rejects \\U in double quotes).
+    let path = env_file::set("", &[("DB_DATABASE", r"C:\Users\x\OneDrive - Firma\shop\db.sqlite")]);
+    assert_eq!(path, "DB_DATABASE='C:\\Users\\x\\OneDrive - Firma\\shop\\db.sqlite'\n");
+    // With a single quote inside: double quotes, backslashes and quotes escaped.
+    let both = env_file::set("", &[("A", r"it's C:\temp")]);
+    assert_eq!(both, "A=\"it's C:\\\\temp\"\n");
+    // Spaced and export lines of the key are replaced too (phpdotenv takes the last one).
+    let spaced = env_file::set("DB_DATABASE = shop\nexport DB_DATABASE=shop\n", &[("DB_DATABASE", "shop_x")]);
+    assert_eq!(spaced, "DB_DATABASE=shop_x\nexport DB_DATABASE=shop_x\n");
     assert_eq!(env_file::set("", &[("A", "1")]), "A=1\n");
 }
 
@@ -64,4 +73,7 @@ fn env_values_are_read_without_quotes_or_comments() {
     assert_eq!(env_file::get(text, "DB_PORT").as_deref(), Some("3307"));
     assert_eq!(env_file::get(text, "EMPTY").as_deref(), Some(""));
     assert_eq!(env_file::get(text, "MISSING"), None);
+    // phpdotenv is last-wins: so is get.
+    assert_eq!(env_file::get("DB_DATABASE=shop\nDB_DATABASE=shop_x\n", "DB_DATABASE").as_deref(), Some("shop_x"));
+    assert_eq!(env_file::get("A='it''s'\n", "A").as_deref(), Some("it"));
 }

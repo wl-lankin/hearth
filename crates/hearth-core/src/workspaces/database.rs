@@ -133,17 +133,33 @@ pub fn prepare(paths: &HearthPaths, worktree: &Path, parent: &Path, env: &str, m
     }
 }
 
-/// Drops the workspace's own database (its `.env` names it); never the parent's.
-pub fn drop(paths: &HearthPaths, env: &str, parent_db: &str) -> Result<(), CoreError> {
-    let driver = driver(env).map_err(CoreError::Php)?;
-    if driver == Driver::Sqlite {
-        // The file lives in the worktree and goes with it.
-        return Ok(());
+/// Drops the database Hearth made for a workspace: `name` and `driver` as recorded, never what a
+/// `.env` names now. The connection (host, port, user) comes from the workspace's `.env`, else the
+/// parent's. Never the parent's own database.
+pub fn drop(
+    paths: &HearthPaths,
+    env: &str,
+    fallback_env: &str,
+    name: &str,
+    driver: &str,
+    parent_db: &str,
+) -> Result<(), CoreError> {
+    let driver = match driver {
+        "mysql" => Driver::Mysql,
+        "pgsql" => Driver::Pgsql,
+        // A SQLite file lives in the worktree and goes with it.
+        _ => return Ok(()),
+    };
+    if name.is_empty() || name == parent_db {
+        return Err(CoreError::Php(format!("`{name}` is the parent's database: it is not dropped")));
     }
-    let c = conn(env, driver).map_err(CoreError::Php)?;
-    if c.database == parent_db {
-        return Err(CoreError::Php(format!("`{parent_db}` is the parent's database: it is not dropped")));
-    }
+    let source = if env_file::get(env, "DB_HOST").is_some() || env_file::get(env, "DB_PORT").is_some() {
+        env
+    } else {
+        fallback_env
+    };
+    let mut c = conn(&env_file::set(source, &[("DB_DATABASE", name)]), driver).map_err(CoreError::Php)?;
+    c.database = name.to_string();
     match driver {
         Driver::Mysql => mysql(paths, &c, None, &format!("DROP DATABASE IF EXISTS {}", tick(&c.database))).map(|_| ()),
         Driver::Pgsql => {

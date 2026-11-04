@@ -57,7 +57,7 @@ fn a_sqlite_file_outside_the_project_is_copied_into_the_worktree() {
     let outside = d.path().join("data").join("shop.db");
     std::fs::create_dir_all(outside.parent().unwrap()).unwrap();
     std::fs::write(&outside, b"rows").unwrap();
-    let env = format!("DB_CONNECTION=sqlite\nDB_DATABASE=\"{}\"\n", outside.display());
+    let env = format!("DB_CONNECTION=sqlite\nDB_DATABASE='{}'\n", outside.display());
     let copy = database::prepare(&paths, &worktree, &parent, &env, Mode::Clone, "feature");
     let target = worktree.join("database").join("shop.db");
     assert_eq!(std::fs::read(&target).unwrap(), b"rows");
@@ -162,10 +162,16 @@ fn mysql_gets_an_empty_or_copied_database_and_drop_removes_it() {
     let empty = database::prepare(&paths, &worktree, &parent, &env, Mode::Empty, "feature/X");
     assert_eq!(empty.name.as_deref(), Some("shop_feature_x_2"), "the first name is taken");
     assert_eq!(server.sql("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='shop_feature_x_2'"), "0");
-    let worktree_env = env.replace("DB_DATABASE=shop", "DB_DATABASE=shop_feature_x");
-    database::drop(&paths, &worktree_env, "shop").unwrap();
+    // The workspace's .env was later pointed elsewhere: delete drops the recorded database only.
+    server.sql("CREATE DATABASE shop_staging");
+    let worktree_env = env.replace("DB_DATABASE=shop", "DB_DATABASE=shop_staging");
+    database::drop(&paths, &worktree_env, &env, "shop_feature_x", "mysql", "shop").unwrap();
+    assert!(server.sql("SHOW DATABASES").lines().any(|l| l == "shop_staging"), "not the one the .env names now");
+    // Without a usable .env the parent's connection is used.
+    database::drop(&paths, "", &env, "shop_feature_x_2", "mysql", "shop").unwrap();
+    assert!(!server.sql("SHOW DATABASES").lines().any(|l| l == "shop_feature_x_2"));
     assert!(!server.sql("SHOW DATABASES").lines().any(|l| l == "shop_feature_x"));
     assert!(server.sql("SHOW DATABASES").lines().any(|l| l == "shop"), "the parent's database stays");
     // Dropping the parent's own database is refused.
-    assert!(database::drop(&paths, &env, "shop").is_err());
+    assert!(database::drop(&paths, &env, &env, "shop", "mysql", "shop").is_err());
 }

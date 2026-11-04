@@ -179,7 +179,15 @@ fn free_host(paths: &HearthPaths, branch: &str, parent: &str) -> String {
 #[derive(Default)]
 struct Undo {
     linked: Option<String>,
-    database: Option<(String, String)>,
+    database: Option<DbUndo>,
+}
+
+/// A database `provision` made: dropped again when a later step fails.
+struct DbUndo {
+    /// The parent's .env (for the connection).
+    env: String,
+    name: String,
+    driver: String,
 }
 
 /// Seeds, links, sets up `.env` and the database, then records the workspace. Any failure takes
@@ -200,8 +208,9 @@ fn provision(
         }
         Err(e) => {
             let paths = &core.paths;
-            if let Some((env, parent_db)) = undo.database {
-                let _ = database::drop(paths, &env, &parent_db);
+            if let Some(db) = undo.database {
+                let parent_db = env_file::get(&db.env, "DB_DATABASE").unwrap_or_default();
+                let _ = database::drop(paths, &db.env, "", &db.name, &db.driver, &parent_db);
             }
             if let Some(host) = undo.linked {
                 let _guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -245,10 +254,11 @@ fn provision_steps(
     let env = std::fs::read_to_string(&env_path).unwrap_or_default();
     let prepared: Prepared = database::prepare(paths, &app, &parent_app, &env, options.database, &record.branch);
     notes.extend(prepared.notes.iter().cloned());
-    if prepared.name.is_some() && prepared.driver.as_deref() != Some("sqlite") {
-        let parent_env = std::fs::read_to_string(parent_app.join(".env")).unwrap_or_default();
-        let own = env_file::set(&env, &prepared.env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect::<Vec<_>>());
-        undo.database = Some((own, env_file::get(&parent_env, "DB_DATABASE").unwrap_or_default()));
+    if let (Some(name), Some(driver)) = (&prepared.name, &prepared.driver) {
+        if driver != "sqlite" {
+            let parent_env = std::fs::read_to_string(parent_app.join(".env")).unwrap_or_default();
+            undo.database = Some(DbUndo { env: parent_env, name: name.clone(), driver: driver.clone() });
+        }
     }
     record.database_mode = prepared.mode;
     record.database_name = prepared.name.clone();
@@ -392,10 +402,20 @@ pub fn delete(core: &CoreState, name: &str, keep_database: bool, keep_files: boo
     }
     let own_db = record.database_mode != Mode::Shared && record.database_driver.as_deref() != Some("sqlite");
     if own_db && !keep_database {
+        // The database Hearth made, as recorded: what the .env names now may be another one.
         let env = std::fs::read_to_string(record.app_path().join(".env")).unwrap_or_default();
         let parent_env = std::fs::read_to_string(record.parent_app_path().join(".env")).unwrap_or_default();
-        if let Err(e) = database::drop(paths, &env, &env_file::get(&parent_env, "DB_DATABASE").unwrap_or_default()) {
-            notes.push(format!("Its database could not be dropped ({e})"));
+        let name = record.database_name.clone().unwrap_or_default();
+        let parent_db = env_file::get(&parent_env, "DB_DATABASE").unwrap_or_default();
+        let driver = record.database_driver.clone().unwrap_or_default();
+        match database::drop(paths, &env, &parent_env, &name, &driver, &parent_db) {
+            Ok(()) => {
+                if env_file::get(&env, "DB_DATABASE").is_some_and(|now| now != name) {
+                    notes
+                        .push(format!("Dropped {name}, the database Hearth made; the one its .env names now was kept"));
+                }
+            }
+            Err(e) => notes.push(format!("Its database {name} could not be dropped ({e})")),
         }
     }
     if !keep_files && record.path.exists() {
