@@ -54,6 +54,8 @@ pub(crate) fn fake_herd(d: &Path) -> (HerdHome, FakeMachine) {
     let projects = d.join("projects");
     std::fs::create_dir_all(projects.join("shop")).unwrap();
     std::fs::create_dir_all(valet.join("Sites")).unwrap();
+    write(&valet.join("CA").join("LaravelValetCASelfSigned.crt"), "-----BEGIN CERTIFICATE-----");
+    write(&valet.join("CA").join("LaravelValetCASelfSigned.key"), "-----BEGIN PRIVATE KEY-----");
     write(
         &valet.join("config.json"),
         &serde_json::json!({ "tld": "test", "paths": [valet.join("Sites"), projects] }).to_string(),
@@ -120,6 +122,8 @@ fn the_inventory_holds_all_of_herd() {
     assert_eq!(inv.sites.parked.len(), 1, "Herd's own Sites folder is not parked");
     assert_eq!(inv.php_versions, ["8.1", "8.4", "8.5"]);
     assert_eq!(inv.php_default.as_deref(), Some("8.5"));
+    let (crt, key) = inv.ca.as_ref().expect("Herd's CA");
+    assert!(crt.ends_with("LaravelValetCASelfSigned.crt") && key.ends_with("LaravelValetCASelfSigned.key"));
 
     let ini = &inv.php_ini["8.5"];
     let kind = |key: &str| ini.iter().find(|l| l.key == key).map(|l| l.kind.clone());
@@ -169,4 +173,31 @@ fn the_real_machine_reads_this_computer() {
     assert!(!m.machine_path().is_empty(), "every Windows has a machine PATH");
     assert!(m.uninstall_entries().iter().any(|(name, _)| !name.is_empty()));
     assert!(m.hosts().contains("localhost") || !m.hosts().is_empty());
+}
+
+#[test]
+fn herds_real_ini_lines_are_read_as_their_extensions() {
+    use super::scan::ini_lines;
+    let lines = ini_lines(
+        r"extension=php_redis-8.4.dll
+extension='C:\Program Files\Herd\resources\app.asar.unpacked\resources\bin\php_herd-8.4.dll'
+extension=exif      ; must be after mbstring as it depends on it
+extension=ffi
+extension=php_mongodb-8.4.dll
+extension=imagick
+memory_limit = 512M ; more for big imports
+",
+    );
+    let kinds: Vec<IniKind> = lines.iter().map(|l| l.kind.clone()).collect();
+    assert_eq!(
+        kinds,
+        [
+            IniKind::Extension("redis".into()),
+            IniKind::Extension("herd".into()),
+            IniKind::Extension("mongodb".into()),
+            IniKind::Extension("imagick".into()),
+            IniKind::Setting,
+        ]
+    );
+    assert_eq!(lines.last().unwrap().value, "512M", "the comment is no part of the value");
 }

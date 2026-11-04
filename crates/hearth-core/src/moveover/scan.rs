@@ -139,6 +139,7 @@ const TUNED: &[(&str, &str)] = &[
 /// Extensions PHP brings itself (Hearth enables what it needs of them).
 const BUILT_IN: &[&str] = &[
     "bcmath",
+    "ffi",
     "bz2",
     "curl",
     "exif",
@@ -177,7 +178,21 @@ fn points_into_herd(value: &str) -> bool {
 
 fn unquote(value: &str) -> String {
     let v = value.trim();
-    v.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(v).to_string()
+    ['"', '\''].iter().find_map(|q| v.strip_prefix(*q).and_then(|s| s.strip_suffix(*q))).unwrap_or(v).to_string()
+}
+
+/// A value without a trailing `; comment` (a `;` inside quotes stays).
+fn without_comment(value: &str) -> &str {
+    let mut quote = None;
+    for (i, c) in value.char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, ';') => return value[..i].trim_end(),
+            _ => {}
+        }
+    }
+    value.trim_end()
 }
 
 /// `php_redis.dll`, `C:\...\php_redis.dll` or `redis` gives `redis`.
@@ -185,7 +200,12 @@ fn extension_name(value: &str) -> String {
     let file = unquote(value);
     let file = file.rsplit(['\\', '/']).next().unwrap_or(&file).to_ascii_lowercase();
     let file = file.strip_suffix(".dll").or_else(|| file.strip_suffix(".so")).unwrap_or(&file);
-    file.strip_prefix("php_").unwrap_or(file).to_string()
+    let file = file.strip_prefix("php_").unwrap_or(file);
+    // Herd names its builds per PHP version: `php_redis-8.4.dll`.
+    match file.rsplit_once('-') {
+        Some((name, version)) if version.chars().all(|c| c.is_ascii_digit() || c == '.') => name.to_string(),
+        _ => file.to_string(),
+    }
 }
 
 /// The lines of a php.ini that matter for the move: the owner's tuned settings, Herd's own paths,
@@ -198,7 +218,7 @@ pub fn ini_lines(text: &str) -> Vec<IniLine> {
             continue;
         }
         let Some((key, value)) = line.split_once('=') else { continue };
-        let (key, value) = (key.trim().to_ascii_lowercase(), value.trim().to_string());
+        let (key, value) = (key.trim().to_ascii_lowercase(), without_comment(value.trim()).to_string());
         let kind = if key == "extension" || key == "zend_extension" {
             let name = extension_name(&value);
             if BUILT_IN.contains(&name.as_str()) {
@@ -245,7 +265,7 @@ fn herd_hosts(hosts: &str) -> Vec<String> {
 }
 
 /// The `.test` names of Herd's real sites: links, proxies and the folders in parked folders.
-fn site_hosts(sites: &HerdSetup) -> BTreeSet<String> {
+pub(crate) fn site_hosts(sites: &HerdSetup) -> BTreeSet<String> {
     let mut names: BTreeSet<String> =
         sites.links.keys().chain(sites.proxies.keys()).map(|n| format!("{n}.test")).collect();
     for dir in &sites.parked {
@@ -309,10 +329,14 @@ pub fn scan(herd: &HerdHome, machine: &dyn Machine) -> Result<Inventory, CoreErr
         .collect();
 
     let ca_dir = herd.valet().join("CA");
-    let ca = [("LaravelValetCASelfSigned.pem", "LaravelValetCASelfSigned.key")]
-        .iter()
-        .map(|(c, k)| (ca_dir.join(c), ca_dir.join(k)))
-        .find(|(c, k)| c.is_file() && k.is_file());
+    // Herd on Windows writes `.crt`; Valet elsewhere `.pem`.
+    let ca = [
+        ("LaravelValetCASelfSigned.crt", "LaravelValetCASelfSigned.key"),
+        ("LaravelValetCASelfSigned.pem", "LaravelValetCASelfSigned.key"),
+    ]
+    .iter()
+    .map(|(c, k)| (ca_dir.join(c), ca_dir.join(k)))
+    .find(|(c, k)| c.is_file() && k.is_file());
 
     let services = json(&config.join("services.json")).unwrap_or_default();
     let services = services["services"].as_array().cloned().unwrap_or_default();
