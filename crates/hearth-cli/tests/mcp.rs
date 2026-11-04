@@ -120,3 +120,106 @@ fn errors_are_answered_as_mcp_expects() {
     assert!(error);
     assert_eq!(text, "The isolate action needs: phpVersion.");
 }
+
+/// A home with the site `shop` (a Laravel-like folder with a log), and a core serving it.
+fn shop_home() -> (tempfile::TempDir, HearthPaths, std::path::PathBuf) {
+    let (d, paths) = home();
+    let shop = d.path().join("shop");
+    std::fs::create_dir_all(shop.join("public")).unwrap();
+    std::fs::write(shop.join("public").join("index.php"), "<?php").unwrap();
+    std::fs::create_dir_all(shop.join("storage").join("logs")).unwrap();
+    std::fs::write(
+        shop.join("storage").join("logs").join("laravel.log"),
+        "[2026-11-04 10:00:00] local.ERROR: Division by zero {\"userId\":3}\n[2026-11-04 10:01:00] local.INFO: Order placed\n",
+    )
+    .unwrap();
+    hearth_core::sites::registry::link(&paths, "shop", &shop).unwrap();
+    (d, paths, shop)
+}
+
+fn mail(paths: &HearthPaths, subject: &str) {
+    let envelope = hearth_core::mail::store::Envelope {
+        site: Some("shop".into()),
+        from: "app@shop.test".into(),
+        to: vec!["anna@example.com".into()],
+    };
+    let raw = format!(
+        "From: app@shop.test\r\nTo: anna@example.com\r\nSubject: {subject}\r\nContent-Type: text/plain\r\n\r\nConfirm here: https://shop.test/confirm?t=1 and http://shop.test/help\r\n"
+    );
+    hearth_core::mail::store::save(paths, &envelope, raw.as_bytes()).unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_actions_answer_from_hearths_core() {
+    let (_d, paths, shop) = shop_home();
+    mail(&paths, "Welcome");
+    let mut core = hearth_core::ipc::CoreState::new(paths.clone());
+    core.web_sync = false;
+    let server = hearth_core::ipc::serve(&paths, hearth_core::ipc::router(core)).await.unwrap();
+    let (p, cwd) = (paths.clone(), shop.join("public"));
+    let results = tokio::task::spawn_blocking(move || {
+        let mut s = Server::start(&p, &cwd);
+        let mut out = vec![];
+        for (tool, args) in [
+            ("site", json!({ "action": "list" })),
+            ("site", json!({ "action": "info" })),
+            ("site", json!({ "action": "isolate", "phpVersion": "8.3" })),
+            ("site", json!({ "action": "info", "site": "SHOP" })),
+            ("site", json!({ "action": "unisolate" })),
+            ("mail", json!({ "action": "list", "to": "anna" })),
+            ("logs", json!({ "action": "files" })),
+            ("logs", json!({ "action": "read", "levels": "error" })),
+            ("processes", json!({ "action": "list" })),
+            ("workspaces", json!({ "action": "list" })),
+            ("runtime", json!({ "action": "status" })),
+            ("env", json!({ "action": "get" })),
+            ("site", json!({ "action": "studio" })),
+        ] {
+            out.push(s.tool(out.len() as u64 + 1, tool, args));
+        }
+        let id = serde_json::from_str::<Value>(&out[5].0).unwrap()[0]["id"].as_str().unwrap().to_string();
+        out.push(s.tool(90, "mail", json!({ "action": "show", "id": id })));
+        out.push(s.tool(91, "mail", json!({ "action": "links", "id": id })));
+        // wait: a mail sent after the call starts.
+        let p2 = p.clone();
+        let sender = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            mail(&p2, "Your code");
+        });
+        out.push(s.tool(92, "mail", json!({ "action": "wait", "subject": "code", "timeout": 10 })));
+        sender.join().unwrap();
+        out.push(s.tool(93, "mail", json!({ "action": "wait", "subject": "never", "timeout": 1 })));
+        out
+    })
+    .await
+    .unwrap();
+    server.shutdown().await;
+    let ok = |i: usize| {
+        assert!(!results[i].1, "call {i} failed: {}", results[i].0);
+        results[i].0.clone()
+    };
+    assert!(ok(0).contains("\"shop\""), "{}", results[0].0);
+    let info: Value = serde_json::from_str(&ok(1)).unwrap();
+    assert_eq!(info["name"], "shop");
+    assert_eq!(info["url"], "http://shop.test:8080");
+    assert!(ok(2).contains("8.3"));
+    let isolated: Value = serde_json::from_str(&ok(3)).unwrap();
+    assert_eq!(isolated["php"], "8.3");
+    ok(4);
+    let mails: Value = serde_json::from_str(&ok(5)).unwrap();
+    assert_eq!(mails[0]["subject"], "Welcome");
+    assert!(ok(6).contains("laravel.log"));
+    let entries: Value = serde_json::from_str(&ok(7)).unwrap();
+    assert_eq!(entries.as_array().map(Vec::len), Some(1), "only the error");
+    assert_eq!(entries[0]["level"], "error");
+    ok(8);
+    ok(9);
+    assert!(ok(10).contains("\"version\""));
+    assert!(results[11].1 && results[11].0.contains("not available in Hearth yet"), "{:?}", results[11]);
+    assert!(results[12].1 && results[12].0.contains("Studio"), "{:?}", results[12]);
+    assert!(ok(13).contains("Subject: Welcome") || ok(13).contains("Welcome"), "{}", results[13].0);
+    let links: Value = serde_json::from_str(&ok(14)).unwrap();
+    assert_eq!(links, json!(["https://shop.test/confirm?t=1", "http://shop.test/help"]));
+    assert!(ok(15).contains("Your code"), "{}", results[15].0);
+    assert!(results[16].1 && results[16].0.contains("No matching mail"), "{:?}", results[16]);
+}

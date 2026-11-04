@@ -1120,7 +1120,6 @@ fn missing(command: &str) -> String {
         "db" => "database tools",
         "debug" | "coverage" => "one-click Xdebug",
         "log" | "logs" | "insights" => "log and insights viewer",
-        "mcp" => "MCP server",
         "share" | "fetch-share-url" => "site sharing",
         "studio" => return "Hearth has no Studio, and none is planned".into(),
         _ => return format!("Hearth has no `{command}` command (see `hearth --help`)"),
