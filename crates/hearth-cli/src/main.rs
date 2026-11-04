@@ -297,6 +297,23 @@ enum Command {
     Loopback,
     /// Runs the MCP server (stdio) with Herd's tool surface, for coding agents.
     Mcp,
+    /// Registers Hearth's MCP server with agents: in this project (default) or user-wide (`--global`).
+    #[command(name = "mcp:install")]
+    McpInstall {
+        #[arg(long, conflicts_with = "project")]
+        global: bool,
+        #[arg(long)]
+        project: bool,
+        /// claude (default), cursor or vscode; repeat for several.
+        #[arg(long = "agent")]
+        agents: Vec<String>,
+        /// The project folder. Default: the current one.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Replace a different existing `hearth` entry.
+        #[arg(long)]
+        force: bool,
+    },
     /// Runs a site (default: the current folder's) on a PHP version.
     Isolate {
         minor: String,
@@ -564,6 +581,9 @@ async fn run() -> ExitCode {
             mcp::serve(&paths).await;
             ExitCode::SUCCESS
         }
+        Command::McpInstall { global, project: _, agents, path, force } => {
+            mcp_install(&paths, global, agents, path, force)
+        }
         Command::Loopback => {
             println!("127.0.0.1");
             ExitCode::SUCCESS
@@ -818,6 +838,51 @@ async fn services_available(paths: &HearthPaths, kind: Option<&str>, as_json: bo
             ExitCode::SUCCESS
         }
         Err(e) => fail(&message(e)),
+    }
+}
+
+/// Registers the MCP server for each agent; Claude Code's user-wide list goes through `claude`.
+fn mcp_install(paths: &HearthPaths, global: bool, agents: Vec<String>, path: Option<PathBuf>, force: bool) -> ExitCode {
+    use mcp::install::{global_claude_command, hearth_exe, write_global, write_project, Agent};
+    let agents = if agents.is_empty() { vec!["claude".to_string()] } else { agents };
+    let exe = hearth_exe(paths);
+    let dir = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let mut failed = false;
+    for name in agents {
+        let agent = match Agent::parse(&name) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+                continue;
+            }
+        };
+        let result = match (global, agent) {
+            (true, Agent::Claude) => {
+                let command = global_claude_command(&exe);
+                match std::process::Command::new(&command[0]).args(&command[1..]).status() {
+                    Ok(s) if s.success() => Ok("Claude Code (user-wide)".to_string()),
+                    _ => Err(format!(
+                        "Claude Code's `claude` command did not run. Register Hearth with:\n  {}",
+                        command.join(" ")
+                    )),
+                }
+            }
+            (true, _) => write_global(agent, &exe, force).map(|f| f.display().to_string()),
+            (false, _) => write_project(agent, &dir, &exe, force).map(|f| f.display().to_string()),
+        };
+        match result {
+            Ok(where_) => println!("Hearth's MCP server is registered as `hearth` in {where_}"),
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 

@@ -223,3 +223,29 @@ async fn the_actions_answer_from_hearths_core() {
     assert!(ok(15).contains("Your code"), "{}", results[15].0);
     assert!(results[16].1 && results[16].0.contains("No matching mail"), "{:?}", results[16]);
 }
+
+#[test]
+fn mcp_install_registers_hearth_in_the_projects_mcp_json() {
+    let (d, paths) = home();
+    let project = d.path().join("shop");
+    std::fs::create_dir_all(&project).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_hearth"))
+        .args(["mcp:install", "--agent", "claude", "--agent", "vscode"])
+        .env("HEARTH_HOME", &paths.root)
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains(".mcp.json") && text.contains("mcp.json"), "{text}");
+    let config: Value = serde_json::from_str(&std::fs::read_to_string(project.join(".mcp.json")).unwrap()).unwrap();
+    assert_eq!(config["mcpServers"]["hearth"]["args"], json!(["mcp"]));
+    assert!(project.join(".vscode").join("mcp.json").is_file());
+    let bad = Command::new(env!("CARGO_BIN_EXE_hearth"))
+        .args(["mcp:install", "--agent", "emacs"])
+        .env("HEARTH_HOME", &paths.root)
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(!bad.status.success());
+}
