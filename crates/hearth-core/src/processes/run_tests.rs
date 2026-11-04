@@ -135,17 +135,42 @@ async fn a_command_that_fails_at_once_shows_why() {
     call(&core, "processes.add", json!({ "site": "shop", "name": "app", "command": "echo boom && exit 3" }))
         .await
         .unwrap();
-    call(&core, "processes.start", json!({ "site": "shop", "name": "app" })).await.unwrap();
-    until("the failure is reported", async || {
-        let list = call(&core, "processes.list", Value::Null).await.unwrap();
-        let row = &list["sites"][0]["processes"][0];
-        row["lastError"].as_str().is_some_and(|e| e.contains("boom"))
-    })
-    .await;
+    // Start says so itself (the CLI and the MCP have no page to look at).
+    let err = call(&core, "processes.start", json!({ "site": "shop", "name": "app" })).await.unwrap_err();
+    assert!(err.message.contains("boom"), "{}", err.message);
+    let list = call(&core, "processes.list", Value::Null).await.unwrap();
+    let row = &list["sites"][0]["processes"][0];
+    assert_eq!((row["running"].as_bool(), row["waiting"].as_bool()), (Some(false), Some(true)), "{row}");
+    let error = row["lastError"].as_str().unwrap();
+    assert!(error.starts_with("exited") && error.contains("boom") && !error.contains("proc:"), "{error}");
     assert!(output(&core).await.contains("boom"));
     core.supervisor.stop_all();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn a_command_that_finishes_is_done_not_failed() {
+    let (_d, core) = home();
+    call(&core, "processes.add", json!({ "site": "shop", "name": "app", "command": "echo built" })).await.unwrap();
+    call(&core, "processes.start", json!({ "site": "shop", "name": "app" })).await.unwrap();
+    let list = call(&core, "processes.list", Value::Null).await.unwrap();
+    let row = &list["sites"][0]["processes"][0];
+    assert_eq!(
+        (row["running"].as_bool(), row["waiting"].as_bool(), row["restarts"].as_u64()),
+        (Some(false), Some(false), Some(0))
+    );
+    assert!(row["lastError"].is_null());
+    assert!(output(&core).await.contains("built"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn output_only_reads_a_known_process_and_commands_are_one_line() {
+    let (_d, core) = home();
+    let err = call(&core, "processes.output", json!({ "site": "..", "name": "../../x" })).await.unwrap_err();
+    assert_eq!(err.message, ".. has no process named ../../x");
+    let err =
+        call(&core, "processes.add", json!({ "site": "shop", "name": "x", "command": "a\nb" })).await.unwrap_err();
+    assert_eq!(err.message, "The command must be one line");
+}
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_processes_and_sites_are_refused() {
     let (_d, core) = home();

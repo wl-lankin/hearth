@@ -38,8 +38,11 @@ pub struct ProcessSpec {
     /// After a crash, the process is only restarted while this port is free: when another program
     /// took it, restarting would fail forever, so the process is parked with that reason instead.
     pub guard_port: Option<u16>,
-    /// Windows: rgs reach the program exactly as written, unquoted (cmd reads its own quoting).
+    /// Windows: `args` reach the program exactly as written, unquoted (cmd reads its own quoting).
     pub raw_args: bool,
+    /// A clean exit (code 0) starts the process again at once (php-cgi after PHP_FCGI_MAX_REQUESTS);
+    /// without this a finished process stays stopped.
+    pub restart_on_clean_exit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -50,14 +53,17 @@ pub struct ProcessStatus {
     pub pid: Option<u32>,
     pub restarts: u32,
     pub last_error: Option<String>,
+    /// Not running, but restarted after its back-off delay (it crashed).
+    pub waiting: bool,
 }
 
 /// What a stop has to end besides the child itself: on Windows the child's own Job Object, which also
 /// holds everything the child started (a shell's program); on macOS the process group does that.
 #[cfg(windows)]
 type Tree = job::Job;
+/// macOS: the child's process group id (its pid), to stop what survives the child.
 #[cfg(unix)]
-type Tree = ();
+type Tree = u32;
 
 struct Entry {
     spec: ProcessSpec,
@@ -122,9 +128,18 @@ fn answers(port: u16) -> bool {
     TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(150)).is_ok()
 }
 
-/// The last lines of a log, for start errors.
+/// The last lines of a log, for start errors: only its end is read (logs grow long, and this runs
+/// under the supervisor's lock), bytes that are no UTF-8 are replaced.
 pub(crate) fn log_tail(path: &std::path::Path) -> String {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
+    use std::io::{Read, Seek, SeekFrom};
+    let mut bytes = Vec::new();
+    if let Ok(mut file) = std::fs::File::open(path) {
+        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+        if file.seek(SeekFrom::Start(len.saturating_sub(4096))).is_ok() {
+            let _ = file.read_to_end(&mut bytes);
+        }
+    }
+    let text = String::from_utf8_lossy(&bytes);
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(3)..].join(" | ")
 }
@@ -304,6 +319,7 @@ impl Supervisor {
                     pid: e.child.as_ref().filter(|_| running).map(Child::id),
                     restarts: e.restarts,
                     last_error: e.last_error.clone(),
+                    waiting: !running && e.retry_at.is_some(),
                 }
             })
             .collect();
@@ -338,9 +354,15 @@ fn watch(table: &Table, record: &Option<PathBuf>, #[cfg(windows)] job: &job::Job
                 entry.child = None;
                 // What it started dies with it, or a restart finds its port taken.
                 end(entry);
-                if status.success() {
+                if status.success() && entry.spec.restart_on_clean_exit {
                     // A clean exit is routine (php-cgi after PHP_FCGI_MAX_REQUESTS): back at once.
                     entry.retry_at = Some(now);
+                    continue;
+                }
+                if status.success() {
+                    // Finished: it stays stopped, its output stays readable.
+                    entry.retry_at = None;
+                    entry.last_error = None;
                     continue;
                 }
                 let tail = log_tail(&entry.spec.log);
@@ -458,7 +480,12 @@ fn spawn(spec: &ProcessSpec) -> Result<(Child, Tree), CoreError> {
     let mut cmd = command(spec)?;
     // Own process group, so stopping it also stops its workers (php-fpm).
     cmd.process_group(0);
-    cmd.spawn().map(|c| (c, ())).map_err(|e| start_error(spec, e))
+    cmd.spawn()
+        .map(|c| {
+            let group = c.id();
+            (c, group)
+        })
+        .map_err(|e| start_error(spec, e))
 }
 
 /// Stops an entry's child and everything it started.
@@ -468,9 +495,16 @@ fn end(entry: &mut Entry) {
         tree.terminate();
     }
     #[cfg(unix)]
-    entry.tree.take();
+    let group = entry.tree.take();
     if let Some(child) = entry.child.as_mut() {
         terminate(child);
+    } else {
+        // The child is gone (crashed): what it started may still run in its group.
+        #[cfg(unix)]
+        if let Some(group) = group {
+            // SAFETY: a plain signal to the group; a pid is not reused while its group still has members.
+            unsafe { libc::kill(-(group as i32), libc::SIGKILL) };
+        }
     }
 }
 
@@ -486,8 +520,12 @@ pub(crate) fn terminate(child: &mut Child) {
     // SAFETY: plain signal calls on the child's process group.
     unsafe { libc::kill(group, libc::SIGTERM) };
     let deadline = Instant::now() + Duration::from_secs(2);
+    // Until the whole group is gone, not just the child: a program it started may ignore SIGTERM.
+    // SAFETY: signal 0 only asks whether the group still has members.
+    let group_left = || unsafe { libc::kill(group, 0) } == 0;
     while Instant::now() < deadline {
-        if matches!(child.try_wait(), Ok(Some(_))) {
+        let child_done = matches!(child.try_wait(), Ok(Some(_)));
+        if child_done && !group_left() {
             return;
         }
         std::thread::sleep(Duration::from_millis(50));

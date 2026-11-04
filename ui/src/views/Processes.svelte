@@ -70,7 +70,7 @@
               <span class="line">
                 <span class="dot" class:ok={p.running} class:bad={!p.running && !!p.lastError} aria-hidden="true"></span>
                 <span class="name">{p.name}</span>
-                <span class="state">{p.running ? 'running' : p.lastError ? 'failed' : 'stopped'}</span>
+                <span class="state">{store.state(p)}</span>
               </span>
               <span class="command">{p.command}</span>
               {#if store.rowError(group.site, p.name)}<span class="error small">{store.rowError(group.site, p.name)}</span>{/if}
@@ -118,6 +118,8 @@
           <h2>{sel.name} <span class="muted">{sel.site}.test</span></h2>
           {#if current.running}
             <button onclick={() => store.act('restart', sel.site, sel.name)}>Restart</button>
+          {/if}
+          {#if store.canStop(current)}
             <button onclick={() => store.act('stop', sel.site, sel.name)}>Stop</button>
           {:else}
             <button class="primary" onclick={() => store.act('start', sel.site, sel.name)}>Start</button>

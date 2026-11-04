@@ -49,6 +49,8 @@ pub fn spec_for(paths: &HearthPaths, site: &str, dir: &Path, proc: &Proc) -> Pro
         ready_socket: None,
         guard_port: None,
         raw_args,
+        // A command that finishes (a build, a migration) is done: it does not run again.
+        restart_on_clean_exit: false,
     }
 }
 
@@ -69,7 +71,27 @@ pub fn start(core: &CoreState, site: &str, name: &str) -> Result<(), CoreError> 
         std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
     }
     std::fs::write(&spec.log, b"").map_err(|e| CoreError::io(&spec.log, e))?;
-    core.supervisor.ensure(spec)
+    let key = spec.key.clone();
+    core.supervisor.ensure(spec)?;
+    // A typo or missing node_modules ends within a moment: say so here, not only on the page. The
+    // supervisor marks a crash as waiting a moment after the exit, so this watches the whole second.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while std::time::Instant::now() < deadline {
+        let status = core.supervisor.status().into_iter().find(|s| s.key == key);
+        match status {
+            Some(s) if s.waiting => {
+                return Err(CoreError::Php(readable_error(&key, s.last_error.as_deref().unwrap_or("exited"))));
+            }
+            None => return Ok(()),
+            _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    Ok(())
+}
+
+/// The supervisor's error without its internal key ("proc:shop:vite exited ..." -> "exited ...").
+pub fn readable_error(key: &str, error: &str) -> String {
+    error.strip_prefix(key).map(str::trim_start).unwrap_or(error).to_string()
 }
 
 pub fn stop(core: &CoreState, site: &str, name: &str) -> Result<(), CoreError> {
@@ -80,6 +102,8 @@ pub fn stop(core: &CoreState, site: &str, name: &str) -> Result<(), CoreError> {
 
 /// Starts every process marked autostart; one that fails is skipped (its row shows why it is off).
 pub fn start_autostart(core: &CoreState) {
+    // Sites removed while Hearth was not running take their processes with them first.
+    let _ = prune(core);
     for (site, list) in store::load(&core.paths) {
         for proc in list.iter().filter(|p| p.autostart) {
             let _ = start(core, &site, &proc.name);

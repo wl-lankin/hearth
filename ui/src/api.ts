@@ -728,6 +728,8 @@ export interface ProcessRow {
   pid: number | null;
   restarts: number;
   lastError: string | null;
+  /** Crashed: started again after a back-off delay. */
+  waiting: boolean;
 }
 
 export interface ProcessList {
@@ -753,8 +755,8 @@ let demoProcesses: ProcessList = {
     {
       site: 'shop',
       processes: [
-        { name: 'vite', command: 'npm run dev', autostart: true, running: true, pid: 4120, restarts: 0, lastError: null },
-        { name: 'queue', command: 'php artisan queue:listen --tries=1', autostart: false, running: false, pid: null, restarts: 0, lastError: null },
+        { name: 'vite', command: 'npm run dev', autostart: true, running: true, pid: 4120, restarts: 0, lastError: null, waiting: false },
+        { name: 'queue', command: 'php artisan queue:listen --tries=1', autostart: false, running: false, pid: null, restarts: 0, lastError: null, waiting: false },
       ],
     },
   ],
@@ -803,7 +805,7 @@ export const processesAdd = async (site: string, name: string, command: string, 
   if (!demo) return void (await core('processes.add', { site, name, command, autostart }));
   let group = demoProcesses.sites.find((s) => s.site === site);
   if (!group) demoProcesses.sites.push((group = { site, processes: [] }));
-  group.processes.push({ name, command, autostart, running: false, pid: null, restarts: 0, lastError: null });
+  group.processes.push({ name, command, autostart, running: false, pid: null, restarts: 0, lastError: null, waiting: false });
 };
 export const processesRemove = async (site: string, name: string): Promise<void> => {
   if (!demo) return void (await core('processes.remove', { site, name }));

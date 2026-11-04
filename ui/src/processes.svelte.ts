@@ -1,4 +1,4 @@
-import type { ProcessList, ProcessOutput, ProcessSuggestion, SitesList } from './api';
+import type { ProcessList, ProcessOutput, ProcessRow, ProcessSuggestion, SitesList } from './api';
 
 export type ProcessesApi = {
   processesList(): Promise<ProcessList>;
@@ -46,13 +46,24 @@ export function createProcessesStore(api: ProcessesApi) {
     }
   }
 
-  async function readOutput() {
+  // One read at a time: two from the same offset would add the same text twice.
+  let reading: Promise<void> | null = null;
+
+  function readOutput(): Promise<void> {
+    if (!reading) {
+      reading = readOnce().finally(() => (reading = null));
+    }
+    return reading;
+  }
+
+  async function readOnce() {
     if (!selected) return;
     const { site, name } = selected;
-    const got = await api.processesOutput(site, name, offset);
-    // The pick may have changed while this read ran.
-    if (selected?.site !== site || selected?.name !== name) return;
-    output = capped(got.reset || offset === undefined ? got.text : output + got.text);
+    const from = offset;
+    const got = await api.processesOutput(site, name, from);
+    // The pick (or the read position) may have changed while this read ran.
+    if (selected?.site !== site || selected?.name !== name || offset !== from) return;
+    output = capped(got.reset || from === undefined ? got.text : output + got.text);
     offset = got.offset;
   }
 
@@ -84,6 +95,13 @@ export function createProcessesStore(api: ProcessesApi) {
       return formError;
     },
     rowError: (site: string, name: string) => errors[rowKey(site, name)] ?? null,
+    /** What a row shows: a crash waiting for its next try is still the supervisor's to stop. */
+    state(p: ProcessRow): 'running' | 'restarting' | 'failed' | 'stopped' {
+      if (p.running) return 'running';
+      if (p.waiting) return 'restarting';
+      return p.lastError ? 'failed' : 'stopped';
+    },
+    canStop: (p: ProcessRow) => p.running || p.waiting,
     async load() {
       await refresh();
       try {
@@ -98,6 +116,8 @@ export function createProcessesStore(api: ProcessesApi) {
       selected = { site, name };
       output = '';
       offset = undefined;
+      // A read for the previous pick may still run: this one starts after it.
+      await reading;
       await readOutput().catch((e) => (error = asMessage(e)));
     },
     /** Called every second while the page is open: the states and the shown output's new text. */

@@ -201,6 +201,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
                 ready_socket: None,
                 guard_port: None,
                 raw_args: false,
+                restart_on_clean_exit: true,
             };
             if let Err(e) = core.supervisor.ensure(spec) {
                 errors.push(e.to_string());

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import type { ProcessList, ProcessOutput, SitesList } from './api';
 import { createProcessesStore, type ProcessesApi } from './processes.svelte';
 
-const row = (name: string, running: boolean) => ({ name, command: `run ${name}`, autostart: false, running, pid: running ? 1 : null, restarts: 0, lastError: null });
+const row = (name: string, running: boolean) => ({ name, command: `run ${name}`, autostart: false, running, pid: running ? 1 : null, restarts: 0, lastError: null, waiting: false });
 
 function fakeApi(over: Partial<ProcessesApi> = {}) {
   const calls: string[] = [];
@@ -31,6 +31,26 @@ function fakeApi(over: Partial<ProcessesApi> = {}) {
 }
 
 describe('processes store', () => {
+  test('a crashed process waiting for its restart reads restarting and can be stopped', async () => {
+    const api = fakeApi();
+    api.setList({ sites: [{ site: 'shop', processes: [{ ...row('vite', false), waiting: true, lastError: 'exited (exit code: 1): boom' }, row('queue', false), { ...row('old', false), lastError: 'exited (exit code: 1): x' }] }] });
+    const store = createProcessesStore(api);
+    await store.load();
+    const [vite, queue, old] = store.sites[0].processes;
+    expect([store.state(vite), store.state(queue), store.state(old)]).toEqual(['restarting', 'stopped', 'failed']);
+    expect([store.canStop(vite), store.canStop(queue)]).toEqual([true, false]);
+  });
+
+  test('two reads in flight at once add the new text only once', async () => {
+    const api = fakeApi();
+    const store = createProcessesStore(api);
+    await store.load();
+    api.queue({ offset: 6, text: 'ready\n', reset: false }, { offset: 10, text: 'hmr\n', reset: false }, { offset: 10, text: 'hmr\n', reset: false });
+    await store.select('shop', 'vite');
+    await Promise.all([store.poll(), store.act('restart', 'shop', 'vite')]);
+    expect(store.output).toBe('ready\nhmr\n');
+  });
+
   test('picking a process shows its output; later polls append only new text, a reset replaces it', async () => {
     const api = fakeApi();
     const store = createProcessesStore(api);

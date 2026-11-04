@@ -36,7 +36,8 @@ fn list(core: &CoreState) -> Value {
                         "running": s.is_some_and(|s| s.running),
                         "pid": s.and_then(|s| s.pid),
                         "restarts": s.map_or(0, |s| s.restarts),
-                        "lastError": s.and_then(|s| s.last_error.clone()),
+                        "lastError": s.and_then(|s| s.last_error.as_deref()).map(|e| run::readable_error(&key(&site, &p.name), e)),
+                        "waiting": s.is_some_and(|s| s.waiting),
                     })
                 })
                 .collect();
@@ -95,9 +96,11 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             }
             Err(e) => Err(e),
         },
-        "processes.output" => site_name().map(|(site, name)| {
+        "processes.output" => site_name().and_then(|(site, name)| {
+            // Only a saved process's log: the names become a path.
+            store::get(paths, &site, &name).map_err(failed)?;
             let offset = params.get("offset").and_then(Value::as_u64);
-            json!(output::read(&log_path(paths, &site, &name), offset))
+            Ok(json!(output::read(&log_path(paths, &site, &name), offset)))
         }),
         "processes.suggest" => text(params, "site").and_then(|site| {
             let dir = run::site_dir(paths, site).map_err(failed)?;

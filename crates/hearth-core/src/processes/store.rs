@@ -49,6 +49,10 @@ pub fn add(paths: &HearthPaths, site: &str, proc: Proc) -> Result<(), CoreError>
     if proc.command.trim().is_empty() {
         return Err(CoreError::Php("The command is empty".into()));
     }
+    // cmd runs only the first line of several; tabs are fine.
+    if proc.command.chars().any(|c| c.is_control() && c != '\t') {
+        return Err(CoreError::Php("The command must be one line".into()));
+    }
     let mut all = load(paths);
     let list = all.entry(site.to_string()).or_default();
     if list.iter().any(|p| p.name == proc.name) {
