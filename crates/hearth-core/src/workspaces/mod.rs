@@ -12,14 +12,16 @@ pub mod service;
 /// A program run without a console window flashing up: the core runs inside the app, a windowed
 /// program, and a create runs git and database tools a dozen times.
 pub(crate) fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
-    let mut cmd = std::process::Command::new(program);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = std::process::Command::new(program);
         cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
     }
-    cmd
+    #[cfg(not(windows))]
+    std::process::Command::new(program)
 }
 
 #[cfg(test)]

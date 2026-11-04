@@ -54,7 +54,13 @@ async fn a_workspace_is_a_worktree_with_its_own_host_env_and_settings() {
     assert_eq!(w["url"], "http://feature-x.shop.test:8080");
     assert_eq!((w["branch"].as_str(), w["baseBranch"].as_str()), (Some("feature/X"), Some("main")));
     let path = PathBuf::from(w["path"].as_str().unwrap());
-    assert_eq!(path, core.paths.data.join("workspaces").join("shop").join("feature-x"));
+    // Hearth stores the resolved path (CI's temp folder is an 8.3 name like RUNNER~1).
+    assert_eq!(
+        path,
+        std::fs::canonicalize(core.paths.data.join("workspaces").join("shop").join("feature-x"))
+            .map(|p| PathBuf::from(p.to_string_lossy().trim_start_matches(r"\\?\").to_string()))
+            .unwrap()
+    );
     assert_eq!(sh(&path, &["rev-parse", "--abbrev-ref", "HEAD"]), "feature/X");
     // Its own .env (rewritten) and .env.testing (copied as is), the vendor folder of an equal lock.
     let env = read(&path.join(".env"));
