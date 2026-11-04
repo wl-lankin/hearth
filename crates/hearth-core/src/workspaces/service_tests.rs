@@ -138,3 +138,111 @@ async fn a_folder_without_git_is_refused_with_how_to_start() {
     let err = call(&core, "workspaces.create", json!({ "site": "nope" })).await.unwrap_err();
     assert_eq!(err.message, "No site named nope.test");
 }
+
+/// A site that is itself a worktree (its `.git` is a file): a workspace of it still works.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_site_whose_git_folder_is_a_file_can_still_branch() {
+    let (d, core, shop) = home();
+    let outside = d.path().join("shop-hotfix");
+    sh(&shop, &["worktree", "add", "-q", "-b", "hotfix", &outside.to_string_lossy()]);
+    call(&core, "workspaces.adopt", json!({ "path": outside })).await.unwrap();
+    let ws = call(&core, "workspaces.create", json!({ "site": "hotfix.shop", "name": "deeper" })).await.unwrap();
+    assert_eq!(ws["workspace"]["site"], "deeper.hotfix.shop");
+}
+
+/// Worktrees inside the repository (`.worktrees/`, agents' folders): each one's parent is the
+/// repository's own site, never an earlier adopted worktree.
+#[tokio::test(flavor = "multi_thread")]
+async fn worktrees_inside_the_repository_all_get_the_main_site_as_parent() {
+    let (_d, core, shop) = home();
+    for name in ["a", "b"] {
+        let dir = shop.join(".worktrees").join(name);
+        sh(&shop, &["worktree", "add", "-q", "-b", name, &dir.to_string_lossy()]);
+        let ws = call(&core, "workspaces.adopt", json!({ "path": dir })).await.unwrap();
+        assert_eq!(ws["workspace"]["parentSite"], "shop", "{name}");
+        assert_eq!(ws["workspace"]["appDir"], "", "{name}");
+        assert_eq!(ws["workspace"]["site"], format!("{name}.shop"));
+    }
+}
+
+/// A failure after the site was linked takes everything back: link, worktree, record, and the
+/// branch the create made.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failure_after_linking_takes_everything_back() {
+    let (_d, core, shop) = home();
+    // The registry cannot be written: the last step before the marker fails.
+    std::fs::create_dir_all(core.paths.config.join("workspaces.json")).unwrap();
+    let err = call(&core, "workspaces.create", json!({ "site": "shop", "name": "late" })).await;
+    assert!(err.is_err());
+    assert!(!registry::list(&core.paths).iter().any(|s| s.name == "late.shop"), "unlinked");
+    assert!(!core.paths.data.join("workspaces").join("shop").join("late").exists());
+    assert!(!sh(&shop, &["branch", "--list", "late"]).contains("late"), "the new branch is gone too");
+}
+
+/// An adopted worktree that git cannot remove (a file is open) is never deleted by hand.
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_adopted_folder_is_never_deleted_by_hand() {
+    let (d, core, shop) = home();
+    let outside = d.path().join("shop-open");
+    sh(&shop, &["worktree", "add", "-q", "-b", "open", &outside.to_string_lossy()]);
+    call(&core, "workspaces.adopt", json!({ "path": outside })).await.unwrap();
+    // Held without delete sharing (Rust's default allows deleting an open file).
+    let held = {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().read(true).share_mode(0).open(outside.join("app.txt")).unwrap()
+    };
+    let done = call(&core, "workspaces.delete", json!({ "name": "open" })).await.unwrap();
+    assert!(outside.join("app.txt").is_file(), "left to git, which could not");
+    assert!(done["notes"][0].as_str().unwrap_or_default().contains("could not be removed"), "{done}");
+    drop(held);
+}
+
+/// Links inside `vendor` (Composer path repositories) are links in the copy too.
+#[tokio::test(flavor = "multi_thread")]
+async fn links_in_dependencies_are_recreated_not_dropped() {
+    let (d, core, shop) = home();
+    let package = d.path().join("acme-pkg");
+    std::fs::create_dir_all(&package).unwrap();
+    std::fs::write(package.join("Pkg.php"), "<?php").unwrap();
+    let link = shop.join("vendor").join("acme");
+    std::fs::create_dir_all(&link).unwrap();
+    let link = link.join("pkg");
+    #[cfg(windows)]
+    {
+        let out = std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&link)
+            .arg(&package)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&package, &link).unwrap();
+    let ws = call(&core, "workspaces.create", json!({ "site": "shop", "name": "linked" })).await.unwrap();
+    let copied = PathBuf::from(ws["workspace"]["path"].as_str().unwrap()).join("vendor").join("acme").join("pkg");
+    assert!(copied.join("Pkg.php").is_file(), "the package is reachable");
+    assert!(
+        std::fs::symlink_metadata(&copied).unwrap().file_type().is_symlink() || copied.read_link().is_ok(),
+        "as a link"
+    );
+}
+
+/// A merge that worked but could not be pushed reports the merge, with the push as a note.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_push_after_a_merge_is_a_note_not_a_failure() {
+    let (_d, core, shop) = home();
+    let ws = call(&core, "workspaces.create", json!({ "site": "shop", "name": "pushme" })).await.unwrap();
+    let path = PathBuf::from(ws["workspace"]["path"].as_str().unwrap());
+    std::fs::write(path.join("p.txt"), "p\n").unwrap();
+    sh(&path, &["add", "p.txt"]);
+    sh(&path, &["commit", "-q", "-m", "p"]);
+    // No origin: the push fails.
+    let done = call(&core, "workspaces.merge", json!({ "name": "pushme", "push": true })).await.unwrap();
+    assert_eq!(done["message"], "Merged pushme into main of shop");
+    assert!(done["notes"][0].as_str().unwrap_or_default().starts_with("main could not be pushed"), "{done}");
+    assert!(shop.join("p.txt").is_file());
+}

@@ -49,6 +49,13 @@ pub fn root(paths: &HearthPaths) -> PathBuf {
     paths.data.join("workspaces")
 }
 
+/// Whether `path` is one of Hearth's own worktree folders: exactly `<root>/<parent>/<label>`,
+/// compared resolved (junctions, 8.3 names, `..`). Only these may be deleted by hand.
+fn own_folder(paths: &HearthPaths, path: &Path) -> bool {
+    let (path, root) = (real(path), real(&root(paths)));
+    path.parent().and_then(Path::parent).is_some_and(|grand| real(grand) == root)
+}
+
 fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
 }
@@ -91,6 +98,7 @@ pub fn create(core: &CoreState, options: CreateOptions) -> Result<Made, CoreErro
     let label = host.strip_suffix(&format!(".{}", parent.name)).unwrap_or(&host).to_string();
     let path = root(paths).join(&parent.name).join(&label);
     std::fs::create_dir_all(path.parent().unwrap_or(&path)).map_err(|e| CoreError::io(&path, e))?;
+    let new_branch = !git::branch_exists(&repo, &branch);
     git::add(&repo, &path, &branch, &base)?;
     let record = Record {
         kind: "worktree".into(),
@@ -113,7 +121,7 @@ pub fn create(core: &CoreState, options: CreateOptions) -> Result<Made, CoreErro
         created_at: now(),
         owned: true,
     };
-    provision(core, record, &parent, &options)
+    provision(core, record, &parent, &options, new_branch)
 }
 
 /// Serves an existing linked worktree (made with `git worktree add`) as a workspace.
@@ -127,10 +135,16 @@ pub fn adopt(core: &CoreState, path: &Path, options: CreateOptions) -> Result<Ma
     let repo = git::linked_worktree_parent(&top)
         .map(|p| real(&p))
         .ok_or_else(|| problem(format!("{} is not a git worktree", top.display())))?;
-    // The parent site: the deepest site folder inside the repository.
+    // The parent site: the deepest site folder of the repository's own checkout. Worktrees inside
+    // the repository (`.worktrees/`, agents' folders) are checkouts of their own, never parents.
     let parent = sites::list(paths)
         .into_iter()
-        .filter(|s| s.path.as_deref().is_some_and(|p| within(&real(p), &repo)))
+        .filter(|s| {
+            s.path.as_deref().is_some_and(|p| {
+                let p = real(p);
+                within(&p, &repo) && git::toplevel(&p).is_some_and(|top| real(&top) == repo)
+            })
+        })
         .max_by_key(|s| s.path.as_ref().map_or(0, |p| p.as_os_str().len()))
         .ok_or_else(|| problem(format!("No site serves the repository {}", repo.display())))?;
     let parent_dir = real(parent.path.as_deref().unwrap_or(&repo));
@@ -161,7 +175,7 @@ pub fn adopt(core: &CoreState, path: &Path, options: CreateOptions) -> Result<Ma
         created_at: now(),
         owned: false,
     };
-    provision(core, record, &parent, &options)
+    provision(core, record, &parent, &options, false)
 }
 
 /// A host for `branch` under `parent` that no site, workspace or Hearth folder uses yet.
@@ -191,12 +205,14 @@ struct DbUndo {
 }
 
 /// Seeds, links, sets up `.env` and the database, then records the workspace. Any failure takes
-/// back what was done, the worktree of a created workspace included.
+/// back what was done: the worktree of a created workspace too, and its branch when the create
+/// made it (`new_branch`).
 fn provision(
     core: &CoreState,
     mut record: Record,
     parent: &sites::Site,
     options: &CreateOptions,
+    new_branch: bool,
 ) -> Result<Made, CoreError> {
     let mut undo = Undo::default();
     match provision_steps(core, &mut record, parent, options, &mut undo) {
@@ -212,14 +228,22 @@ fn provision(
                 let parent_db = env_file::get(&db.env, "DB_DATABASE").unwrap_or_default();
                 let _ = database::drop(paths, &db.env, "", &db.name, &db.driver, &parent_db);
             }
+            let linked = undo.linked.is_some();
             if let Some(host) = undo.linked {
                 let _guard = core.sites_lock.lock().unwrap_or_else(|e| e.into_inner());
                 let _ = sites::unlink(paths, &host);
             }
             if record.owned {
-                let _ = git::remove(&record.parent_path, &record.path, within(&record.path, &root(paths)));
+                let _ = git::remove(&record.parent_path, &record.path, own_folder(paths, &record.path));
+                if new_branch {
+                    let _ = git::run(&record.parent_path, &["branch", "-D", &record.branch]);
+                }
             }
             let _ = registry::remove(paths, &record.site);
+            // A sync between link and failure may serve the host: let the web server follow.
+            if linked && core.web_sync {
+                crate::web::service::schedule_sync(core);
+            }
             Err(e)
         }
     }
@@ -269,7 +293,7 @@ fn provision_steps(
         std::fs::write(&env_path, env_file::set(&env, &pairs)).map_err(|e| CoreError::io(&env_path, e))?;
     }
     registry::put(paths, record.clone())?;
-    registry::mark(record)?;
+    notes.extend(registry::mark(record)?);
     if record.database_mode == Mode::Empty && options.migrate && app.join("artisan").is_file() {
         if let Err(e) = migrate(paths, &app, &record.site) {
             notes.push(format!("`php artisan migrate` failed ({e}): run it in the workspace"));
@@ -321,7 +345,7 @@ fn seed(parent: &Path, app: &Path, notes: &mut Vec<String>) -> Result<(), CoreEr
     };
     if parent.join("vendor").is_dir() && !app.join("vendor").exists() {
         if same("composer.lock") {
-            copy_tree(&parent.join("vendor"), &app.join("vendor"))?;
+            copy_or_note(&parent.join("vendor"), &app.join("vendor"), "composer install", notes);
         } else {
             notes.push("composer.lock differs from the parent's: run `composer install` in the workspace".into());
         }
@@ -329,7 +353,9 @@ fn seed(parent: &Path, app: &Path, notes: &mut Vec<String>) -> Result<(), CoreEr
     let locks = ["pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb", "package-lock.json", "npm-shrinkwrap.json"];
     if parent.join("node_modules").is_dir() && !app.join("node_modules").exists() {
         match locks.iter().find(|l| parent.join(l).is_file()) {
-            Some(lock) if same(lock) => copy_tree(&parent.join("node_modules"), &app.join("node_modules"))?,
+            Some(lock) if same(lock) => {
+                copy_or_note(&parent.join("node_modules"), &app.join("node_modules"), "npm install", notes)
+            }
             _ => notes.push(
                 "The JavaScript lockfile differs from the parent's: install the packages in the workspace".into(),
             ),
@@ -337,19 +363,30 @@ fn seed(parent: &Path, app: &Path, notes: &mut Vec<String>) -> Result<(), CoreEr
     }
     let build = Path::new("public").join("build");
     if parent.join(&build).is_dir() && !app.join(&build).exists() && !app.join("public").join("hot").exists() {
-        copy_tree(&parent.join(&build), &app.join(&build))?;
+        copy_or_note(&parent.join(&build), &app.join(&build), "npm run build", notes);
     }
     Ok(())
 }
 
-/// Copies a folder; links inside it are skipped (they point elsewhere and would copy the world).
+/// Copies a dependency folder; when that fails the partial copy goes and a note says what to run
+/// (a half-copied `vendor` would look installed).
+fn copy_or_note(from: &Path, to: &Path, instead: &str, notes: &mut Vec<String>) {
+    if let Err(e) = copy_tree(from, to) {
+        let _ = std::fs::remove_dir_all(to);
+        let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        notes.push(format!("{name} could not be copied ({e}): run `{instead}` in the workspace"));
+    }
+}
+
+/// Copies a folder. Links stay links to the same target (`node_modules/.bin`, pnpm's layout,
+/// Composer path repositories): copying what they point to would copy the world.
 fn copy_tree(from: &Path, to: &Path) -> Result<(), CoreError> {
     std::fs::create_dir_all(to).map_err(|e| CoreError::io(to, e))?;
     for entry in std::fs::read_dir(from).map_err(|e| CoreError::io(from, e))?.flatten() {
         let kind = entry.file_type().map_err(|e| CoreError::io(entry.path(), e))?;
         let target = to.join(entry.file_name());
         if kind.is_symlink() {
-            continue;
+            copy_link(&entry.path(), &target)?;
         } else if kind.is_dir() {
             copy_tree(&entry.path(), &target)?;
         } else {
@@ -357,6 +394,36 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), CoreError> {
         }
     }
     Ok(())
+}
+
+/// Makes `to` a link to where `from` points. Windows: a symbolic link when allowed (developer
+/// mode), else a junction for a folder, else a copy of a file.
+fn copy_link(from: &Path, to: &Path) -> Result<(), CoreError> {
+    let target = std::fs::read_link(from).map_err(|e| CoreError::io(from, e))?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&target, to).map_err(|e| CoreError::io(to, e))
+    }
+    #[cfg(windows)]
+    {
+        // A relative target is relative to the link's folder.
+        let resolved = if target.is_absolute() { target.clone() } else { from.parent().unwrap_or(from).join(&target) };
+        if resolved.is_dir() {
+            if std::os::windows::fs::symlink_dir(&target, to).is_ok() {
+                return Ok(());
+            }
+            let out =
+                crate::workspaces::command("cmd").arg("/c").arg("mklink").arg("/J").arg(to).arg(&resolved).output();
+            return match out {
+                Ok(o) if o.status.success() => Ok(()),
+                _ => Err(CoreError::Php(format!("{} could not be linked", to.display()))),
+            };
+        }
+        if std::os::windows::fs::symlink_file(&target, to).is_ok() {
+            return Ok(());
+        }
+        std::fs::copy(&resolved, to).map(|_| ()).map_err(|e| CoreError::io(to, e))
+    }
 }
 
 /// `php artisan migrate --force` with the PHP the workspace's site runs on.
@@ -369,7 +436,7 @@ fn migrate(paths: &HearthPaths, app: &Path, site: &str) -> Result<(), CoreError>
     let dir = crate::php::store::install_dir(paths, &minor);
     let program = if cfg!(windows) { dir.join("php.exe") } else { dir.join("bin").join("php") };
     let ini = crate::php::ini::ini_dir(paths, &minor);
-    let out = std::process::Command::new(&program)
+    let out = crate::workspaces::command(&program)
         .arg("-c")
         .arg(ini.join("php.ini"))
         .args(["artisan", "migrate", "--force", "--no-interaction"])
@@ -421,8 +488,8 @@ pub fn delete(core: &CoreState, name: &str, keep_database: bool, keep_files: boo
     if !keep_files && record.path.exists() {
         // Only Hearth's own folders may be deleted by hand when git cannot; an adopted worktree
         // elsewhere is left to git.
-        let own_folder = record.owned && within(&record.path, &root(paths));
-        if let Err(e) = git::remove(&record.parent_path, &record.path, own_folder) {
+        let own = record.owned && own_folder(paths, &record.path);
+        if let Err(e) = git::remove(&record.parent_path, &record.path, own) {
             notes.push(format!("The worktree could not be removed completely ({e})"));
         }
     }
@@ -442,9 +509,12 @@ pub fn merge(core: &CoreState, name: &str, push: bool, delete_after: bool) -> Re
     }
     git::merge(&record.parent_path, &record.branch, &record.base_branch)?;
     let mut notes = Vec::new();
+    // The merge happened: a push that fails is a note, not a failure of the merge.
     if push {
-        git::push_origin(&record.parent_path, &record.base_branch)?;
-        notes.push(format!("Pushed {} to origin", record.base_branch));
+        match git::push_origin(&record.parent_path, &record.base_branch) {
+            Ok(()) => notes.push(format!("Pushed {} to origin", record.base_branch)),
+            Err(e) => notes.push(format!("{} could not be pushed ({e})", record.base_branch)),
+        }
     }
     if delete_after {
         notes.extend(delete(core, &record.site, false, false)?);

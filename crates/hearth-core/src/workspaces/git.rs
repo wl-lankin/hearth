@@ -1,13 +1,12 @@
 //! git, run as a program: worktrees, merges and the questions a workspace asks its repository.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::CoreError;
 
 /// Runs `git -C dir args`; the trimmed stdout, or an error with git's own message.
 pub fn run(dir: &Path, args: &[&str]) -> Result<String, CoreError> {
-    let out = Command::new("git")
+    let out = crate::workspaces::command("git")
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -82,32 +81,44 @@ pub fn linked_worktree_parent(dir: &Path) -> Option<PathBuf> {
 /// files on Windows), `delete_folder` allows deleting the folder by hand.
 pub fn remove(repo: &Path, path: &Path, delete_folder: bool) -> Result<(), CoreError> {
     let target = path.to_string_lossy();
-    let removed = run(repo, &["worktree", "remove", "--force", &target]);
-    if removed.is_err() && path.exists() {
-        if !delete_folder {
-            return removed.map(|_| ());
-        }
+    let mut result =
+        if path.exists() { run(repo, &["worktree", "remove", "--force", &target]).map(|_| ()) } else { Ok(()) };
+    if result.is_err() && path.exists() && delete_folder {
         clear_read_only(path);
-        std::fs::remove_dir_all(path).map_err(|e| CoreError::io(path, e))?;
+        result = std::fs::remove_dir_all(path).map_err(|e| CoreError::io(path, e));
     }
-    run(repo, &["worktree", "prune"]).map(|_| ())
+    // Always: a worktree whose folder is gone (or half gone) must not stay registered in git.
+    let pruned = run(repo, &["worktree", "prune"]).map(|_| ());
+    result.and(pruned)
 }
 
+/// Windows: read-only files (git's own objects) block deleting a folder. Links are not followed:
+/// their targets are outside the folder and none of Hearth's business.
+#[cfg(windows)]
 fn clear_read_only(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Ok(meta) = entry.metadata() else { continue };
-        if meta.is_dir() {
+        let Ok(kind) = entry.file_type() else { continue };
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
             clear_read_only(&path);
-        } else if meta.permissions().readonly() {
-            let mut perms = meta.permissions();
-            #[allow(clippy::permissions_set_readonly_false)]
-            perms.set_readonly(false);
-            let _ = std::fs::set_permissions(&path, perms);
+        } else if let Ok(meta) = entry.metadata() {
+            if meta.permissions().readonly() {
+                let mut perms = meta.permissions();
+                #[allow(clippy::permissions_set_readonly_false)]
+                perms.set_readonly(false);
+                let _ = std::fs::set_permissions(&path, perms);
+            }
         }
     }
 }
+
+/// Elsewhere a file's own permissions never block deleting it.
+#[cfg(not(windows))]
+fn clear_read_only(_dir: &Path) {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeOutcome {
@@ -135,11 +146,15 @@ pub fn merge(parent: &Path, branch: &str, base: &str) -> Result<MergeOutcome, Co
         ));
     }
     let before = head(parent);
-    if run(parent, &["merge", "--no-edit", branch]).is_err() {
+    if let Err(e) = run(parent, &["merge", "--no-edit", branch]) {
+        // Conflicts leave unmerged paths; anything else (a hook, files in the way) is git's own story.
+        let conflicts = run(parent, &["diff", "--name-only", "--diff-filter=U"]).is_ok_and(|s| !s.is_empty());
         let _ = run(parent, &["merge", "--abort"]);
-        return Err(CoreError::Php(format!(
-            "The merge has conflicts: merge `{base}` into the workspace and resolve them there"
-        )));
+        return Err(if conflicts {
+            CoreError::Php(format!("The merge has conflicts: merge `{base}` into the workspace and resolve them there"))
+        } else {
+            e
+        });
     }
     // A fast-forward leaves no merge commit: the new HEAD is the branch itself.
     let fast_forward = head(parent) == run(parent, &["rev-parse", branch]).ok() && before != head(parent);

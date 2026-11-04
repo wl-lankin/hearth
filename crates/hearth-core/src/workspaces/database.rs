@@ -4,7 +4,7 @@
 //! made leaves the workspace on the parent's, with a note.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 
@@ -341,8 +341,16 @@ fn client(paths: &HearthPaths, kinds: &[&str], port: u16, names: &[&str]) -> Pat
         let Ok(versions) = std::fs::read_dir(paths.data.join("services").join("bin").join(&inst.kind)) else {
             continue;
         };
-        let mut dirs: Vec<PathBuf> = versions.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.is_dir()).collect();
-        dirs.sort();
+        // The instance's own version line (`8.4` holds `8.4.11`), newest patch first.
+        let line = format!("{}.", inst.line);
+        let mut dirs: Vec<(String, PathBuf)> = versions
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_dir())
+            .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+            .filter(|(v, _)| *v == inst.line || v.starts_with(&line) || inst.line == "current")
+            .collect();
+        dirs.sort_by(|a, b| crate::php::manifest::compare_versions(&a.0, &b.0));
+        let dirs: Vec<PathBuf> = dirs.into_iter().map(|(_, p)| p).collect();
         for dir in dirs.iter().rev() {
             for name in names {
                 let p = dir.join("bin").join(format!("{name}{exe}"));
@@ -379,7 +387,7 @@ fn finish(what: &str, out: std::io::Result<std::process::Output>) -> Result<Stri
 /// Runs one statement with the `mysql` client; tab-separated rows without a header.
 fn mysql(paths: &HearthPaths, c: &Conn, database: Option<&str>, sql: &str) -> Result<String, CoreError> {
     let program = client(paths, &["mysql", "mariadb"], c.port, &["mysql", "mariadb"]);
-    let mut cmd = Command::new(&program);
+    let mut cmd = crate::workspaces::command(&program);
     cmd.args(mysql_args(c)).args(["-N", "-B", "-e", sql]).env("MYSQL_PWD", &c.password);
     if let Some(db) = database {
         cmd.arg(db);
@@ -389,10 +397,9 @@ fn mysql(paths: &HearthPaths, c: &Conn, database: Option<&str>, sql: &str) -> Re
 
 /// `mysqldump <parent> | mysql <name>`.
 fn mysql_copy(paths: &HearthPaths, c: &Conn, name: &str) -> Result<(), CoreError> {
-    let dump = client(paths, &["mysql", "mariadb"], c.port, &["mysqldump", "mariadb-dump"]);
-    let load = client(paths, &["mysql", "mariadb"], c.port, &["mysql", "mariadb"]);
-    let mut dumping = Command::new(&dump)
-        .args(mysql_args(c))
+    let mut dump =
+        crate::workspaces::command(client(paths, &["mysql", "mariadb"], c.port, &["mysqldump", "mariadb-dump"]));
+    dump.args(mysql_args(c))
         .args([
             "--single-transaction",
             "--routines",
@@ -403,26 +410,45 @@ fn mysql_copy(paths: &HearthPaths, c: &Conn, name: &str) -> Result<(), CoreError
             "--skip-lock-tables",
             &c.database,
         ])
-        .env("MYSQL_PWD", &c.password)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| CoreError::Php(format!("mysqldump could not be started: {e}")))?;
-    let piped = dumping.stdout.take().map(Stdio::from).unwrap_or_else(Stdio::null);
-    let loaded = Command::new(&load).args(mysql_args(c)).arg(name).env("MYSQL_PWD", &c.password).stdin(piped).output();
-    let dumped = dumping.wait_with_output();
-    let dumped = dumped.map_err(|e| CoreError::Php(format!("mysqldump: {e}")))?;
-    if !dumped.status.success() {
-        return Err(CoreError::Php(format!("mysqldump: {}", String::from_utf8_lossy(&dumped.stderr).trim())));
-    }
-    finish("mysql", loaded).map(|_| ())
+        .env("MYSQL_PWD", &c.password);
+    let mut load = crate::workspaces::command(client(paths, &["mysql", "mariadb"], c.port, &["mysql", "mariadb"]));
+    load.args(mysql_args(c)).arg(name).env("MYSQL_PWD", &c.password);
+    pipe(dump, load, "mysqldump", "mysql")
 }
 
+/// `dump | load`. The dump's messages go to a temporary file (a full stderr pipe would stall both
+/// programs); when both fail, the loader's error is the real one and comes first.
+fn pipe(
+    mut dump: std::process::Command,
+    mut load: std::process::Command,
+    dump_name: &str,
+    load_name: &str,
+) -> Result<(), CoreError> {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let log = std::env::temp_dir().join(format!("hearth-dump-{}-{nanos}.log", std::process::id()));
+    let errors = std::fs::File::create(&log).map_err(|e| CoreError::io(&log, e))?;
+    let mut dumping = dump
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(errors))
+        .spawn()
+        .map_err(|e| CoreError::Php(format!("{dump_name} could not be started: {e}")))?;
+    let piped = dumping.stdout.take().map(Stdio::from).unwrap_or_else(Stdio::null);
+    let loaded = load.stdin(piped).output();
+    let dumped = dumping.wait();
+    let dump_errors = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_file(&log);
+    finish(load_name, loaded)?;
+    match dumped {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Err(CoreError::Php(format!("{dump_name}: {}", dump_errors.trim()))),
+        Err(e) => Err(CoreError::Php(format!("{dump_name}: {e}"))),
+    }
+}
 /// Runs one statement with `psql` against `database`; unaligned rows without a header.
 fn psql(paths: &HearthPaths, c: &Conn, database: &str, sql: &str) -> Result<String, CoreError> {
     let program = client(paths, &["postgresql"], c.port, &["psql"]);
-    let out = Command::new(&program)
+    let out = crate::workspaces::command(&program)
         .args(["-h", &c.host, "-p", &c.port.to_string(), "-U", &c.user, "-d", database])
         .args(["-v", "ON_ERROR_STOP=1", "-At", "-c", sql])
         .env("PGPASSWORD", &c.password)
@@ -433,26 +459,12 @@ fn psql(paths: &HearthPaths, c: &Conn, database: &str, sql: &str) -> Result<Stri
 
 /// `pg_dump <parent> | psql <name>`.
 fn pg_copy(paths: &HearthPaths, c: &Conn, name: &str) -> Result<(), CoreError> {
-    let dump = client(paths, &["postgresql"], c.port, &["pg_dump"]);
-    let load = client(paths, &["postgresql"], c.port, &["psql"]);
     let port = c.port.to_string();
-    let mut dumping = Command::new(&dump)
-        .args(["-h", &c.host, "-p", &port, "-U", &c.user, "--no-owner", "--no-privileges", &c.database])
-        .env("PGPASSWORD", &c.password)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| CoreError::Php(format!("pg_dump could not be started: {e}")))?;
-    let piped = dumping.stdout.take().map(Stdio::from).unwrap_or_else(Stdio::null);
-    let loaded = Command::new(&load)
-        .args(["-h", &c.host, "-p", &port, "-U", &c.user, "-d", name, "--quiet", "-v", "ON_ERROR_STOP=1"])
-        .env("PGPASSWORD", &c.password)
-        .stdin(piped)
-        .output();
-    let dumped = dumping.wait_with_output().map_err(|e| CoreError::Php(format!("pg_dump: {e}")))?;
-    if !dumped.status.success() {
-        return Err(CoreError::Php(format!("pg_dump: {}", String::from_utf8_lossy(&dumped.stderr).trim())));
-    }
-    finish("psql", loaded).map(|_| ())
+    let mut dump = crate::workspaces::command(client(paths, &["postgresql"], c.port, &["pg_dump"]));
+    dump.args(["-h", &c.host, "-p", &port, "-U", &c.user, "--no-owner", "--no-privileges", &c.database])
+        .env("PGPASSWORD", &c.password);
+    let mut load = crate::workspaces::command(client(paths, &["postgresql"], c.port, &["psql"]));
+    load.args(["-h", &c.host, "-p", &port, "-U", &c.user, "-d", name, "--quiet", "-v", "ON_ERROR_STOP=1"])
+        .env("PGPASSWORD", &c.password);
+    pipe(dump, load, "pg_dump", "psql")
 }

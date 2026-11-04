@@ -126,21 +126,28 @@ pub fn find(paths: &HearthPaths, name: &str) -> Result<Record, CoreError> {
     }
 }
 
-/// Writes the marker and keeps it out of git (`info/exclude` of the repository).
-pub fn mark(record: &Record) -> Result<(), CoreError> {
+/// Writes the marker and keeps it out of git; returns a note when it could not be excluded.
+pub fn mark(record: &Record) -> Result<Option<String>, CoreError> {
     let json = serde_json::to_string_pretty(record).map_err(|e| CoreError::Php(e.to_string()))?;
     let marker = record.path.join(MARKER);
     std::fs::write(&marker, json).map_err(|e| CoreError::io(&marker, e))?;
-    let exclude = record.parent_path.join(".git").join("info").join("exclude");
+    Ok(exclude(&record.path).err().map(|e| format!("{MARKER} could not be added to git's exclude file ({e})")))
+}
+
+/// Adds the marker to the repository's `info/exclude`, wherever git keeps it (also when `.git` is
+/// a file: submodules, worktrees used as sites).
+fn exclude(checkout: &Path) -> Result<(), CoreError> {
+    let found = crate::workspaces::git::run(checkout, &["rev-parse", "--git-path", "info/exclude"])?;
+    let exclude = if Path::new(&found).is_absolute() { PathBuf::from(found) } else { checkout.join(found) };
     let text = std::fs::read_to_string(&exclude).unwrap_or_default();
-    if !text.lines().any(|l| l.trim() == MARKER) {
-        if let Some(dir) = exclude.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
-        }
-        let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
-        std::fs::write(&exclude, format!("{text}{sep}{MARKER}\n")).map_err(|e| CoreError::io(&exclude, e))?;
+    if text.lines().any(|l| l.trim() == MARKER) {
+        return Ok(());
     }
-    Ok(())
+    if let Some(dir) = exclude.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| CoreError::io(dir, e))?;
+    }
+    let sep = if text.is_empty() || text.ends_with('\n') { "" } else { "\n" };
+    std::fs::write(&exclude, format!("{text}{sep}{MARKER}\n")).map_err(|e| CoreError::io(&exclude, e))
 }
 
 /// Whether `inner` is `outer` or inside it (case-insensitive with `/` on Windows).
