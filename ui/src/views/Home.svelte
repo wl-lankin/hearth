@@ -137,7 +137,7 @@
     position: relative;
     display: flex;
     align-items: center;
-    min-height: 380px;
+    min-height: 440px;
     margin-bottom: 10px;
     container-type: inline-size;
     /* The house reaches past the edge; it must not make the page scroll sideways. */
@@ -187,13 +187,14 @@
     white-space: nowrap;
   }
 
+  /* As tall as the hero and no taller: the chimney and its sparks never reach up into the title
+     strip, at any window size. */
   .house {
     position: absolute;
     right: -56px;
-    top: 50%;
-    width: min(78%, 900px);
+    top: 0;
+    height: 100%;
     aspect-ratio: 2048 / 1360;
-    transform: translateY(-50%);
   }
 
   .house img {
@@ -207,7 +208,10 @@
   @container (max-width: 640px) {
     .house {
       right: -20px;
+      top: 50%;
       width: 46%;
+      height: auto;
+      transform: translateY(-50%);
     }
   }
 
