@@ -133,7 +133,10 @@
     padding: 4px 32px 28px;
   }
 
+  /* As tall as the content area, so a page can place something at its bottom (Home's core box);
+     a longer page overflows it and `main` scrolls. */
   .page {
+    height: 100%;
     animation: page-in 180ms var(--ease);
   }
 

@@ -64,6 +64,7 @@
   const clip = (w: Win) => `inset(${w.y}% ${100 - w.x - w.w}% ${100 - w.y - w.h}% ${w.x}%)`;
 </script>
 
+<div class="home">
 {#if offerMove}
   <section class="move glass">
     <div>
@@ -131,6 +132,7 @@
     <p class="error">{failed}</p>
   {/if}
 </section>
+</div>
 
 <style>
   .hero {
@@ -248,9 +250,17 @@
     height: 300px;
   }
 
+  /* The page fills the window, so the core box always sits at the bottom. */
+  .home {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+
   .card {
     max-width: 720px;
-    margin: 0 auto;
+    width: 100%;
+    margin: auto auto 0;
     padding: 18px 20px;
   }
 
