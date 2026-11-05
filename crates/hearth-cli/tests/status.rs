@@ -38,7 +38,8 @@ async fn status_when_running() {
     server.shutdown().await;
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8(output.stdout).unwrap();
-    let re = predicate::str::is_match(r"^Hearth core is running \(v0\.1\.0, pid \d+, up \d+s\)\n$").unwrap();
+    let version = regex_escape(env!("CARGO_PKG_VERSION"));
+    let re = predicate::str::is_match(format!(r"^Hearth core is running \(v{version}, pid \d+, up \d+s\)\n$")).unwrap();
     assert!(re.eval(&stdout), "{stdout}");
 }
 
@@ -54,11 +55,21 @@ async fn status_json_when_running() {
     server.shutdown().await;
     assert_eq!(output.status.code(), Some(0));
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["version"], "0.1.0");
+    assert_eq!(value["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(value["home"], paths.root.to_string_lossy().as_ref());
 }
 
 #[test]
 fn version_flag() {
-    Command::cargo_bin("hearth").unwrap().arg("--version").assert().success().stdout("hearth 0.1.0\n");
+    Command::cargo_bin("hearth")
+        .unwrap()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(format!("hearth {}\n", env!("CARGO_PKG_VERSION")));
+}
+
+/// The version with its dots escaped for a regex.
+fn regex_escape(version: &str) -> String {
+    version.replace('.', r"\.")
 }

@@ -883,3 +883,76 @@ export async function appOpen(view?: string, tab?: string): Promise<void> {
 export async function appQuit(): Promise<void> {
   if (!demo) await invoke('app_quit');
 }
+
+// Moving over from Herd.
+export interface MoveStatus {
+  herd: boolean;
+  moved: boolean;
+  uninstalled: boolean;
+  /** A move started but did not finish: it can continue or go back. */
+  recorded?: boolean;
+}
+export interface MoveItem {
+  area: string;
+  what: string;
+  action: string;
+  moved: boolean;
+  reason: string | null;
+}
+export interface MoveScan {
+  plan: { items: MoveItem[] };
+  startedHerd: boolean;
+}
+export type Verdict = { kind: 'same' | 'better' } | { kind: 'changed' | 'broken'; detail: string };
+export interface SiteCheck {
+  host: string;
+  scheme: string;
+  verdict: Verdict;
+}
+export interface MoveCheck {
+  sites: SiteCheck[];
+  services: { name: string; running: boolean }[];
+  node: { fromHearth: boolean };
+  accepted: string[];
+}
+export interface MoveUninstall {
+  exitCode: number;
+  /** Hearth could not trust its certificate authority again after the uninstall. */
+  trustError?: string | null;
+  check: MoveCheck;
+}
+
+const demoMoveItems: MoveItem[] = [
+  { area: 'sites', what: 'shop.test', action: String.raw`linked to C:\Users\you\Code\shop`, moved: true, reason: null },
+  { area: 'sites', what: 'app.shop.test', action: 'proxy to http://localhost:5173', moved: true, reason: null },
+  { area: 'php', what: 'PHP 8.1', action: "install PHP 8.1 from Hearth's builds", moved: true, reason: null },
+  { area: 'php', what: 'memory_limit (PHP 8.4)', action: "memory_limit = 2048M in Hearth's php.ini", moved: true, reason: null },
+  { area: 'php', what: 'mongodb (PHP 8.4)', action: 'not moved', moved: false, reason: "Hearth's PHP builds have no mongodb extension" },
+  { area: 'https', what: "Herd's certificate authority", action: 'used by Hearth, so browsers keep trusting your sites', moved: true, reason: null },
+  { area: 'redis', what: 'Redis on 6379', action: "Hearth's Redis on 6379 with Herd's data", moved: true, reason: null },
+  { area: 'mariaDb', what: 'MariaDB 10.11', action: 'not moved', moved: false, reason: 'It is not running; your other databases are not touched' },
+  { area: 'hosts', what: 'bcd-1.api.shop.test', action: 'not moved', moved: false, reason: "Not a site (workspace or Herd's own)" },
+];
+const demoMoveCheck: MoveCheck = {
+  sites: [
+    { host: 'shop.test', scheme: 'http', verdict: { kind: 'same' } },
+    { host: 'shop.test', scheme: 'https', verdict: { kind: 'same' } },
+    { host: 'blog.test', scheme: 'http', verdict: { kind: 'changed', detail: '302 to / instead of 200' } },
+  ],
+  services: [{ name: 'Redis 8', running: true }],
+  node: { fromHearth: true },
+  accepted: [],
+};
+
+export const moveoverState = (): Promise<MoveStatus> =>
+  demo ? Promise.resolve({ herd: true, moved: false, uninstalled: false }) : core('moveover.state');
+export const moveoverScan = (): Promise<MoveScan> =>
+  demo ? Promise.resolve({ plan: { items: structuredClone(demoMoveItems) }, startedHerd: false }) : core('moveover.scan');
+export const moveoverApply = (): Promise<{ jobId: number }> => (demo ? Promise.resolve({ jobId: 9 }) : core('moveover.apply'));
+export const moveoverCheck = (): Promise<MoveCheck> =>
+  demo ? Promise.resolve(structuredClone(demoMoveCheck)) : core('moveover.check');
+export const moveoverAccept = (key: string): Promise<{ accepted: string[] }> =>
+  demo ? Promise.resolve({ accepted: [key] }) : core('moveover.accept', { key });
+export const moveoverUndo = (): Promise<{ jobId: number }> => (demo ? Promise.resolve({ jobId: 10 }) : core('moveover.undo'));
+export const moveoverUninstall = (): Promise<MoveUninstall> =>
+  demo ? Promise.resolve({ exitCode: 0, check: structuredClone(demoMoveCheck) }) : core('moveover.uninstallHerd');

@@ -10,6 +10,7 @@ use crate::CoreError;
 #[cfg(windows)]
 pub mod client;
 pub mod hosts;
+pub mod machine_env;
 pub mod protocol;
 pub mod resolver;
 

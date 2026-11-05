@@ -1,9 +1,10 @@
 <script lang="ts">
+  import type { View } from '../nav';
   import type { SettingsStore } from '../settings.svelte';
   import Terminal from './Terminal.svelte';
   import Updates from './Updates.svelte';
 
-  let { settings }: { settings: SettingsStore } = $props();
+  let { settings, onnavigate = () => {} }: { settings: SettingsStore; onnavigate?: (view: View) => void } = $props();
 </script>
 
 <h1>Settings</h1>
@@ -29,6 +30,14 @@
   {#if settings.error}
     <p class="error" role="alert">{settings.error}</p>
   {/if}
+</section>
+
+<section class="card">
+  <h2>Herd</h2>
+  <div class="row">
+    <span>Move sites, PHP, services and tools over from Laravel Herd</span>
+    <button onclick={() => onnavigate('moveover')}>Move over</button>
+  </div>
 </section>
 
 <Terminal />

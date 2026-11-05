@@ -458,3 +458,16 @@ mod profile_tests {
         assert!(std::fs::read_to_string(&real).unwrap().contains(START));
     }
 }
+
+/// The user PATH as written in `HKCU\Environment` (for the move from Herd).
+#[cfg(windows)]
+pub(crate) fn read_user_path() -> Result<String, CoreError> {
+    registry::user_path().map(|(value, _)| value)
+}
+
+/// Writes the user PATH, keeping its value type, and tells running programs.
+#[cfg(windows)]
+pub(crate) fn write_user_path(value: &str) -> Result<(), CoreError> {
+    let (_, kind) = registry::user_path()?;
+    registry::set_user_path(value, kind)
+}

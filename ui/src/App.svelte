@@ -8,6 +8,7 @@
   import Inspect from './views/Inspect.svelte';
   import Logs from './views/Logs.svelte';
   import Mail from './views/Mail.svelte';
+  import MoveOver from './views/MoveOver.svelte';
   import Processes from './views/Processes.svelte';
   import Runtimes from './views/Runtimes.svelte';
   import Services from './views/Services.svelte';
@@ -82,8 +83,10 @@
           <Inspect tab={tab === 'requests' || tab === 'profiles' ? tab : 'dumps'} />
         {:else if view === 'logs'}
           <Logs />
+        {:else if view === 'moveover'}
+          <MoveOver />
         {:else}
-          <Settings {settings} />
+          <Settings {settings} onnavigate={(next) => navigate(next)} />
         {/if}
       </div>
     {/key}

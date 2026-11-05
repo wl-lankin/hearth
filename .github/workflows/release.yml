@@ -1,8 +1,14 @@
 name: release
 
 # A tag v<version> builds Hearth for Windows (NSIS installer) and macOS (universal .dmg) and
-# publishes them as a GitHub release, together with latest.json, the feed installed copies of
-# Hearth update from. The release notes come from docs/releases/<tag>.md.
+# attaches them to a DRAFT GitHub release, together with latest.json, the feed installed copies
+# of Hearth update from. Installed copies see the update once the draft is published by hand
+# (see docs/RELEASE.md). The notes are the CHANGELOG.md section of the version, else the tag
+# message. A tag with a hyphen (v1.1.0-beta.1) becomes a prerelease.
+#
+# Every installer is attached twice: with the version in the name (tauri-action) and under a
+# fixed name (Hearth-Windows-Setup.exe, Hearth-macOS.dmg), so a link to
+# releases/latest/download/<fixed name> always serves the newest one.
 
 on:
   push:
@@ -18,23 +24,31 @@ jobs:
       release_id: ${{ steps.create.outputs.id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The notes fall back to the tag message, which a shallow checkout lacks.
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
       - name: The tag matches every version file
         env:
           TAG: ${{ github.ref_name }}
-        run: node scripts/check-version.mjs "${TAG#v}"
+        # The files carry the plain version: v1.1.0-beta.1 checks 1.1.0.
+        run: |
+          version="${TAG#v}"
+          node scripts/check-version.mjs "${version%%-*}"
       - name: Create the draft release
         id: create
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          notes="docs/releases/$TAG.md"
-          if [ ! -f "$notes" ]; then echo "::error::$notes is missing"; exit 1; fi
+          bash .github/release-notes.sh "$TAG" > "$RUNNER_TEMP/notes.md"
+          prerelease=false
+          case "$TAG" in *-*) prerelease=true ;; esac
           # The create call answers with the id; listing releases right after can miss a fresh draft.
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="Hearth $TAG" -F body=@"$notes" -F draft=true --jq .id)
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="Hearth $TAG" \
+            -F body=@"$RUNNER_TEMP/notes.md" -F draft=true -F prerelease="$prerelease" --jq .id)
           if [ -z "$id" ]; then echo "::error::Could not create the draft release"; exit 1; fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
@@ -100,7 +114,7 @@ jobs:
           # latest.json is the feed the in-app updater reads (releases/latest/download/latest.json).
           includeUpdaterJson: true
 
-  publish:
+  stable-names:
     needs: [draft, build]
     runs-on: ubuntu-latest
     steps:
@@ -109,18 +123,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          # releases/latest/download/<fixed name> always serves the newest installer: copy every
-          # versioned installer to a name without the version.
+          # The release stays a draft: it is checked and published by hand (docs/RELEASE.md).
           version="${TAG#v}"
+          version="${version%%-*}"
           mkdir stable && cd stable
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "Hearth_${version}_*"
-          for file in Hearth_"${version}"_*; do
-            case "$file" in *.sig) continue ;; esac
-            mv "$file" "${file/_${version}_/_}"
-          done
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Hearth_${version}_x64-setup.exe" --pattern "Hearth_${version}_universal.dmg"
+          mv "Hearth_${version}_x64-setup.exe" Hearth-Windows-Setup.exe
+          mv "Hearth_${version}_universal.dmg" Hearth-macOS.dmg
           ls -l
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber Hearth_*
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "${{ github.ref_name }}" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber Hearth-Windows-Setup.exe Hearth-macOS.dmg

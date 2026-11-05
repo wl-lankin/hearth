@@ -3,13 +3,13 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::herd::{HerdSetup, Skipped};
 use crate::sites::registry;
 use crate::HearthPaths;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportPlan {
     pub park: Vec<PathBuf>,
     pub link: Vec<(String, PathBuf)>,
