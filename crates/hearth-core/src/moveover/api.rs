@@ -1,11 +1,12 @@
 //! The moveover.* IPC methods.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tokio::runtime::Handle;
 
-use super::check::others;
+use super::check::{node_from, others};
 use super::machine::RealMachine;
 use super::plan::plan;
 use super::probe::{probe_all, targets};
@@ -146,9 +147,12 @@ async fn check(core: &CoreState) -> Result<Value, RpcError> {
         .map(|i| (i.name, !crate::services::ports::port_free(i.port)))
         .collect();
     let machine = RealMachine;
-    let hearth_bin = paths.bin.to_string_lossy().to_ascii_lowercase();
-    let node_from_hearth = machine.user_path().to_ascii_lowercase().contains(&hearth_bin)
-        && !machine.machine_path().to_ascii_lowercase().contains(r"\.config\herd");
+    let hearth_bin = paths.bin.to_string_lossy().into_owned();
+    let has_node = |dir: &str| {
+        let dir = Path::new(dir.trim());
+        ["node.exe", "node.bat", "node.cmd", "node"].iter().any(|name| dir.join(name).is_file())
+    };
+    let node_from_hearth = node_from(&machine.machine_path(), &machine.user_path(), &hearth_bin, has_node);
     st.last_check = sites.iter().cloned().chain(others(&services, node_from_hearth)).collect();
     st.checked = st.moved;
     state::save(&paths, &st).map_err(failed)?;
