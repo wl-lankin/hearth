@@ -31,4 +31,4 @@ The first release of Hearth, a local PHP development environment for Windows and
 - Moving over from Laravel Herd: Hearth reads Herd's setup, shows what it would change, moves your sites, PHP versions and settings, Redis data, mail port, Node versions, PATH and the MCP entry, checks every site against how it answered under Herd, and can go back until you uninstall Herd
 - Hearth updates itself from these GitHub releases
 
-The installers are not code-signed yet: Windows SmartScreen and macOS Gatekeeper warn the first time you open them.
+The Windows installer is code-signed (publisher "Wolfgang Linz"); while the certificate is still new, SmartScreen can still ask once. The macOS app is not signed yet, so Gatekeeper warns the first time you open it.
