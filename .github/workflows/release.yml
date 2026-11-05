@@ -6,6 +6,9 @@ name: release
 # (see docs/RELEASE.md). The notes are the CHANGELOG.md section of the version, else the tag
 # message. A tag with a hyphen (v1.1.0-beta.1) becomes a prerelease.
 #
+# The Windows app, the hearth-cli sidecar and the installer are Authenticode-signed
+# (docs/CODE-SIGNING.md).
+#
 # Every installer is attached twice: with the version in the name (tauri-action) and under a
 # fixed name (Hearth-Windows-Setup.exe, Hearth-macOS.dmg), so a link to
 # releases/latest/download/<fixed name> always serves the newest one.
@@ -54,6 +57,9 @@ jobs:
 
   build:
     needs: draft
+    permissions:
+      contents: write
+      id-token: write # Windows signing logs in to Azure Artifact Signing through OIDC
     strategy:
       # One platform at a time: both upload to the same latest.json, which must not race.
       max-parallel: 1
@@ -67,6 +73,11 @@ jobs:
             args: '--target universal-apple-darwin --bundles app,dmg --config src-tauri/tauri.release.conf.json'
             targets: 'aarch64-apple-darwin,x86_64-apple-darwin'
     runs-on: ${{ matrix.os }}
+    # The Azure login for signing only trusts jobs in this environment.
+    environment: release
+    env:
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -100,8 +111,14 @@ jobs:
               target/aarch64-apple-darwin/release/hearth target/x86_64-apple-darwin/release/hearth
           fi
           ls -l src-tauri/binaries
-      # Code signing (Azure Trusted Signing, Apple notarization) is added in M14, once the
-      # certificates exist. Until then only the update packages are signed.
+      # Tauri signs the app, the hearth-cli sidecar (externalBin) and the installer inside tauri
+      # build, so the update packages are made over the signed installer. macOS stays unsigned.
+      - name: Prepare code signing (Windows)
+        id: signing
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/windows-signing
+        with:
+          description: Hearth
       - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -110,7 +127,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.draft.outputs.release_id }}
-          args: ${{ matrix.args }}
+          args: ${{ matrix.args }}${{ steps.signing.outputs.config && format(' --config {0}', steps.signing.outputs.config) || '' }}
           # latest.json is the feed the in-app updater reads (releases/latest/download/latest.json).
           includeUpdaterJson: true
 

@@ -62,4 +62,4 @@ Fixed links:
 
 ## Limits
 
-- The installers are not code-signed yet (planned for M14). Windows SmartScreen warns on the first start. On macOS, open the app once with right click and Open, or run `xattr -dr com.apple.quarantine /Applications/Hearth.app`. Updates are not affected.
+- The Windows installer is code-signed (`docs/CODE-SIGNING.md`); while the certificate is still new, SmartScreen can still ask once on the first start. The macOS app is not signed yet. Open it once with right click and Open, or run `xattr -dr com.apple.quarantine /Applications/Hearth.app`. Updates are not affected.
