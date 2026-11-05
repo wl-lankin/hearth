@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Moving over from Herd sets up Hearth's helper service when it is missing (Windows asks for permission), instead of stopping with "The .test helper is not installed"
+- A second "Continue the move" no longer stops at "Port 80 is still in use by another program" when that program is Hearth's own web server: ports are now read correctly on Windows in any language
+- Update errors say what happened: no published release yet, or no connection to GitHub
+
 ## 1.0.1
 
 - Moving over from Herd works: "Move over" and "Undo" now really start, instead of waiting at "Starting" forever

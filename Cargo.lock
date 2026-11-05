@@ -1797,7 +1797,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-app"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "hearth-core",
  "hearth-helper",
@@ -1815,7 +1815,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-cli"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1829,7 +1829,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
@@ -1862,7 +1862,7 @@ dependencies = [
 
 [[package]]
 name = "hearth-helper"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "hearth-core",
  "serde_json",
