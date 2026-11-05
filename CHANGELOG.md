@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.4
+
+- The Windows installer and the app are now digitally signed (publisher Wolfgang Linz), so Windows no longer warns about an unknown publisher
+
 ## 1.0.3
 
 - Moving over from Herd also takes `C:\Program Files\nodejs\` out of the machine PATH when it is written with a trailing backslash, so `node` comes from Hearth afterwards
