@@ -3,6 +3,7 @@
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+use tokio::runtime::Handle;
 
 use super::check::others;
 use super::machine::RealMachine;
@@ -12,6 +13,7 @@ use super::record::Record;
 use super::scan::{scan, HerdHome, Machine};
 use super::state;
 use crate::ipc::{CoreState, RpcError, INTERNAL_ERROR};
+use crate::jobs::JobId;
 use crate::CoreError;
 
 fn failed(e: CoreError) -> RpcError {
@@ -66,33 +68,44 @@ async fn dry_run(core: &CoreState) -> Result<Value, RpcError> {
     Ok(json!({ "plan": plan, "baseline": baseline, "startedHerd": started_herd }))
 }
 
+/// Runs `work` as a background job on a blocking thread, or joins the job with this key that is
+/// running already; the job's id. `work` gets the core, the runtime and the job's id.
+pub(crate) fn in_background<F>(core: &CoreState, key: &str, label: &str, work: F) -> JobId
+where
+    F: FnOnce(CoreState, Handle, JobId) -> Result<(), CoreError> + Send + 'static,
+{
+    // `start` says whether the job is new; a job that runs already is joined, not started twice.
+    let (id, new) = core.jobs.start("moveover", key, label);
+    if !new {
+        return id;
+    }
+    let core2 = core.clone();
+    let runtime = Handle::current();
+    tokio::spawn(async move {
+        let jobs = core2.jobs.clone();
+        let result = tokio::task::spawn_blocking(move || work(core2, runtime, id))
+            .await
+            .unwrap_or_else(|e| Err(CoreError::Php(e.to_string())));
+        jobs.finish(id, result.map_err(|e| e.to_string()));
+    });
+    id
+}
+
 /// Starts the move as a background job (or joins the one already running) and returns its id.
 fn start_apply(core: &CoreState) -> Result<Value, RpcError> {
     let herd = HerdHome::find().ok_or_else(|| RpcError::new(INTERNAL_ERROR, "Herd is not installed here"))?;
-    let (id, joined) = core.jobs.start("moveover", "moveover.apply", "Moving over from Herd");
-    if joined {
-        return Ok(json!({ "jobId": id }));
-    }
-    let core2 = core.clone();
-    let runtime = tokio::runtime::Handle::current();
-    tokio::spawn(async move {
+    let id = in_background(core, "moveover.apply", "Moving over from Herd", move |core2, runtime, id| {
+        let paths = core2.paths.clone();
+        let inv = scan(&herd, &RealMachine)?;
+        let hearth_php: Vec<String> = crate::php::store::installed(&paths).into_iter().map(|p| p.minor).collect();
+        let plan = plan(&paths, &inv, &hearth_php);
+        let mut record = super::record::Record::load(&paths);
         let jobs = core2.jobs.clone();
-        let result = tokio::task::spawn_blocking(move || -> Result<(), CoreError> {
-            let paths = core2.paths.clone();
-            let inv = scan(&herd, &RealMachine)?;
-            let hearth_php: Vec<String> = crate::php::store::installed(&paths).into_iter().map(|p| p.minor).collect();
-            let plan = plan(&paths, &inv, &hearth_php);
-            let mut record = super::record::Record::load(&paths);
-            let jobs = core2.jobs.clone();
-            let mut mover = super::real::RealMover::new(core2, runtime);
-            let mut write = super::machine::RealWrite;
-            super::apply::run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut |share, what| {
-                jobs.progress(id, share, what)
-            })
+        let mut mover = super::real::RealMover::new(core2, runtime);
+        let mut write = super::machine::RealWrite;
+        super::apply::run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut |share, what| {
+            jobs.progress(id, share, what)
         })
-        .await
-        .unwrap_or_else(|e| Err(CoreError::Php(e.to_string())));
-        jobs.finish(id, result.map_err(|e| e.to_string()));
     });
     Ok(json!({ "jobId": id }))
 }
@@ -161,22 +174,10 @@ fn accept(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
 
 /// Undo as a background job; its id.
 fn start_undo(core: &CoreState) -> Result<Value, RpcError> {
-    let (id, joined) = core.jobs.start("moveover", "moveover.undo", "Going back to Herd");
-    if joined {
-        return Ok(json!({ "jobId": id }));
-    }
-    let core2 = core.clone();
-    let runtime = tokio::runtime::Handle::current();
-    tokio::spawn(async move {
-        let jobs = core2.jobs.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            let paths = core2.paths.clone();
-            let mut rev = super::real::RealMover::new(core2, runtime);
-            super::undo::undo(&paths, &mut rev, &mut super::machine::RealWrite)
-        })
-        .await
-        .unwrap_or_else(|e| Err(CoreError::Php(e.to_string())));
-        jobs.finish(id, result.map_err(|e| e.to_string()));
+    let id = in_background(core, "moveover.undo", "Going back to Herd", |core2, runtime, _| {
+        let paths = core2.paths.clone();
+        let mut rev = super::real::RealMover::new(core2, runtime);
+        super::undo::undo(&paths, &mut rev, &mut super::machine::RealWrite)
     });
     Ok(json!({ "jobId": id }))
 }

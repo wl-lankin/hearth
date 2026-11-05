@@ -17,6 +17,8 @@ pub mod undo;
 pub mod uninstall;
 
 #[cfg(test)]
+mod api_tests;
+#[cfg(test)]
 mod apply_tests;
 #[cfg(test)]
 mod check_tests;

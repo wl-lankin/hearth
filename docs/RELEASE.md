@@ -28,7 +28,7 @@ Every installer is in the release twice: once with the version in its name, once
 | `Hearth-Windows-Setup.exe` | the same, fixed name |
 | `Hearth_X.Y.Z_universal.dmg` | macOS, Apple Silicon and Intel |
 | `Hearth-macOS.dmg` | the same, fixed name |
-| `Hearth.app.tar.gz` (+ `.sig`) | the macOS update |
+| `Hearth_universal.app.tar.gz` (+ `.sig`) | the macOS update |
 | `latest.json` | the feed the updater reads (`windows-x86_64`, `darwin-aarch64`, `darwin-x86_64`) |
 
 Fixed links:
