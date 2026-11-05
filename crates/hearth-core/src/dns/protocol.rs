@@ -97,6 +97,11 @@ pub fn in_herd_folder(value: &str) -> bool {
         && herd == Some("herd")
 }
 
+/// One PATH entry, written with or without a trailing backslash, in any case.
+fn same_entry(a: &str, b: &str) -> bool {
+    a.trim().trim_end_matches('\\').eq_ignore_ascii_case(b.trim().trim_end_matches('\\'))
+}
+
 /// Takes Herd's entries out, recording first what was there.
 fn take_out(env: &mut dyn MachineEnv, remove_path: &[String], remove_vars: &[String]) -> Response {
     let bad_entry = remove_path.iter().find(|e| !herds_entry(e));
@@ -116,9 +121,9 @@ fn take_out(env: &mut dyn MachineEnv, remove_path: &[String], remove_vars: &[Str
         Ok(path) => path,
         Err(e) => return Response::error(e),
     };
-    let present = |e: &String| current.split(';').any(|c| c.eq_ignore_ascii_case(e));
+    let present = |e: &String| current.split(';').any(|c| same_entry(c, e));
     for entry in remove_path.iter().filter(|e| present(e)) {
-        if !removed.path.iter().any(|r| r.eq_ignore_ascii_case(entry)) {
+        if !removed.path.iter().any(|r| same_entry(r, entry)) {
             removed.path.push(entry.clone());
         }
     }
@@ -133,10 +138,8 @@ fn take_out(env: &mut dyn MachineEnv, remove_path: &[String], remove_vars: &[Str
     if let Err(e) = env.set_removed(&removed) {
         return Response::error(e);
     }
-    let next: Vec<&str> = current
-        .split(';')
-        .filter(|c| !c.is_empty() && !remove_path.iter().any(|r| r.eq_ignore_ascii_case(c)))
-        .collect();
+    let next: Vec<&str> =
+        current.split(';').filter(|c| !c.is_empty() && !remove_path.iter().any(|r| same_entry(r, c))).collect();
     let next = next.join(";");
     if next != current {
         if let Err(e) = env.set_path(&next) {
@@ -162,7 +165,7 @@ fn put_back(env: &mut dyn MachineEnv) -> Response {
     };
     let mut entries: Vec<String> = current.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect();
     for entry in removed.path.iter().filter(|e| herds_entry(e) && env.exists(e)) {
-        if !entries.iter().any(|e| e.eq_ignore_ascii_case(entry)) {
+        if !entries.iter().any(|e| same_entry(e, entry)) {
             entries.push(entry.clone());
         }
     }
@@ -394,6 +397,19 @@ mod tests {
         assert!(handle_with(out.to_string().as_bytes(), &p, &mut env).error.is_some());
         assert_eq!(env.path, path);
         assert_eq!(env.vars.len(), 2);
+    }
+
+    #[test]
+    fn an_entry_with_a_trailing_backslash_is_the_same_entry() {
+        let (_d, p) = hosts_file(BASE);
+        let mut env =
+            FakeEnv { path: format!(r"C:\Windows\System32;{NVM}\;C:\Program Files\nodejs\"), ..FakeEnv::default() };
+        env.vars.insert("NVM_HOME".into(), NVM.into());
+        let out = serde_json::json!({ "op": "machineenv", "removePath": [NVM, r"C:\Program Files\nodejs"] });
+        assert_eq!(handle_with(out.to_string().as_bytes(), &p, &mut env), Response::default());
+        assert_eq!(env.path, r"C:\Windows\System32");
+        assert_eq!(handle_with(br#"{"op":"machineenvrestore"}"#, &p, &mut env), Response::default());
+        assert_eq!(env.path, format!(r"C:\Windows\System32;{NVM};C:\Program Files\nodejs"));
     }
 
     #[test]

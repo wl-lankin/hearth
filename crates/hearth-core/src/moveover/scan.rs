@@ -373,9 +373,12 @@ pub fn scan(herd: &HerdHome, machine: &dyn Machine) -> Result<Inventory, CoreErr
     // and nvm's link and variables only when nvm is Herd's own.
     let in_root = |p: &str| p.to_ascii_lowercase().starts_with(&herd_root);
     let herds_nvm = machine.machine_var("NVM_HOME").is_some_and(|home| in_root(&home));
+    // Compared without a trailing backslash (`C:\Program Files\nodejs\` is the same folder), kept as
+    // written, so the helper takes out exactly that text.
+    let same = |a: &str, b: &str| a.trim_end_matches('\\').eq_ignore_ascii_case(b.trim_end_matches('\\'));
     let machine_path = split_path(&machine.machine_path())
         .into_iter()
-        .filter(|p| in_root(p) || (herds_nvm && symlink.as_deref().is_some_and(|s| s.eq_ignore_ascii_case(p))))
+        .filter(|p| in_root(p) || (herds_nvm && symlink.as_deref().is_some_and(|s| same(s, p))))
         .collect();
     let machine_vars = if herds_nvm {
         ["NVM_HOME", "NVM_SYMLINK"]

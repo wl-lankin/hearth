@@ -213,3 +213,13 @@ fn a_node_setup_outside_herds_folder_is_not_herds() {
     assert!(inv.machine_path.is_empty(), "{:?}", inv.machine_path);
     assert!(inv.machine_vars.is_empty(), "{:?}", inv.machine_vars);
 }
+
+#[test]
+fn a_path_entry_with_a_trailing_backslash_is_still_herds() {
+    let d = tempfile::tempdir().unwrap();
+    let (herd, mut machine) = fake_herd(d.path());
+    let nvm = herd.root.join("bin").join("nvm").to_string_lossy().into_owned();
+    machine.machine_path = format!(r"C:\Windows\System32;{nvm}\;C:\Program Files\nodejs\");
+    let inv = scan(&herd, &machine).unwrap();
+    assert_eq!(inv.machine_path.len(), 2, "{:?}", inv.machine_path);
+}

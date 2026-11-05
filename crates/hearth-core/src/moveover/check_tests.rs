@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use super::check::{compare, gate, others, SiteCheck, Verdict};
+use super::check::{compare, gate, node_from, others, SiteCheck, Verdict};
 use super::outside::MachineWrite;
 use super::probe::Answer;
 use super::record::{Done, Record};
@@ -316,6 +316,20 @@ fn the_uninstall_waits_for_a_move_a_check_and_every_red_row() {
     checked(&paths, vec![red]);
     assert!(run_uninstall(&paths, &mut u).is_err());
     assert!(!u.ran, "the uninstaller never ran");
+}
+
+#[test]
+fn node_comes_from_the_first_path_folder_that_has_it_machine_first() {
+    let hearth = r"C:\Users\x\.config\hearth\bin";
+    let herds_link = r"C:\Program Files\nodejs\";
+    let user = format!(r"{hearth};C:\Users\x\AppData\Local\Microsoft\WindowsApps");
+    let machine = format!(r"C:\Windows\System32;{herds_link}");
+    let has = |dir: &str| dir.trim_end_matches('\\').ends_with("nodejs") || dir == hearth;
+    assert!(!node_from(&machine, &user, hearth, has), "the machine PATH wins: still Herd's Node");
+    assert!(node_from(r"C:\Windows\System32", &user, hearth, has));
+    let gone = |dir: &str| dir == hearth;
+    assert!(node_from(&machine, &user, hearth, gone), "a link to a removed folder has no node: Hearth's wins");
+    assert!(!node_from(&machine, r"C:\Tools", hearth, |_| false), "no node anywhere");
 }
 
 #[test]

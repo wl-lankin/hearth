@@ -68,6 +68,19 @@ pub fn gate(checks: &[SiteCheck], accepted: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether `node` comes from Hearth's `bin`, the way Windows looks it up: the machine PATH first,
+/// then the user PATH, and the first folder that holds a node (`has_node`) wins. A link into a
+/// removed folder holds none and is passed over, as Windows does.
+pub fn node_from(machine_path: &str, user_path: &str, hearth_bin: &str, has_node: impl Fn(&str) -> bool) -> bool {
+    let same = |a: &str, b: &str| a.trim().trim_end_matches('\\').eq_ignore_ascii_case(b.trim().trim_end_matches('\\'));
+    machine_path
+        .split(';')
+        .chain(user_path.split(';'))
+        .filter(|dir| !dir.trim().is_empty())
+        .find(|dir| has_node(dir))
+        .is_some_and(|dir| same(dir, hearth_bin))
+}
+
 /// The services (name, running) and Node as rows of the check, so the uninstall waits for them too
 /// and each can be accepted: `service://<name>` and `node://node`.
 pub fn others(services: &[(String, bool)], node_from_hearth: bool) -> Vec<SiteCheck> {
