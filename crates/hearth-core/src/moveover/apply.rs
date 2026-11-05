@@ -58,6 +58,10 @@ pub trait Mover {
     fn write_forwarders(&mut self, forwarders: &[(String, PathBuf)]) -> Result<(), CoreError>;
     fn hearth_bin(&self) -> String;
     fn hearth_exe(&self) -> String;
+    /// Makes sure Hearth's helper service is installed and current (Windows asks for permission
+    /// when it is not): it changes the machine environment, and writes the `.test` names Herd's
+    /// hosts entries stop covering once Herd is gone.
+    fn ensure_helper(&mut self) -> Result<(), CoreError>;
     /// Lets the web server follow the new sites, ports and certificates.
     fn sync(&mut self);
 }
@@ -261,6 +265,8 @@ pub fn run(
         record.finish(paths, "userPath")?;
     }
     if !record.finished("machineEnv") && (!inv.machine_path.is_empty() || !inv.machine_vars.is_empty()) {
+        step(9.0, "Hearth's helper service");
+        mover.ensure_helper()?;
         let done = record_once(paths, record, || Done::MachineEnv {
             path_removed: inv.machine_path.clone(),
             vars_removed: inv.machine_vars.clone(),
