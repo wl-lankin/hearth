@@ -98,6 +98,11 @@ jobs:
             cargo build --release -p hearth-cli --target x86_64-apple-darwin
             lipo -create -output src-tauri/binaries/hearth-cli-universal-apple-darwin \
               target/aarch64-apple-darwin/release/hearth target/x86_64-apple-darwin/release/hearth
+            # A universal build compiles each architecture on its own first, and each looks for
+            # its own copy of the CLI.
+            for arch in aarch64 x86_64; do
+              cp "target/$arch-apple-darwin/release/hearth" "src-tauri/binaries/hearth-cli-$arch-apple-darwin"
+            done
           fi
           ls -l src-tauri/binaries
       # Code signing (Azure Trusted Signing, Apple notarization) is added in M14, once the
