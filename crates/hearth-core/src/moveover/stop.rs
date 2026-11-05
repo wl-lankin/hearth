@@ -49,12 +49,17 @@ pub fn listener(port: u16) -> Option<u32> {
     if !cfg!(windows) {
         return None;
     }
-    output("netstat", &["-ano", "-p", "TCP"]).lines().find_map(|line| {
+    listener_in(&output("netstat", &["-ano", "-p", "TCP"]), port)
+}
+
+/// The listener on `port` in `netstat -ano` output. The state column is translated (`LISTENING`,
+/// `ABHÖREN`, ...), so a listener is told by its remote address instead: `0.0.0.0:0` or `[::]:0`.
+pub fn listener_in(netstat: &str, port: u16) -> Option<u32> {
+    netstat.lines().find_map(|line| {
         let cols: Vec<&str> = line.split_whitespace().collect();
-        let (local, state, pid) = (cols.get(1)?, cols.get(3)?, cols.get(4)?);
-        (local.rsplit(':').next()? == port.to_string() && state.eq_ignore_ascii_case("LISTENING"))
-            .then(|| pid.parse().ok())
-            .flatten()
+        let (local, remote, pid) = (cols.get(1)?, cols.get(2)?, cols.last()?);
+        let listening = matches!(*remote, "0.0.0.0:0" | "[::]:0" | "*:*");
+        (listening && local.rsplit(':').next()? == port.to_string()).then(|| pid.parse().ok()).flatten()
     })
 }
 
@@ -99,7 +104,18 @@ pub fn foreign(holder: (u32, Option<String>), own_pid: u32, ours: &[&Path]) -> O
 mod tests {
     use std::path::Path;
 
-    use super::inside;
+    use super::{inside, listener_in};
+
+    #[test]
+    fn the_listener_is_found_in_any_windows_language() {
+        let german = "\r\n  Proto  Lokale Adresse         Remoteadresse          Status           PID\r\n  \
+                      TCP    127.0.0.1:80           0.0.0.0:0              ABHÖREN         26048\r\n  \
+                      TCP    192.168.2.231:49498    172.211.123.249:80     HERGESTELLT     7892\r\n";
+        assert_eq!(listener_in(german, 80), Some(26048));
+        let english = "  TCP    0.0.0.0:443            0.0.0.0:0              LISTENING       4120\r\n";
+        assert_eq!(listener_in(english, 443), Some(4120));
+        assert_eq!(listener_in(german, 443), None, "a connection to a remote 80 is no listener on 80");
+    }
     #[cfg(windows)]
     use super::{database_server, foreign};
 

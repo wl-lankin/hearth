@@ -121,9 +121,30 @@ impl Mover for FakeMover {
     fn hearth_exe(&self) -> String {
         r"C:\h\bin\hearth.exe".into()
     }
+    fn ensure_helper(&mut self) -> Result<(), CoreError> {
+        self.call("ensure_helper")
+    }
     fn sync(&mut self) {
         self.calls.push("sync".into());
     }
+}
+
+#[test]
+fn the_helper_is_set_up_before_the_machine_environment_and_a_refusal_stops_there() {
+    let (_d, paths, inv) = setup();
+    let plan = plan(&paths, &inv, &[]);
+    let mut mover = FakeMover { fail_at: Some("ensure_helper".into()), ..FakeMover::default() };
+    let mut write = FakeWrite::default();
+    let mut record = Record::default();
+    let err = run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap_err();
+    assert_eq!(err.to_string(), "ensure_helper failed");
+    assert!(!write.log.iter().any(|l| l == "helper"), "the machine environment waits for the helper");
+    let record = Record::load(&paths);
+    assert!(record.finished("userPath") && !record.has("machineEnv"));
+
+    let mut record = Record::load(&paths);
+    run(&paths, &inv, &plan, &mut record, &mut mover, &mut write, &mut no_progress).unwrap();
+    assert!(write.log.iter().any(|l| l == "helper"));
 }
 
 #[derive(Default)]
@@ -201,6 +222,7 @@ fn the_move_runs_every_step_in_order_and_records_it() {
             "install_node v22.9.0",
             "set_node_default v22.9.0",
             "write_forwarders mysql,mysqldump,mariadb,redis-cli",
+            "ensure_helper",
             "sync",
         ]
     );

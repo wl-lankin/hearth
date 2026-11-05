@@ -1,6 +1,6 @@
 {
   "name": "hearth",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Hearth - a local PHP development environment for Windows and macOS.",
   "author": "Wolfgang Linz <https://wolfgang-linz.de>",
   "license": "MIT",

@@ -294,6 +294,24 @@ impl Mover for RealMover {
         self.paths().bin.join(format!("hearth{}", std::env::consts::EXE_SUFFIX)).to_string_lossy().into_owned()
     }
 
+    fn ensure_helper(&mut self) -> Result<(), CoreError> {
+        #[cfg(windows)]
+        {
+            use crate::dns::protocol::{PIPE, PROTOCOL};
+            let current =
+                || crate::dns::client::request_on(PIPE, &Request::Status).is_ok_and(|s| s.protocol >= Some(PROTOCOL));
+            if current() {
+                return Ok(());
+            }
+            // Hearth's own setup, the one the Sites page offers: Windows asks for permission.
+            self.ipc("dns.setup", Value::Null)?;
+            if !current() {
+                return Err(CoreError::Php("Hearth's helper service did not start after its setup".into()));
+            }
+        }
+        Ok(())
+    }
+
     fn sync(&mut self) {
         crate::web::service::schedule_sync(&self.core);
     }
