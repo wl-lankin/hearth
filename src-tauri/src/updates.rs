@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_updater::{Update, UpdaterExt};
+use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 
 const FIRST_CHECK: Duration = Duration::from_secs(10);
 const RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
@@ -68,15 +68,25 @@ pub fn start(app: &AppHandle) {
     });
 }
 
+/// What went wrong, in words for people: no published release (the feed answers 404), no
+/// connection, or else the updater's own words.
+fn describe(error: &UpdaterError) -> String {
+    match error {
+        UpdaterError::ReleaseNotFound => "No published release to update from yet".into(),
+        UpdaterError::Reqwest(_) => "GitHub could not be reached: check the connection".into(),
+        other => other.to_string(),
+    }
+}
+
 /// Checks for a new version and downloads it in the background.
 pub async fn check(app: &AppHandle) {
     if !next_check_allowed(&app.state::<Updates>().state()) {
         return;
     }
     set(app, UpdateState::Checking);
-    let update = match app.updater().map_err(|e| e.to_string()) {
-        Ok(updater) => updater.check().await.map_err(|e| e.to_string()),
-        Err(e) => Err(e),
+    let update = match app.updater() {
+        Ok(updater) => updater.check().await.map_err(|e| describe(&e)),
+        Err(e) => Err(describe(&e)),
     };
     let update = match update {
         Ok(Some(update)) => update,
@@ -108,7 +118,7 @@ pub async fn check(app: &AppHandle) {
             *app.state::<Updates>().pending.lock().unwrap() = Some((update, bytes));
             set(app, UpdateState::Ready { version });
         }
-        Err(e) => set(app, UpdateState::Error { message: e.to_string() }),
+        Err(e) => set(app, UpdateState::Error { message: describe(&e) }),
     }
 }
 
@@ -140,6 +150,16 @@ pub fn install(app: &AppHandle, restart: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_release_feed_reads_as_such() {
+        assert_eq!(describe(&UpdaterError::ReleaseNotFound), "No published release to update from yet");
+        assert_eq!(
+            describe(&UpdaterError::EmptyEndpoints),
+            "Updater does not have any endpoints set.",
+            "anything else keeps the plugin's words"
+        );
+    }
 
     #[test]
     fn no_new_check_while_busy_or_ready() {
