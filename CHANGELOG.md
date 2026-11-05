@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.3
+
+- Moving over from Herd also takes `C:\Program Files\nodejs\` out of the machine PATH when it is written with a trailing backslash, so `node` comes from Hearth afterwards
+- The check after the move shows which Node really runs: the first one on the machine PATH, then the user PATH, as Windows looks it up
+
 ## 1.0.2
 
 - Moving over from Herd sets up Hearth's helper service when it is missing (Windows asks for permission), instead of stopping with "The .test helper is not installed"
