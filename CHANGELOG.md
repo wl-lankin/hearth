@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Moving over from Herd works: "Move over" and "Undo" now really start, instead of waiting at "Starting" forever
+
 ## 1.0.0
 
 The first release of Hearth, a local PHP development environment for Windows and macOS.
