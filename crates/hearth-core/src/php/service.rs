@@ -307,10 +307,30 @@ pub fn set_ini_user(core: &CoreState, minor: &str, user: &str) -> Result<(), Cor
     Ok(())
 }
 
-/// Installs the Laravel installer (`laravel new`) with Composer into `<data>/composer`, as a job.
-/// Uses the default PHP; the `laravel` shim runs it.
+fn composer_home(paths: &HearthPaths) -> PathBuf {
+    paths.data.join("composer")
+}
+
+/// The installed version of the Laravel installer (without a leading `v`), read from Composer's
+/// global `installed.json`; `None` when it is not installed.
+pub fn laravel_installer_version(paths: &HearthPaths) -> Option<String> {
+    let file = composer_home(paths).join("vendor").join("composer").join("installed.json");
+    let json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(file).ok()?).ok()?;
+    // Composer 2 writes `{"packages": [...]}`, Composer 1 a bare list.
+    let packages = json.get("packages").unwrap_or(&json).as_array()?;
+    let package = packages.iter().find(|p| p.get("name").and_then(|n| n.as_str()) == Some("laravel/installer"))?;
+    let version = package.get("version")?.as_str()?;
+    Some(version.trim_start_matches('v').to_string())
+}
+
+/// Installs the Laravel installer (`laravel new`) with Composer into `<data>/composer`, as a job;
+/// updates it when it is already there. Uses the default PHP; the `laravel` shim runs it.
 pub fn install_laravel_installer(core: &CoreState) -> JobId {
-    let (id, new) = core.jobs.start("tools.laravel", "tools.laravel", "Installing the Laravel installer");
+    let message = match laravel_installer_version(&core.paths) {
+        Some(_) => "Updating the Laravel installer",
+        None => "Installing the Laravel installer",
+    };
+    let (id, new) = core.jobs.start("tools.laravel", "tools.laravel", message);
     if new {
         let core = core.clone();
         tokio::spawn(async move {
@@ -329,13 +349,17 @@ async fn run_laravel_installer(paths: &HearthPaths) -> Result<(), CoreError> {
         Os::Windows => install_dir(paths, &minor).join("php.exe"),
         Os::Macos => install_dir(paths, &minor).join("bin").join("php"),
     };
-    let composer_home = paths.data.join("composer");
+    let step: &[&str] = match laravel_installer_version(paths) {
+        Some(_) => &["global", "update", "laravel/installer", "--with-all-dependencies"],
+        None => &["global", "require", "laravel/installer"],
+    };
     let output = tokio::process::Command::new(php)
         .arg("-c")
         .arg(ini_dir(paths, &minor).join("php.ini"))
         .arg(paths.bin.join("composer.phar"))
-        .args(["global", "require", "laravel/installer", "--no-interaction", "--no-progress"])
-        .env("COMPOSER_HOME", &composer_home)
+        .args(step)
+        .args(["--no-interaction", "--no-progress"])
+        .env("COMPOSER_HOME", composer_home(paths))
         // The installer starts PHP again for its own steps; those find php.ini through PHPRC.
         .env("PHPRC", ini_dir(paths, &minor))
         .output()
@@ -346,5 +370,5 @@ async fn run_laravel_installer(paths: &HearthPaths) -> Result<(), CoreError> {
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
     let last = stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("unknown error");
-    Err(CoreError::Php(format!("Composer could not install the Laravel installer: {}", last.trim())))
+    Err(CoreError::Php(format!("Composer could not install or update the Laravel installer: {}", last.trim())))
 }

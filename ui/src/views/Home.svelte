@@ -64,6 +64,7 @@
   const clip = (w: Win) => `inset(${w.y}% ${100 - w.x - w.w}% ${100 - w.y - w.h}% ${w.x}%)`;
 </script>
 
+<div class="home">
 {#if offerMove}
   <section class="move glass">
     <div>
@@ -131,13 +132,14 @@
     <p class="error">{failed}</p>
   {/if}
 </section>
+</div>
 
 <style>
   .hero {
     position: relative;
     display: flex;
     align-items: center;
-    min-height: 380px;
+    min-height: 440px;
     margin-bottom: 10px;
     container-type: inline-size;
     /* The house reaches past the edge; it must not make the page scroll sideways. */
@@ -187,13 +189,14 @@
     white-space: nowrap;
   }
 
+  /* As tall as the hero and no taller: the chimney and its sparks never reach up into the title
+     strip, at any window size. */
   .house {
     position: absolute;
     right: -56px;
-    top: 50%;
-    width: min(78%, 900px);
+    top: 0;
+    height: 100%;
     aspect-ratio: 2048 / 1360;
-    transform: translateY(-50%);
   }
 
   .house img {
@@ -207,7 +210,10 @@
   @container (max-width: 640px) {
     .house {
       right: -20px;
+      top: 50%;
       width: 46%;
+      height: auto;
+      transform: translateY(-50%);
     }
   }
 
@@ -244,9 +250,17 @@
     height: 300px;
   }
 
+  /* The page fills the window, so the core box always sits at the bottom. */
+  .home {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+  }
+
   .card {
     max-width: 720px;
-    margin: 0 auto;
+    width: 100%;
+    margin: auto auto 0;
     padding: 18px 20px;
   }
 

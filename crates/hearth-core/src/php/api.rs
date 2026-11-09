@@ -89,6 +89,7 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
             (Err(e), _) | (_, Err(e)) => Err(e),
         },
         "tools.laravel" => Ok(json!({ "jobId": service::install_laravel_installer(core) })),
+        "tools.laravel.status" => Ok(json!({ "version": service::laravel_installer_version(paths) })),
         "terminal.get" => crate::path_env::terminal_status(paths)
             .map(|s| serde_json::to_value(s).unwrap_or(Value::Null))
             .map_err(failed),

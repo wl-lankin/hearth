@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.5
+
+- The PHP page shows whether the Laravel installer is installed and which version, also after a restart; when it is there, the button updates it instead of installing it again
+- The Home page fits the window: the house stays under the title strip and the core box sits at the bottom
+
 ## 1.0.4
 
 - The Windows installer and the app are now digitally signed (publisher Wolfgang Linz), so Windows no longer warns about an unknown publisher

@@ -147,6 +147,9 @@ export const phpIniSet = async (minor: string, user: string): Promise<void> => {
 };
 export const phpInstallLaravel = (): Promise<{ jobId: number }> =>
   demo ? Promise.resolve({ jobId: 2 }) : core('tools.laravel');
+/** The installed Laravel installer's version, or null when it is not installed. */
+export const laravelInstallerStatus = (): Promise<{ version: string | null }> =>
+  demo ? Promise.resolve({ version: '5.24.0' }) : core('tools.laravel.status');
 
 export interface TerminalStatus {
   enabled: boolean;

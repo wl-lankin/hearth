@@ -370,6 +370,24 @@ async fn the_laravel_installer_needs_a_php_first() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_laravel_installer_version_comes_from_composers_installed_json() {
+    let f = fixture(false);
+    let p = paths(&f);
+    assert_eq!(laravel_installer_version(p), None);
+    let dir = p.data.join("composer").join("vendor").join("composer");
+    std::fs::create_dir_all(&dir).unwrap();
+    let installed = json!({ "packages": [
+        { "name": "carbonphp/carbon-doctrine-types", "version": "3.2.1" },
+        { "name": "laravel/installer", "version": "v5.24.0" },
+    ] });
+    std::fs::write(dir.join("installed.json"), installed.to_string()).unwrap();
+    assert_eq!(laravel_installer_version(p).as_deref(), Some("5.24.0"));
+    std::fs::write(dir.join("installed.json"), json!([{ "name": "other/package", "version": "1.0.0" }]).to_string())
+        .unwrap();
+    assert_eq!(laravel_installer_version(p), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_failing_last_step_leaves_no_half_registered_version() {
     let f = fixture_with(false, false);
     let job = wait(&f.core, install(&f.core, "8.4")).await;
