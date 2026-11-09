@@ -7,8 +7,19 @@
   let confirming = $state<string | null>(null);
   let editing = $state<string | null>(null);
   let laravel = $state<string | null>(null);
+  let laravelVersion = $state<string | null>(null);
+  let laravelBusy = $state(false);
 
   php.load();
+  loadLaravelStatus();
+
+  async function loadLaravelStatus() {
+    try {
+      laravelVersion = (await api.laravelInstallerStatus()).version;
+    } catch {
+      laravelVersion = null;
+    }
+  }
 
   // Follow running installs; stop polling once none runs.
   $effect(() => {
@@ -25,7 +36,9 @@
   }
 
   async function installLaravel() {
-    laravel = 'Installing the Laravel installer';
+    const updating = !!laravelVersion;
+    laravelBusy = true;
+    laravel = updating ? 'Updating the Laravel installer' : 'Installing the Laravel installer';
     try {
       const { jobId } = await api.phpInstallLaravel();
       let job = await api.jobGet(jobId);
@@ -33,9 +46,15 @@
         await new Promise((r) => setTimeout(r, 1000));
         job = await api.jobGet(jobId);
       }
-      laravel = job.state === 'done' ? 'The laravel command is ready' : job.error;
+      const before = laravelVersion;
+      await loadLaravelStatus();
+      if (job.state !== 'done') laravel = job.error;
+      else if (!updating) laravel = 'The laravel command is ready';
+      else laravel = before === laravelVersion ? 'The Laravel installer is up to date' : `Updated to ${laravelVersion}`;
     } catch (e) {
       laravel = String(e);
+    } finally {
+      laravelBusy = false;
     }
   }
 
@@ -108,8 +127,13 @@
 <section class="card tools">
   <h2>Tools</h2>
   <div class="tool">
-    <span>Composer comes with every PHP version. The Laravel installer adds the <code>laravel new</code> command.</span>
-    <button onclick={installLaravel} disabled={laravel === 'Installing the Laravel installer'}>Install the Laravel installer</button>
+    <div class="tool-text">
+      <span>Composer comes with every PHP version. The Laravel installer adds the <code>laravel new</code> command.</span>
+      <span class="muted">{laravelVersion ? `Laravel installer ${laravelVersion} installed` : 'Laravel installer not installed'}</span>
+    </div>
+    <button onclick={installLaravel} disabled={laravelBusy}>
+      {laravelVersion ? 'Update the Laravel installer' : 'Install the Laravel installer'}
+    </button>
   </div>
   {#if laravel}<p class="muted" aria-live="polite">{laravel}</p>{/if}
 </section>
@@ -263,6 +287,12 @@
     justify-content: space-between;
     gap: 16px;
     font-size: 13px;
+  }
+
+  .tool-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   code {
