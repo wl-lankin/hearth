@@ -54,13 +54,15 @@ impl Host for RealHost {
     fn link(&mut self, link: &Path, target: &Path) -> Result<(), CoreError> {
         #[cfg(windows)]
         {
-            // A junction needs no admin rights (a directory symlink does).
+            // A junction needs no admin rights (a directory symlink does). cmd reads a "/" in a
+            // path as an option, so the paths go with backslashes.
+            let backslashed = |p: &Path| p.to_string_lossy().replace('/', "\\");
             let out = crate::workspaces::command("cmd")
                 .arg("/c")
                 .arg("mklink")
                 .arg("/J")
-                .arg(link)
-                .arg(target)
+                .arg(backslashed(link))
+                .arg(backslashed(target))
                 .output()
                 .map_err(|e| CoreError::io(link, e))?;
             if !out.status.success() {

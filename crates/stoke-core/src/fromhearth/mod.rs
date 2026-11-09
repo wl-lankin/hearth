@@ -121,7 +121,10 @@ pub fn move_home(legacy: &Path, paths: &StokePaths, host: &mut dyn Host) -> Resu
         rename_with_retries(legacy, &paths.root)?;
         let record = Record { legacy: legacy.to_path_buf(), ..Record::default() };
         record.save(paths)?;
-        host.link(legacy, &paths.root)?;
+        // Only a convenience for what still points at the old path: the move goes on without it.
+        if let Err(e) = host.link(legacy, &paths.root) {
+            eprintln!("Stoke could not leave a link at Hearth's old folder: {e}");
+        }
     }
     let Some(mut record) = Record::load(paths) else { return Ok(()) };
     if !record.home {
@@ -142,11 +145,13 @@ fn rename_with_retries(from: &Path, to: &Path) -> Result<(), CoreError> {
                 tries += 1;
                 std::thread::sleep(std::time::Duration::from_millis(500));
             }
-            Err(e) => return Err(CoreError::Php(format!(
+            Err(e) => {
+                return Err(CoreError::Php(format!(
                 "Could not move Hearth's folder {} to {}: {e}. Close every program that uses it and start Stoke again.",
                 from.display(),
                 to.display()
-            ))),
+            )))
+            }
         }
     }
 }
