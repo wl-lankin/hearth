@@ -6,6 +6,11 @@ export function siteUrl(site: { name: string; secured: boolean }, httpPort: numb
   return `${scheme}://${site.name}.test${port === standard ? '' : `:${port}`}`;
 }
 
+/** The ports a browser uses for the sites: 80 and 443 when the Mac forwards them to Stoke. */
+export function publicPorts(list: { httpPort: number; httpsPort: number; forwarded?: boolean }): [number, number] {
+  return list.forwarded ? [80, 443] : [list.httpPort, list.httpsPort];
+}
+
 /** The sites the panel lists (the first `max` by name) and how many there are in all when that is more. */
 export function shownSites<T extends { name: string }>(sites: T[], max = 5): { shown: T[]; more: number } {
   const sorted = [...sites].sort((a, b) => a.name.localeCompare(b.name));

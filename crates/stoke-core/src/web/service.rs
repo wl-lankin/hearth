@@ -170,6 +170,7 @@ pub fn sync_with(core: &CoreState, caddy: &Path) -> Result<WebStatus, CoreError>
             php_upstreams: upstreams,
             log: paths.logs.join("caddy.log"),
             windows_paths: Os::current() == Os::Windows,
+            forwarded: super::forward::active(config.http_port, config.https_port),
         });
         let path = caddyfile_path(core);
         let current = std::fs::read_to_string(&path).unwrap_or_default();

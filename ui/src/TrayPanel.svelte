@@ -2,7 +2,7 @@
   import logo from '../../assets/logo.svg?url';
   import * as api from './api';
   import type { InstalledPhp, ServiceRow, SitesList, UpdateState } from './api';
-  import { shownSites, siteUrl } from './tray';
+  import { publicPorts, shownSites, siteUrl } from './tray';
 
   type Source = Pick<
     typeof api,
@@ -136,7 +136,7 @@
 
   function openSite(site: { name: string; secured: boolean }) {
     if (!sites) return;
-    source.openUrl(siteUrl(site, sites.httpPort, sites.httpsPort));
+    source.openUrl(siteUrl(site, ...publicPorts(sites)));
     actions.hide();
   }
 

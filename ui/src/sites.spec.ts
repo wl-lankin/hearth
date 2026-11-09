@@ -49,6 +49,36 @@ describe('sites store', () => {
     expect(store.defaultPhp).toBe('8.4');
   });
 
+  test('on a Mac, ports 80 and 443 are offered once .test names work, and the sites lose their port', async () => {
+    const api = fakeApi({ webForward: async (on) => void api.calls.push(`forward ${on}`) });
+    api.setList({ sites: [shop], parked: [], httpPort: 8080, httpsPort: 8443, forwarded: false, canForward: true });
+    api.setStatus({ httpPort: 8080, httpsPort: 8443, caTrusted: true, dns: { ready: false, problem: '/etc/resolver/test is not set up' }, running: true, processes: [], error: null, notes: {} });
+    const store = createSitesStore(api);
+    await store.load();
+    expect(store.offerForward).toBe(false);
+    api.setStatus({ httpPort: 8080, httpsPort: 8443, caTrusted: true, dns: { ready: true, problem: null }, running: true, processes: [], error: null, notes: {} });
+    await store.load();
+    expect(store.offerForward).toBe(true);
+    expect(store.server.text).toBe('Serving on port 8080');
+
+    api.setList({ sites: [shop, { ...shop, name: 'safe', secured: true }], parked: [], httpPort: 8080, httpsPort: 8443, forwarded: true, canForward: true });
+    await store.forward(true);
+    expect(api.calls).toEqual(['forward true']);
+    expect(store.forwarded).toBe(true);
+    expect(store.offerForward).toBe(false);
+    expect(store.server.text).toBe('Serving on ports 80 and 443');
+    expect(store.url(store.sites[0])).toBe('http://shop.test');
+    expect(store.url(store.sites[1])).toBe('https://safe.test');
+  });
+
+  test('ports 80 and 443 are not offered where Stoke cannot forward them', async () => {
+    const api = fakeApi({ webForward: async () => {} });
+    api.setList({ sites: [shop], parked: [], httpPort: 8080, httpsPort: 8443, forwarded: false, canForward: false });
+    const store = createSitesStore(api);
+    await store.load();
+    expect(store.offerForward).toBe(false);
+  });
+
   test('a site with a .nvmrc shows the Node it runs, or why it cannot', async () => {
     const blog = { ...shop, name: 'blog', path: 'C:/x/blog' };
     const plain = { ...shop, name: 'plain', path: 'C:/x/plain' };

@@ -45,6 +45,9 @@ pub struct CaddyContext {
     /// Write Windows paths with forward slashes (Caddy accepts them there). On macOS a backslash is
     /// a legal file name character and stays.
     pub windows_paths: bool,
+    /// macOS: ports 80 and 443 are forwarded to Caddy's ports (`web::forward`), so the redirect to
+    /// HTTPS goes to the usual port instead of Caddy's own.
+    pub forwarded: bool,
 }
 
 /// Paths that cannot be written into the Caddyfile safely and literally:
@@ -112,6 +115,8 @@ pub fn render(ctx: &CaddyContext) -> String {
                         "\t\tenv HTTP_SPX_ENABLED 1\n\t\tenv HTTP_SPX_KEY {key}\n\t\tenv HTTP_SPX_AUTO_START 1\n"
                     ));
                 }
+                // try_files: php_fastcgi's own list ({path} {path}/index.php index.php) never takes a
+                // folder's index.html, so a static site (or /docs/ inside a PHP one) answered 404.
                 // SPX's report pages load their scripts and data without the key: add it to those
                 // requests (SPX reads an SPX-Key header as HTTP_SPX_KEY).
                 let ui = spx_ui.as_ref().map_or(String::new(), |key| {
@@ -119,7 +124,7 @@ pub fn render(ctx: &CaddyContext) -> String {
                 });
                 let _ = write!(
                     out,
-                    "{address} {{\n{tls}\troot * {}\n{ui}\tphp_fastcgi {} {{\n{trigger}\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
+                    "{address} {{\n{tls}\troot * {}\n{ui}\tphp_fastcgi {} {{\n{trigger}\t\ttry_files {{path}} {{path}}/index.php {{path}}/index.html index.php\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
                     quoted(docroot, ctx.windows_paths),
                     upstreams.join(" ")
                 );
@@ -137,11 +142,9 @@ pub fn render(ctx: &CaddyContext) -> String {
             }
         }
         if route.tls.is_some() {
-            let _ = write!(
-                out,
-                "\nhttp://{host}:{} {{\n\tredir https://{host}:{}{{uri}}\n}}\n",
-                ctx.http_port, ctx.https_port
-            );
+            let target =
+                if ctx.forwarded { format!("https://{host}") } else { format!("https://{host}:{}", ctx.https_port) };
+            let _ = write!(out, "\nhttp://{host}:{} {{\n\tredir {target}{{uri}}\n}}\n", ctx.http_port);
         }
     }
     out

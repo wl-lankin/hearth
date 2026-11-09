@@ -1,4 +1,5 @@
 import type { DebugStatus, NodeWhich, PhpList, Site, SitesList, WebStatus } from './api';
+import { publicPorts, siteUrl } from './tray';
 
 export type SitesApi = {
   sitesList(): Promise<SitesList>;
@@ -16,6 +17,8 @@ export type SitesApi = {
   sitesUnsecure(name: string): Promise<void>;
   tlsTrust(): Promise<void>;
   dnsSetup(): Promise<void>;
+  /** macOS: ports 80 and 443 forwarded to Stoke, or not. */
+  webForward?(on: boolean): Promise<void>;
   sitesDebug(name: string, on: boolean): Promise<void>;
   sitesProfile(name: string, on: boolean): Promise<void>;
   debugStatus(): Promise<DebugStatus>;
@@ -122,7 +125,9 @@ export function createSitesStore(api: SitesApi) {
     /** The one-line web server state above the sites. */
     get server(): { kind: 'error' | 'running' | 'stopped' | 'idle'; text: string } {
       if (status?.error) return { kind: 'error', text: status.error };
-      if (status?.running) return { kind: 'running', text: `Serving on port ${list.httpPort}` };
+      if (status?.running) {
+        return { kind: 'running', text: list.forwarded ? 'Serving on ports 80 and 443' : `Serving on port ${list.httpPort}` };
+      }
       if (list.sites.length > 0) return { kind: 'stopped', text: 'Not running yet' };
       return { kind: 'idle', text: 'Not serving yet: park or link a folder' };
     },
@@ -132,8 +137,17 @@ export function createSitesStore(api: SitesApi) {
       return taken ? Number(taken[1]) + 1 : null;
     },
     url(site: Site) {
-      return site.secured ? `https://${site.name}.test:${list.httpsPort}` : `http://${site.name}.test:${list.httpPort}`;
+      return siteUrl(site, ...publicPorts(list));
     },
+    /** macOS: ports 80 and 443 reach the sites. */
+    get forwarded() {
+      return !!list.forwarded;
+    },
+    /** macOS: offer ports 80 and 443 (after .test names work, which the sites need first). */
+    get offerForward() {
+      return !!list.canForward && !list.forwarded && !!api.webForward && this.setup !== 'dns';
+    },
+    forward: (on: boolean) => act(null, () => api.webForward!(on)),
     /** The one setup step to offer: .test names first, then trust once a site uses HTTPS. */
     get setup(): 'dns' | 'trust' | null {
       if (!status) return null;
