@@ -7,7 +7,7 @@
   import { art } from '../illustrations';
   import type { View } from '../nav';
 
-  type Source = Pick<typeof api, 'coreStatus' | 'webStatus' | 'servicesList' | 'sitesList' | 'phpList' | 'moveoverState'>;
+  type Source = Pick<typeof api, 'coreStatus' | 'webStatus' | 'servicesList' | 'sitesList' | 'phpList' | 'moveoverState' | 'fromHearthStatus' | 'fromHearthRetry' | 'fromHearthSeen'>;
 
   /** source: where the numbers come from (the core; tests pass their own). */
   let {
@@ -25,6 +25,36 @@
   let hour = $state(new Date().getHours());
   // Herd is there and nothing moved yet: offer the move.
   let offerMove = $state(false);
+  let fromHearth = $state<api.FromHearth | null>(null);
+  let retrying = $state(false);
+
+  /** What a step of the move from Hearth is, for its error line. */
+  const stepName: Record<string, string> = {
+    path: 'Terminal PATH',
+    login: "Hearth's login entry",
+    mcp: 'MCP entries',
+    helper: 'The .test helper',
+    app: "Uninstalling Hearth's app",
+  };
+
+  async function retryFromHearth() {
+    retrying = true;
+    try {
+      fromHearth = await source.fromHearthRetry();
+    } catch (e) {
+      failed = String(e);
+    } finally {
+      retrying = false;
+    }
+  }
+
+  async function closeFromHearth() {
+    try {
+      fromHearth = await source.fromHearthSeen();
+    } catch {
+      fromHearth = null;
+    }
+  }
 
   async function refresh() {
     hour = new Date().getHours();
@@ -35,6 +65,10 @@
       source.webStatus(),
       source.phpList(),
     ]);
+    source
+      .fromHearthStatus()
+      .then((f) => (fromHearth = f))
+      .catch(() => (fromHearth = null));
     source
       .moveoverState()
       .then((m) => (offerMove = m.herd && !m.moved && !m.uninstalled))
@@ -65,6 +99,33 @@
 </script>
 
 <div class="home">
+{#if fromHearth?.moved && !fromHearth.seen}
+  {@const errors = Object.entries(fromHearth.errors ?? {})}
+  <section class="move glass" aria-live="polite">
+    <div>
+      <h2>Hearth is now Stoke</h2>
+      {#if fromHearth.running || (fromHearth.pending && errors.length === 0)}
+        <p>Moving the last things over from Hearth&hellip;</p>
+      {:else if errors.length > 0}
+        <p>Your sites, PHP, services and settings came along. A few steps are still open:</p>
+        <ul class="steps">
+          {#each errors as [step, error] (step)}
+            <li><strong>{stepName[step] ?? step}:</strong> {error}</li>
+          {/each}
+        </ul>
+      {:else}
+        <p>Your sites, PHP, services and settings came along, and Hearth is uninstalled. Commands now live in <code>~/.config/stoke/bin</code>.</p>
+      {/if}
+    </div>
+    <div class="actions">
+      {#if errors.length > 0}
+        <button class="primary" onclick={retryFromHearth} disabled={retrying || fromHearth.running}>Try again</button>
+      {/if}
+      <button onclick={closeFromHearth}>Close</button>
+    </div>
+  </section>
+{/if}
+
 {#if offerMove}
   <section class="move glass">
     <div>
@@ -79,7 +140,7 @@
   <div class="welcome">
     <EmptyState
       art={art.welcome}
-      title="Welcome to Hearth"
+      title="Welcome to Stoke"
       line="Your sites, services and tools, warm and ready"
       action={{ label: 'Get started', onclick: () => onnavigate('sites', { link: true }) }}
     />
@@ -240,6 +301,17 @@
   .move p {
     margin: 4px 0 0;
     color: var(--muted);
+  }
+
+  .move .steps {
+    margin: 6px 0 0;
+    padding-left: 18px;
+    color: var(--muted);
+  }
+
+  .move .actions {
+    display: flex;
+    gap: 8px;
   }
 
   .welcome {

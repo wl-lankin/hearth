@@ -1,4 +1,4 @@
-/** Hearth's illustrations, made by `scripts/make-illustrations.mjs`. */
+/** Stoke's illustrations, made by `scripts/make-illustrations.mjs`. */
 import homeDark from './assets/illustrations/home-dark.webp?url';
 import homeLit from './assets/illustrations/home-lit.webp?url';
 import inspect from './assets/illustrations/inspect.webp?url';

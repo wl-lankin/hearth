@@ -12,12 +12,12 @@ const render = (svg, size) =>
 
 const tauri = (args) => execFileSync('npx', ['tauri', ...args], { cwd: root, stdio: 'inherit', shell: true });
 
-const work = mkdtempSync(join(tmpdir(), 'hearth-icons-'));
+const work = mkdtempSync(join(tmpdir(), 'stoke-icons-'));
 try {
   const logo = join(work, 'logo.png');
   writeFileSync(logo, render('assets/logo.svg', 1024));
   tauri(['icon', logo, '-o', 'src-tauri/icons']);
-  // Hearth ships for Windows and macOS only.
+  // Stoke ships for Windows and macOS only.
   for (const dir of ['android', 'ios']) rmSync(join(root, 'src-tauri/icons', dir), { recursive: true, force: true });
 
   // Tray: the arch and flame without the tile on Windows, a one-color template image macOS tints.

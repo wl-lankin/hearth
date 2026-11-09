@@ -1,7 +1,9 @@
-<p align="center"><img src="docs/logo.png" width="128" height="128" alt="Hearth logo"></p>
+<p align="center"><img src="docs/logo.png" width="128" height="128" alt="Stoke logo"></p>
 
-# Hearth
+# Stoke
 
-Hearth is a local PHP development environment for Windows and macOS: PHP versions, `.test` sites with HTTPS, databases and other services, a mail catcher, dumps and logs, all managed from one tray app, a `hearth` command line and an MCP server for AI coding tools.
+Stoke is a local PHP development environment for Windows and macOS: PHP versions, `.test` sites with HTTPS, databases and other services, a mail catcher, dumps and logs, all managed from one tray app, a `stoke` command line and an MCP server for AI coding tools.
+
+Stoke used to be called Hearth. Installing Stoke over a Hearth install moves everything over on the first start.
 
 Work in progress. Licensed under the MIT license.

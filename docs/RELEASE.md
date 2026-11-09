@@ -1,8 +1,8 @@
 # Releases and automatic updates
 
-Hearth keeps itself current without getting in the way. The installed app asks GitHub for `latest.json` 10 seconds after it starts and then every six hours, and downloads a newer version in the background. The signature is checked before anything is installed.
+Stoke keeps itself current without getting in the way. The installed app asks GitHub for `latest.json` 10 seconds after it starts and then every six hours, and downloads a newer version in the background. The signature is checked before anything is installed.
 
-- **Windows:** the installer waits and runs when Hearth quits, or at once on "Restart to update".
+- **Windows:** the installer waits and runs when Stoke quits, or at once on "Restart to update".
 - **macOS:** the new app bundle is put in place and is used from the next start, or at once on "Restart to update".
 
 Updates can be turned off, and checked by hand, in Settings under Updates.
@@ -13,7 +13,7 @@ Updates can be turned off, and checked by hand, in Settings under Updates.
 |---|---|
 | The updater | `src-tauri/src/updates.rs`, the page in `ui/src/views/Updates.svelte` |
 | Feed URL, public key, Windows `passive` install | `src-tauri/tauri.conf.json`, section `plugins.updater` |
-| The `hearth` command inside the app | `src-tauri/tauri.release.conf.json` (only in the pipeline) |
+| The `stoke` command inside the app | `src-tauri/tauri.release.conf.json` (only in the pipeline) |
 | Pipeline | `.github/workflows/release.yml` |
 | Release notes | the `## X.Y.Z` section in `CHANGELOG.md`, else the tag message (`.github/release-notes.sh`) |
 | Version check | `scripts/check-version.mjs`: `package.json`, `src-tauri/tauri.conf.json` and the root `Cargo.toml` must agree |
@@ -24,23 +24,23 @@ Every installer is in the release twice: once with the version in its name, once
 
 | File | What for |
 |---|---|
-| `Hearth_X.Y.Z_x64-setup.exe` (+ `.sig`) | the Windows installer, also used by the updater |
-| `Hearth-Windows-Setup.exe` | the same, fixed name |
-| `Hearth_X.Y.Z_universal.dmg` | macOS, Apple Silicon and Intel |
-| `Hearth-macOS.dmg` | the same, fixed name |
-| `Hearth_universal.app.tar.gz` (+ `.sig`) | the macOS update |
+| `Stoke_X.Y.Z_x64-setup.exe` (+ `.sig`) | the Windows installer, also used by the updater |
+| `Stoke-Windows-Setup.exe` | the same, fixed name |
+| `Stoke_X.Y.Z_universal.dmg` | macOS, Apple Silicon and Intel |
+| `Stoke-macOS.dmg` | the same, fixed name |
+| `Stoke_universal.app.tar.gz` (+ `.sig`) | the macOS update |
 | `latest.json` | the feed the updater reads (`windows-x86_64`, `darwin-aarch64`, `darwin-x86_64`) |
 
 Fixed links:
 
-- https://github.com/wl-lankin/hearth/releases/latest/download/Hearth-Windows-Setup.exe
-- https://github.com/wl-lankin/hearth/releases/latest/download/Hearth-macOS.dmg
+- https://github.com/wl-lankin/stoke/releases/latest/download/Stoke-Windows-Setup.exe
+- https://github.com/wl-lankin/stoke/releases/latest/download/Stoke-macOS.dmg
 
 ## Where the updater key lives
 
-- Private: `~/.tauri/hearth-updater.key`, its password in `~/.tauri/hearth-updater.key.password`. Only on the release machine and in the GitHub secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Never commit them.
-- Public: `~/.tauri/hearth-updater.key.pub`, in `tauri.conf.json`.
-- If the private key is lost, installed copies of Hearth accept no more updates. Keep the key and its password in the password manager as well.
+- Private: `~/.tauri/stoke-updater.key`, its password in `~/.tauri/stoke-updater.key.password`. Only on the release machine and in the GitHub secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Never commit them.
+- Public: `~/.tauri/stoke-updater.key.pub`, in `tauri.conf.json`.
+- If the private key is lost, installed copies of Stoke accept no more updates. Keep the key and its password in the password manager as well.
 
 ## Making a release
 
@@ -49,7 +49,7 @@ Fixed links:
 3. Commit, open a PR to `main`, and merge once CI is green.
 4. Tag `main` and push the tag:
    ```bash
-   git tag -a v1.1.0 -m "Hearth 1.1.0"
+   git tag -a v1.1.0 -m "Stoke 1.1.0"
    git push origin v1.1.0
    ```
    A tag with a hyphen (`v1.1.0-beta.1`) becomes a prerelease; the version in the files stays plain (`1.1.0`).
@@ -62,4 +62,4 @@ Fixed links:
 
 ## Limits
 
-- The Windows installer is code-signed (`docs/CODE-SIGNING.md`); while the certificate is still new, SmartScreen can still ask once on the first start. The macOS app is not signed yet. Open it once with right click and Open, or run `xattr -dr com.apple.quarantine /Applications/Hearth.app`. Updates are not affected.
+- The Windows installer is code-signed (`docs/CODE-SIGNING.md`); while the certificate is still new, SmartScreen can still ask once on the first start. The macOS app is not signed yet. Open it once with right click and Open, or run `xattr -dr com.apple.quarantine /Applications/Stoke.app`. Updates are not affected.

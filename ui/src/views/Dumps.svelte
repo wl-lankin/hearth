@@ -36,7 +36,7 @@
     {#if store.status?.error}
       <span class="error">{store.status.error}</span>
     {:else if !store.status?.enabled}
-      <span class="muted">Dumps are off: PHP runs without Hearth's dump script.</span>
+      <span class="muted">Dumps are off: PHP runs without Stoke's dump script.</span>
     {:else if store.status?.listening}
       <span>Every <code>dump()</code> and <code>dd()</code> shows here too, from sites and the command line.</span>
     {:else}

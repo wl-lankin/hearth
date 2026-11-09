@@ -1,0 +1,216 @@
+use std::path::Path;
+
+use super::detect::docroot;
+use super::registry::*;
+use crate::StokePaths;
+
+fn home() -> (tempfile::TempDir, StokePaths) {
+    let d = tempfile::tempdir().unwrap();
+    let p = StokePaths::at(d.path().join("stoke"));
+    p.ensure().unwrap();
+    (d, p)
+}
+
+fn project(dir: &Path, kind: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    match kind {
+        "laravel" => {
+            std::fs::create_dir_all(dir.join("public")).unwrap();
+            std::fs::write(dir.join("public").join("index.php"), "<?php").unwrap();
+            std::fs::write(dir.join("artisan"), "").unwrap();
+        }
+        "php" => std::fs::write(dir.join("index.php"), "<?php").unwrap(),
+        "static" => std::fs::write(dir.join("index.html"), "<p>").unwrap(),
+        _ => {}
+    }
+}
+
+#[test]
+fn docroots_are_detected() {
+    let d = tempfile::tempdir().unwrap();
+    for kind in ["laravel", "php", "static", "empty"] {
+        project(&d.path().join(kind), kind);
+    }
+    assert_eq!(docroot(&d.path().join("laravel")).unwrap(), d.path().join("laravel").join("public"));
+    assert_eq!(docroot(&d.path().join("php")).unwrap(), d.path().join("php"));
+    assert_eq!(docroot(&d.path().join("static")).unwrap(), d.path().join("static"));
+    assert_eq!(docroot(&d.path().join("empty")).unwrap_err(), "No index.php or index.html found");
+}
+
+#[test]
+fn every_subfolder_of_a_parked_folder_is_a_site() {
+    let (d, p) = home();
+    let projects = d.path().join("Projects");
+    project(&projects.join("Shop"), "laravel");
+    project(&projects.join("blog site"), "php");
+    project(&projects.join("notes"), "static");
+    project(&projects.join(".git"), "php");
+    park(&p, &projects).unwrap();
+    let sites = list(&p);
+    let names: Vec<&str> = sites.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["blog-site", "notes", "shop"]);
+    let shop = sites.iter().find(|s| s.name == "shop").unwrap();
+    assert_eq!((shop.kind, shop.docroot.clone()), (SiteKind::Parked, Some(projects.join("Shop").join("public"))));
+}
+
+#[test]
+fn a_link_wins_over_a_parked_folder_of_the_same_name() {
+    let (d, p) = home();
+    project(&d.path().join("Projects").join("shop"), "php");
+    project(&d.path().join("elsewhere"), "laravel");
+    park(&p, &d.path().join("Projects")).unwrap();
+    link(&p, "shop", &d.path().join("elsewhere")).unwrap();
+    let sites = list(&p);
+    assert_eq!(sites.len(), 1);
+    assert_eq!((sites[0].kind, sites[0].path.clone()), (SiteKind::Linked, Some(d.path().join("elsewhere"))));
+}
+
+#[test]
+fn a_deleted_link_folder_is_listed_with_its_problem() {
+    let (d, p) = home();
+    project(&d.path().join("gone"), "php");
+    link(&p, "gone", &d.path().join("gone")).unwrap();
+    std::fs::remove_dir_all(d.path().join("gone")).unwrap();
+    assert_eq!(list(&p)[0].problem.as_deref(), Some("Folder missing"));
+}
+
+#[test]
+fn names_and_upstreams_are_checked() {
+    let (d, p) = home();
+    project(&d.path().join("x"), "php");
+    assert!(link(&p, "api.shop", &d.path().join("x")).is_ok());
+    for bad in ["Shop!", "", "a..b", "-shop", &"a".repeat(64)] {
+        assert_eq!(
+            link(&p, bad, &d.path().join("x")).unwrap_err().to_string(),
+            "Use lowercase letters, digits and dashes for the site name"
+        );
+    }
+    // Caddy takes scheme, host and port only; anything else could also inject Caddyfile text.
+    for bad in [
+        "ftp://localhost:21",
+        "http://localhost:5173/app",
+        "http://localhost:5173 {",
+        "http://localhost:5173\n:80 {",
+        "http://local host:5173",
+        "http://:5173",
+        "http://localhost:99999",
+        "http://localhost:51x3",
+    ] {
+        assert_eq!(
+            proxy(&p, "vite", bad).unwrap_err().to_string(),
+            "Use an address like http://localhost:5173",
+            "{bad:?}"
+        );
+    }
+    for good in ["http://localhost", "https://127.0.0.1:8443", "http://[::1]:5173", "http://my-app.local:3000/"] {
+        assert!(proxy(&p, "ok", good).is_ok(), "{good}");
+    }
+    proxy(&p, "vite", "http://localhost:5173").unwrap();
+    let vite = list(&p).into_iter().find(|s| s.name == "vite").unwrap();
+    assert_eq!((vite.kind, vite.upstream.as_deref()), (SiteKind::Proxy, Some("http://localhost:5173")));
+}
+
+#[test]
+fn isolation_persists_and_unlink_drops_it() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    isolate(&p, "shop", Some("8.3")).unwrap();
+    assert_eq!(list(&p)[0].php.as_deref(), Some("8.3"));
+    assert_eq!(isolate(&p, "nope", Some("8.3")).unwrap_err().to_string(), "There is no site nope");
+    unlink(&p, "shop").unwrap();
+    assert!(load(&p).isolated.is_empty());
+    assert_eq!(unlink(&p, "shop").unwrap_err().to_string(), "shop is not a linked site");
+}
+
+#[test]
+fn the_http_port_defaults_to_8080() {
+    let (_d, p) = home();
+    assert_eq!(load(&p).http_port, 8080);
+    set_http_port(&p, 8081).unwrap();
+    assert_eq!(load(&p).http_port, 8081);
+}
+
+#[test]
+fn a_site_can_be_secured_and_unsecured() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    assert!(!list(&p)[0].secured);
+    secure(&p, "shop").unwrap();
+    assert!(list(&p)[0].secured);
+    unsecure(&p, "shop").unwrap();
+    assert!(!list(&p)[0].secured);
+    assert_eq!(secure(&p, "nope").unwrap_err().to_string(), "No site named nope.test");
+}
+
+#[test]
+fn removing_a_site_drops_its_security() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    proxy(&p, "vite", "http://localhost:5173").unwrap();
+    secure(&p, "shop").unwrap();
+    secure(&p, "vite").unwrap();
+    unlink(&p, "shop").unwrap();
+    unproxy(&p, "vite").unwrap();
+    assert!(load(&p).secured.is_empty());
+}
+
+#[test]
+fn an_older_sites_file_loads_with_the_https_port() {
+    let (_d, p) = home();
+    std::fs::write(p.config.join("sites.json"), r#"{ "parked": [], "httpPort": 8081 }"#).unwrap();
+    let config = load(&p);
+    assert_eq!((config.http_port, config.https_port), (8081, 8443));
+    assert!(config.secured.is_empty());
+}
+
+#[test]
+fn folder_names_keep_their_dots_like_herd() {
+    assert_eq!(name_from_folder("api.omapi").as_deref(), Some("api.omapi"));
+    assert_eq!(name_from_folder("api.pushdocs-PDD-1999").as_deref(), Some("api.pushdocs-pdd-1999"));
+    assert_eq!(name_from_folder("My Shop").as_deref(), Some("my-shop"));
+    assert_eq!(name_from_folder("a..b").as_deref(), Some("a.b"));
+    assert_eq!(name_from_folder(".claude"), Some("claude".into()));
+}
+
+#[test]
+fn set_debug_marks_the_site_and_refuses_proxies_and_unknown_names() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    proxy(&p, "vite", "http://localhost:5173").unwrap();
+    set_debug(&p, "shop", true).unwrap();
+    let debugged: Vec<(String, bool)> = list(&p).into_iter().map(|s| (s.name, s.debug)).collect();
+    assert_eq!(debugged, [("shop".to_string(), true), ("vite".to_string(), false)]);
+    assert!(set_debug(&p, "vite", true).is_err(), "a proxy runs no PHP");
+    assert!(set_debug(&p, "nope", true).is_err());
+    set_debug(&p, "shop", false).unwrap();
+    assert!(!list(&p)[0].debug);
+}
+
+#[test]
+fn set_profile_marks_the_site_unlink_drops_it_and_proxies_are_refused() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    proxy(&p, "vite", "http://localhost:5173").unwrap();
+    set_profile(&p, "shop", true).unwrap();
+    let profiled: Vec<(String, bool)> = list(&p).into_iter().map(|s| (s.name, s.profile)).collect();
+    assert_eq!(profiled, [("shop".to_string(), true), ("vite".to_string(), false)]);
+    assert!(set_profile(&p, "vite", true).is_err(), "a proxy runs no PHP");
+    assert!(set_profile(&p, "nope", true).is_err());
+    unlink(&p, "shop").unwrap();
+    assert!(load(&p).profile.is_empty());
+}
+
+#[test]
+fn unlinking_drops_debugging() {
+    let (d, p) = home();
+    project(&d.path().join("shop"), "laravel");
+    link(&p, "shop", &d.path().join("shop")).unwrap();
+    set_debug(&p, "shop", true).unwrap();
+    unlink(&p, "shop").unwrap();
+    assert!(load(&p).debug.is_empty());
+}

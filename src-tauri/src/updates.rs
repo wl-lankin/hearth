@@ -1,6 +1,6 @@
-//! Keeps Hearth current: checks the GitHub releases 10 s after start and then every 6 hours,
-//! downloads a new version in the background (verified against Hearth's updater key by the plugin)
-//! and installs it when Hearth quits, or at once on "Restart to update".
+//! Keeps Stoke current: checks the GitHub releases 10 s after start and then every 6 hours,
+//! downloads a new version in the background (verified against Stoke's updater key by the plugin)
+//! and installs it when Stoke quits, or at once on "Restart to update".
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -123,9 +123,9 @@ pub async fn check(app: &AppHandle) {
 }
 
 /// Installs a downloaded update: stops the core first, then hands over to the installer. With
-/// `restart`, Hearth starts again afterwards; without it (Quit), it stays closed. On Windows a
+/// `restart`, Stoke starts again afterwards; without it (Quit), it stays closed. On Windows a
 /// successful install never returns: the plugin starts the installer and ends the process, and the
-/// installer relaunches Hearth only when asked to. Returns false when no update is waiting or the
+/// installer relaunches Stoke only when asked to. Returns false when no update is waiting or the
 /// install failed, so the caller can quit normally.
 pub fn install(app: &AppHandle, restart: bool) -> bool {
     let Some((update, bytes)) = app.state::<Updates>().pending.lock().unwrap().take() else { return false };
@@ -137,9 +137,9 @@ pub fn install(app: &AppHandle, restart: bool) -> bool {
         Ok(()) => app.exit(0),
         Err(e) => {
             set(app, UpdateState::Error { message: e.to_string() });
-            // Hearth keeps running on the current version, so its core must come back.
+            // Stoke keeps running on the current version, so its core must come back.
             if let Err(e) = crate::start_core(app) {
-                eprintln!("Hearth could not restart its core: {e}");
+                eprintln!("Stoke could not restart its core: {e}");
             }
             return false;
         }

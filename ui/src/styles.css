@@ -1,4 +1,4 @@
-/* Ember: Hearth's one look. Warm dark, a glow rising from the bottom, frosted glass panels. */
+/* Ember: Stoke's one look. Warm dark, a glow rising from the bottom, frosted glass panels. */
 :root {
   color-scheme: dark;
   /* The strip at the top that replaces the system title bar. */
@@ -162,7 +162,7 @@ h2 {
     box-shadow: 0 0 0 3px rgb(240 122 64 / 0.16);
   }
 
-  /* Checkboxes in Hearth's look: a glass box that fills with ember when checked. */
+  /* Checkboxes in Stoke's look: a glass box that fills with ember when checked. */
   input[type='checkbox'] {
     appearance: none;
     display: inline-grid;

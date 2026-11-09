@@ -1,7 +1,7 @@
 <script module lang="ts">
   export type Platform = 'windows' | 'macos' | 'other';
 
-  /** Which window chrome to draw: Windows gets Hearth's own buttons, macOS keeps its traffic lights. */
+  /** Which window chrome to draw: Windows gets Stoke's own buttons, macOS keeps its traffic lights. */
   export function platformOf(userAgent: string): Platform {
     if (/Windows/i.test(userAgent)) return 'windows';
     if (/Macintosh|Mac OS X/i.test(userAgent)) return 'macos';

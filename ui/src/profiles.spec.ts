@@ -82,7 +82,7 @@ describe('profiles store', () => {
     );
     await store.load();
     expect(store.available).toBe(false);
-    expect(store.unavailable).toBe("Profiling needs SPX, which Hearth's macOS PHP builds include. Windows builds have no SPX.");
+    expect(store.unavailable).toBe("Profiling needs SPX, which Stoke's macOS PHP builds include. Windows builds have no SPX.");
     expect(listed).toBe(false);
   });
 

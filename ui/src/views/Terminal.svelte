@@ -28,8 +28,8 @@
   <h2>Terminal</h2>
   <label class="row">
     <span>
-      Use Hearth's PHP in terminals
-      <small>Puts <code>php</code>, <code>composer</code> and <code>laravel</code> from Hearth first on your PATH. Takes effect in new terminals.</small>
+      Use Stoke's PHP in terminals
+      <small>Puts <code>php</code>, <code>composer</code> and <code>laravel</code> from Stoke first on your PATH. Takes effect in new terminals.</small>
     </span>
     <input
       type="checkbox"
@@ -41,7 +41,7 @@
   {#if status && status.others.length > 0}
     <p class="note">
       {#if status.enabled}
-        Other PHP folders are also on your PATH ({status.others.join(', ')}). New terminals use Hearth's PHP first.
+        Other PHP folders are also on your PATH ({status.others.join(', ')}). New terminals use Stoke's PHP first.
       {:else}
         Terminals currently use PHP from {status.others.join(', ')}.
       {/if}

@@ -33,7 +33,7 @@
   <!-- Level with the window buttons; it moves the window like the strip beside it. -->
   <div class="brand" data-tauri-drag-region>
     <img class="mark" src={logo} alt="" width="28" height="28" />
-    <span class="name">Hearth</span>
+    <span class="name">Stoke</span>
   </div>
   <nav aria-label="Sections">
     {#each groups as group (group.label)}
@@ -47,7 +47,7 @@
   </nav>
   <div class="bottom">
     {@render entry('settings', 'Settings')}
-    <div class="version">v{__HEARTH_VERSION__}</div>
+    <div class="version">v{__STOKE_VERSION__}</div>
   </div>
 </aside>
 

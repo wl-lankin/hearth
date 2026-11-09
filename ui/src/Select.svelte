@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * A dropdown in Hearth's own look (the native one ignores the theme): a button showing the
+   * A dropdown in Stoke's own look (the native one ignores the theme): a button showing the
    * chosen option and a list under it. Keyboard: arrows, Home/End, Enter or Space to pick,
    * Escape to close; a click outside closes it.
    */

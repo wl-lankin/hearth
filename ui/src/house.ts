@@ -5,7 +5,7 @@
 
 export type Win = { id: string; x: number; y: number; w: number; h: number };
 
-/** The windows, in the order they light up: the terminal for Hearth's web server, then one per service. */
+/** The windows, in the order they light up: the terminal for Stoke's web server, then one per service. */
 export const windows: Win[] = [
   { id: 'terminal', x: 50.5, y: 64.8, w: 10, h: 16.8 },
   { id: 'dormer', x: 37.8, y: 46.8, w: 4, h: 7.6 },

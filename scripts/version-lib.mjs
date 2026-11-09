@@ -1,4 +1,4 @@
-// Hearth's version lives in three files that must agree: package.json, src-tauri/tauri.conf.json and
+// Stoke's version lives in three files that must agree: package.json, src-tauri/tauri.conf.json and
 // the workspace Cargo.toml. `npm run version:check` and the release workflow use these helpers.
 
 /** The `version` under `[workspace.package]` in a Cargo.toml, or null. */

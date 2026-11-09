@@ -4,7 +4,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Hearth",
+        "title": "Stoke",
         "width": 1100,
         "height": 720,
         "minWidth": 760,
@@ -19,7 +19,7 @@
       {
         "label": "panel",
         "url": "panel.html",
-        "title": "Hearth",
+        "title": "Stoke",
         "width": 300,
         "height": 420,
         "visible": false,

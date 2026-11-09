@@ -81,8 +81,8 @@
 {:else if store.setup === 'trust'}
   <section class="card setup" aria-live="polite">
     <div class="setup-text">
-      <strong>Browsers do not trust Hearth yet</strong>
-      <span class="muted">Trust Hearth's certificates once, then HTTPS sites open without warnings.</span>
+      <strong>Browsers do not trust Stoke yet</strong>
+      <span class="muted">Trust Stoke's certificates once, then HTTPS sites open without warnings.</span>
     </div>
     <button class="primary" onclick={() => store.trust()}>Trust</button>
   </section>
@@ -122,7 +122,7 @@
       <EmptyState
         art={art.sites}
         title="No sites yet"
-        line="Link a folder and Hearth serves it at name.test"
+        line="Link a folder and Stoke serves it at name.test"
         action={{ label: 'Link a folder', onclick: () => (adding = 'link') }}
       />
     </div>

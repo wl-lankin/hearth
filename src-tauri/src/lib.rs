@@ -8,8 +8,8 @@ mod window;
 use std::path::Path;
 use std::sync::Mutex;
 
-use hearth_core::ipc::{self, CoreState, ServerHandle};
-use hearth_core::{paths, settings, CoreError, HearthPaths};
+use stoke_core::ipc::{self, CoreState, ServerHandle};
+use stoke_core::{fromhearth, paths, settings, CoreError, StokePaths};
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
@@ -19,40 +19,54 @@ use tauri_plugin_dialog::DialogExt;
 struct Server(Mutex<Option<ServerHandle>>);
 
 pub fn run() {
-    let paths = match HearthPaths::from_env().and_then(|p| p.ensure().map(|_| p)) {
+    let paths = match StokePaths::from_env() {
         Ok(paths) => paths,
         Err(e) => {
-            eprintln!("Hearth could not prepare its home folder: {e}");
+            eprintln!("Stoke could not find its home folder: {e}");
             std::process::exit(1);
         }
     };
+    // Stoke was called Hearth: its home moves over before anything else touches the new one. When
+    // the move cannot happen, Stoke says why and quits, rather than starting with an empty home.
+    let move_failed = fromhearth::legacy_home()
+        .and_then(|legacy| fromhearth::move_home(&legacy, &paths, &mut fromhearth::real::RealHost).err())
+        .map(|e| format!("Stoke could not move over from Hearth. {e}"));
+    if move_failed.is_none() {
+        if let Err(e) = paths.ensure() {
+            eprintln!("Stoke could not prepare its home folder: {e}");
+            std::process::exit(1);
+        }
+    }
     let first_run = !settings::exists(&paths);
     let default_home = startup::use_single_instance(std::env::var_os(paths::HOME_VAR).as_deref());
     // Only an installed copy registers itself at login and updates itself: never a dev build or a
     // custom (test) home.
     let installed = !cfg!(debug_assertions) && default_home;
-    // The `hearth` CLI (also as php, composer, herd) goes next to the shims in <home>/bin.
-    if let Some(app_dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
-        if let Err(e) = hearth_core::cli_install::install_cli(&paths, &app_dir) {
-            eprintln!("Hearth could not update its command line tools: {e}");
+    // Nothing is written into a home that could not be moved over (the dialog below says why).
+    if move_failed.is_none() {
+        // The `stoke` CLI (also as php, composer, herd) goes next to the shims in <home>/bin.
+        if let Some(app_dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+            if let Err(e) = stoke_core::cli_install::install_cli(&paths, &app_dir) {
+                eprintln!("Stoke could not update its command line tools: {e}");
+            }
         }
-    }
-    // Shims from an older Hearth are rewritten in the current form (they forward to the CLI).
-    if let Err(e) = hearth_core::php::service::refresh_shims(&paths) {
-        eprintln!("Hearth could not update its php and composer commands: {e}");
+        // Shims from an older Stoke are rewritten in the current form (they forward to the CLI).
+        if let Err(e) = stoke_core::php::service::refresh_shims(&paths) {
+            eprintln!("Stoke could not update its php and composer commands: {e}");
+        }
     }
     let mut state = CoreState::new(paths);
     // The app runs the web server: sites and PHP changes are applied to it as they happen.
     state.web_sync = true;
     // Only the real home manages the system's .test names; a test home only when asked to
-    // (HEARTH_MANAGE_DNS=1, for a hands-on check without the real home).
-    if default_home || std::env::var_os("HEARTH_MANAGE_DNS").is_some_and(|v| v == "1") {
-        state.dns_pipe = Some(hearth_core::dns::protocol::PIPE.into());
+    // (STOKE_MANAGE_DNS=1, for a hands-on check without the real home).
+    if default_home || std::env::var_os("STOKE_MANAGE_DNS").is_some_and(|v| v == "1") {
+        state.dns_pipe = Some(stoke_core::dns::protocol::PIPE.into());
     }
 
     let mut builder = tauri::Builder::default();
     if default_home {
-        // Registered first: a second Hearth process only brings the first one's window up.
+        // Registered first: a second Stoke process only brings the first one's window up.
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| window::show(app)));
     }
     builder
@@ -90,7 +104,7 @@ pub fn run() {
                     panel::blurred(window.app_handle());
                 }
             }
-            // Closing the window keeps Hearth running in the tray.
+            // Closing the window keeps Stoke running in the tray.
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == window::MAIN {
                     api.prevent_close();
@@ -100,12 +114,16 @@ pub fn run() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+            if let Some(message) = move_failed {
+                app.dialog().message(message).title("Stoke").show(move |_| handle.exit(1));
+                return Ok(());
+            }
             if let Err(e) = start_core(&handle) {
                 let message = match e {
-                    CoreError::AlreadyRunning => "Hearth is already running.".to_string(),
-                    other => format!("Hearth could not start its core: {other}"),
+                    CoreError::AlreadyRunning => "Stoke is already running.".to_string(),
+                    other => format!("Stoke could not start its core: {other}"),
                 };
-                app.dialog().message(message).title("Hearth").show(move |_| handle.exit(0));
+                app.dialog().message(message).title("Stoke").show(move |_| handle.exit(0));
                 return Ok(());
             }
             tray::create(&handle)?;
@@ -115,14 +133,14 @@ pub fn run() {
                 match handle.autolaunch().enable() {
                     Ok(()) => {
                         if let Err(e) = settings::save(&state.paths, &next) {
-                            eprintln!("Hearth could not save its settings: {e}");
+                            eprintln!("Stoke could not save its settings: {e}");
                         }
                     }
-                    Err(e) => eprintln!("Hearth could not register Start at login: {e}"),
+                    Err(e) => eprintln!("Stoke could not register Start at login: {e}"),
                 }
             } else if startup::reassert_login_entry(installed, &current) {
                 if let Err(e) = handle.autolaunch().enable() {
-                    eprintln!("Hearth could not renew Start at login: {e}");
+                    eprintln!("Stoke could not renew Start at login: {e}");
                 }
             }
             let args: Vec<String> = std::env::args().collect();
@@ -131,13 +149,15 @@ pub fn run() {
             }
             updates::start(&handle);
             start_web(&handle);
+            // What is left of the move from Hearth (PATH, MCP entries, helper, Hearth's app).
+            fromhearth::api::finish_in_background(&state.paths);
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("Hearth could not start");
+        .expect("Stoke could not start");
 }
 
-/// Starts the IPC server for this Hearth home and keeps its handle, and the mail catcher.
+/// Starts the IPC server for this Stoke home and keeps its handle, and the mail catcher.
 pub(crate) fn start_core(app: &AppHandle) -> Result<(), CoreError> {
     let state = app.state::<CoreState>().inner().clone();
     let server = tauri::async_runtime::block_on(ipc::serve(&state.paths, ipc::router(state.clone())))?;
@@ -145,13 +165,13 @@ pub(crate) fn start_core(app: &AppHandle) -> Result<(), CoreError> {
     // The mail catcher comes and goes with the core (also when a failed update brings it back);
     // a taken port shows on the Mail page.
     tauri::async_runtime::spawn(async move {
-        let port = hearth_core::mail::smtp::configured_port(&state.paths);
+        let port = stoke_core::mail::smtp::configured_port(&state.paths);
         let _ = state.mail.start(&state.paths, port).await;
         // The same for the dump collector; php.ini of every PHP gets (or loses) its dump script.
-        let _ = state.collector.start(hearth_core::insights::collector::config(&state.paths).port).await;
+        let _ = state.collector.start(stoke_core::insights::collector::config(&state.paths).port).await;
         let _php = state.php_lock.lock().unwrap_or_else(|e| e.into_inner());
-        if let Err(e) = hearth_core::insights::prepend::apply_all(&state.paths) {
-            eprintln!("Hearth could not set up dumps in php.ini: {e}");
+        if let Err(e) = stoke_core::insights::prepend::apply_all(&state.paths) {
+            eprintln!("Stoke could not set up dumps in php.ini: {e}");
         }
     });
     Ok(())
@@ -166,7 +186,7 @@ pub(crate) fn stop_core(app: &AppHandle) {
     // Databases shut down cleanly first; then Caddy, the PHP pools and anything left stop with the
     // core (they would also die with the process).
     let core = app.state::<CoreState>().inner().clone();
-    tauri::async_runtime::block_on(hearth_core::services::run::stop_all(&core));
+    tauri::async_runtime::block_on(stoke_core::services::run::stop_all(&core));
     core.mail.stop();
     core.collector.stop();
     core.supervisor.stop_all();
@@ -175,28 +195,28 @@ pub(crate) fn stop_core(app: &AppHandle) {
 /// Brings the web server up and re-checks it every 30 s (a crashed pool or a changed folder).
 fn start_web(app: &AppHandle) {
     let core = app.state::<CoreState>().inner().clone();
-    // Services marked to start with Hearth (problems show in the Services view).
+    // Services marked to start with Stoke (problems show in the Services view).
     let services = core.clone();
-    tauri::async_runtime::spawn(async move { hearth_core::services::run::start_autostart(&services).await });
+    tauri::async_runtime::spawn(async move { stoke_core::services::run::start_autostart(&services).await });
     // The same for the sites' dev processes (a failed one shows on the Processes page).
     let processes = core.clone();
-    tauri::async_runtime::spawn_blocking(move || hearth_core::processes::run::start_autostart(&processes));
+    tauri::async_runtime::spawn_blocking(move || stoke_core::processes::run::start_autostart(&processes));
     // macOS asks this responder for every .test name (see /etc/resolver/test).
     #[cfg(target_os = "macos")]
     if core.dns_pipe.is_some() {
-        tauri::async_runtime::spawn(hearth_core::dns::resolver::serve(
-            ([127, 0, 0, 1], hearth_core::dns::resolver::PORT).into(),
+        tauri::async_runtime::spawn(stoke_core::dns::resolver::serve(
+            ([127, 0, 0, 1], stoke_core::dns::resolver::PORT).into(),
         ));
     }
     tauri::async_runtime::spawn(async move {
         loop {
-            hearth_core::web::service::schedule_sync(&core);
+            stoke_core::web::service::schedule_sync(&core);
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         }
     });
 }
 
-/// Quits Hearth; a downloaded update is installed on the way out.
+/// Quits Stoke; a downloaded update is installed on the way out.
 pub(crate) fn quit(app: &AppHandle) {
     // No new web server syncs from here on: one could start Caddy or PHP again after stop_all.
     app.state::<CoreState>().quitting.store(true, std::sync::atomic::Ordering::Relaxed);

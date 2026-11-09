@@ -20,7 +20,7 @@ const red: MoveCheck = {
     { host: 'blog.test', scheme: 'http', verdict: { kind: 'changed', detail: '302 to / instead of 200' } },
   ],
   services: [{ name: 'Redis 8', running: true }],
-  node: { fromHearth: true },
+  node: { fromStoke: true },
   accepted: [],
 };
 
@@ -53,7 +53,7 @@ test('the dry run lists what moves and, muted with its reason, what stays', asyn
   const { page, target, text, button } = render(fakeApi());
   await settle();
   expect(text()).toContain('shop.test');
-  expect(text()).toContain("Hearth's PHP builds have no mongodb extension");
+  expect(text()).toContain("Stoke's PHP builds have no mongodb extension");
   const stays = [...target.querySelectorAll('.item.stays')].map((r) => r.textContent ?? '');
   expect(stays.some((t) => t.includes('MariaDB 10.11'))).toBe(true);
   expect(button('Move over')).toBeTruthy();
@@ -118,7 +118,7 @@ test('a stopped service and Herd\'s Node hold the uninstall until accepted', asy
   const check: MoveCheck = {
     sites: [{ host: 'shop.test', scheme: 'http', verdict: { kind: 'same' } }],
     services: [{ name: 'MySQL 8', running: false }],
-    node: { fromHearth: false },
+    node: { fromStoke: false },
     accepted: [],
   };
   source.moveoverCheck = vi.fn(async () => structuredClone(check));

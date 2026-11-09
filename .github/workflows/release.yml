@@ -1,16 +1,16 @@
 name: release
 
-# A tag v<version> builds Hearth for Windows (NSIS installer) and macOS (universal .dmg) and
+# A tag v<version> builds Stoke for Windows (NSIS installer) and macOS (universal .dmg) and
 # attaches them to a DRAFT GitHub release, together with latest.json, the feed installed copies
-# of Hearth update from. Installed copies see the update once the draft is published by hand
+# of Stoke update from. Installed copies see the update once the draft is published by hand
 # (see docs/RELEASE.md). The notes are the CHANGELOG.md section of the version, else the tag
 # message. A tag with a hyphen (v1.1.0-beta.1) becomes a prerelease.
 #
-# The Windows app, the hearth-cli sidecar and the installer are Authenticode-signed
+# The Windows app, the stoke-cli sidecar and the installer are Authenticode-signed
 # (docs/CODE-SIGNING.md).
 #
 # Every installer is attached twice: with the version in the name (tauri-action) and under a
-# fixed name (Hearth-Windows-Setup.exe, Hearth-macOS.dmg), so a link to
+# fixed name (Stoke-Windows-Setup.exe, Stoke-macOS.dmg), so a link to
 # releases/latest/download/<fixed name> always serves the newest one.
 
 on:
@@ -50,7 +50,7 @@ jobs:
           prerelease=false
           case "$TAG" in *-*) prerelease=true ;; esac
           # The create call answers with the id; listing releases right after can miss a fresh draft.
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="Hearth $TAG" \
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" -f name="Stoke $TAG" \
             -F body=@"$RUNNER_TEMP/notes.md" -F draft=true -F prerelease="$prerelease" --jq .id)
           if [ -z "$id" ]; then echo "::error::Could not create the draft release"; exit 1; fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
@@ -95,39 +95,39 @@ jobs:
         run: |
           echo "::error::The draft job passed no release id; nothing would be uploaded."
           exit 1
-      # The `hearth` CLI ships inside the app (tauri.release.conf.json bundles it as hearth-cli,
-      # since the app itself is Hearth); the app copies it into <home>/bin on start.
+      # The `stoke` CLI ships inside the app (tauri.release.conf.json bundles it as stoke-cli,
+      # since the app itself is Stoke); the app copies it into <home>/bin on start.
       - name: Build the CLI for the bundle
         shell: bash
         run: |
           mkdir -p src-tauri/binaries
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cargo build --release -p hearth-cli
-            cp target/release/hearth.exe src-tauri/binaries/hearth-cli-x86_64-pc-windows-msvc.exe
+            cargo build --release -p stoke-cli
+            cp target/release/stoke.exe src-tauri/binaries/stoke-cli-x86_64-pc-windows-msvc.exe
           else
-            cargo build --release -p hearth-cli --target aarch64-apple-darwin
-            cargo build --release -p hearth-cli --target x86_64-apple-darwin
-            lipo -create -output src-tauri/binaries/hearth-cli-universal-apple-darwin \
-              target/aarch64-apple-darwin/release/hearth target/x86_64-apple-darwin/release/hearth
+            cargo build --release -p stoke-cli --target aarch64-apple-darwin
+            cargo build --release -p stoke-cli --target x86_64-apple-darwin
+            lipo -create -output src-tauri/binaries/stoke-cli-universal-apple-darwin \
+              target/aarch64-apple-darwin/release/stoke target/x86_64-apple-darwin/release/stoke
             # A universal build compiles each architecture on its own first, and each looks for
             # its own copy of the CLI.
             for arch in aarch64 x86_64; do
-              cp "target/$arch-apple-darwin/release/hearth" "src-tauri/binaries/hearth-cli-$arch-apple-darwin"
+              cp "target/$arch-apple-darwin/release/stoke" "src-tauri/binaries/stoke-cli-$arch-apple-darwin"
             done
           fi
           ls -l src-tauri/binaries
-      # Tauri signs the app, the hearth-cli sidecar (externalBin) and the installer inside tauri
+      # Tauri signs the app, the stoke-cli sidecar (externalBin) and the installer inside tauri
       # build, so the update packages are made over the signed installer. macOS stays unsigned.
       - name: Prepare code signing (Windows)
         id: signing
         if: runner.os == 'Windows'
         uses: ./.github/actions/windows-signing
         with:
-          description: Hearth
+          description: Stoke
       - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Signs the update packages; installed copies of Hearth accept only updates signed with this key.
+          # Signs the update packages; installed copies of Stoke accept only updates signed with this key.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
@@ -150,8 +150,8 @@ jobs:
           version="${version%%-*}"
           mkdir stable && cd stable
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --pattern "Hearth_${version}_x64-setup.exe" --pattern "Hearth_${version}_universal.dmg"
-          mv "Hearth_${version}_x64-setup.exe" Hearth-Windows-Setup.exe
-          mv "Hearth_${version}_universal.dmg" Hearth-macOS.dmg
+            --pattern "Stoke_${version}_x64-setup.exe" --pattern "Stoke_${version}_universal.dmg"
+          mv "Stoke_${version}_x64-setup.exe" Stoke-Windows-Setup.exe
+          mv "Stoke_${version}_universal.dmg" Stoke-macOS.dmg
           ls -l
-          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber Hearth-Windows-Setup.exe Hearth-macOS.dmg
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber Stoke-Windows-Setup.exe Stoke-macOS.dmg

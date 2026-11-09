@@ -60,7 +60,7 @@
     {#if store.status?.error}
       <span class="error">{store.status.error}</span>
     {:else if !store.status?.requests}
-      <span class="muted">Recording is off: Laravel apps run without Hearth watching their queries.</span>
+      <span class="muted">Recording is off: Laravel apps run without Stoke watching their queries.</span>
     {:else}
       <span>Laravel requests and short artisan commands, with their queries. N+1 loops, duplicates and slow queries are pointed out.</span>
     {/if}

@@ -1,0 +1,1698 @@
+use std::process::ExitCode;
+use std::time::Duration;
+
+mod mcp;
+
+use clap::{Parser, Subcommand};
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use stoke_core::node::launch::COMMANDS as NODE_COMMANDS;
+use stoke_core::php::manifest::Os;
+use stoke_core::php::store::{self, install_dir};
+use stoke_core::sites::{locate, registry};
+use stoke_core::{ipc, CoreError, StokePaths};
+
+#[derive(Parser)]
+#[command(name = "stoke", version, about = "Stoke: a local PHP development environment")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Shows whether the Stoke core is running.
+    Status {
+        /// Print the raw status as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the installed PHP versions.
+    #[command(name = "php:list")]
+    PhpList {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the PHP versions available for this computer.
+    #[command(name = "php:available")]
+    PhpAvailable {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Installs or updates a PHP version, e.g. `stoke php:install 8.4`.
+    #[command(name = "php:install", alias = "php:update")]
+    PhpInstall { minor: String },
+    /// Removes a PHP version.
+    #[command(name = "php:uninstall")]
+    PhpUninstall { minor: String },
+    /// Makes a PHP version the one behind `php`, `composer` and `laravel`.
+    #[command(name = "php:use", alias = "use")]
+    PhpUse { minor: String },
+    /// Switches an extension of a PHP version on or off, e.g. `stoke php:ext 8.4 xdebug on`.
+    #[command(name = "php:ext")]
+    PhpExt {
+        minor: String,
+        name: String,
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
+    /// Runs the PHP of the project you are in (or `--site=<name>`'s) with Stoke's php.ini.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Php { args: Vec<String> },
+    /// Runs Composer with the project's PHP (or `--site=<name>`'s).
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Composer { args: Vec<String> },
+    /// Runs the Laravel installer with the project's PHP.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Laravel { args: Vec<String> },
+    /// Lists the installed Node versions.
+    #[command(name = "node:list")]
+    NodeList {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the Node versions available for this computer.
+    #[command(name = "node:available")]
+    NodeAvailable {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Installs a Node version: `stoke node:install 22`, `lts/*`, `lts/jod`, `22.21.1`. Versions the
+    /// catalog lacks come from nodejs.org.
+    #[command(name = "node:install")]
+    NodeInstall { spec: String },
+    /// Removes a Node version.
+    #[command(name = "node:uninstall")]
+    NodeUninstall { spec: String },
+    /// Makes a Node version the one used outside projects with a `.nvmrc` or `.node-version`.
+    #[command(name = "node:default")]
+    NodeDefault { spec: String },
+    /// Shows which Node the current folder runs, and why.
+    #[command(name = "node:which")]
+    NodeWhich,
+    /// Runs the Node of the project you are in (its `.nvmrc` or `.node-version`, else the default).
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Node { args: Vec<String> },
+    /// Runs npm with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Npm { args: Vec<String> },
+    /// Runs npx with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Npx { args: Vec<String> },
+    /// Runs corepack with the project's Node.
+    #[command(trailing_var_arg = true, allow_hyphen_values = true, disable_help_flag = true)]
+    Corepack { args: Vec<String> },
+    /// Opens `php artisan tinker` in a site (default: the current folder's).
+    Tinker {
+        #[arg(long)]
+        site: Option<String>,
+    },
+    /// Serves every subfolder of a folder (default: the current one) as <name>.test.
+    Park { dir: Option<PathBuf> },
+    /// Stops serving the subfolders of a parked folder.
+    #[command(alias = "forget")]
+    Unpark { dir: Option<PathBuf> },
+    /// Lists the parked folders.
+    #[command(alias = "paths")]
+    Parked {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Serves a folder (the current one) as <name>.test; the name defaults to the folder name.
+    Link {
+        name: Option<String>,
+        /// Serve it over HTTPS right away.
+        #[arg(long)]
+        secure: bool,
+        /// Run it on this PHP version, e.g. 8.3.
+        #[arg(long)]
+        isolate: Option<String>,
+    },
+    /// Stops serving a linked site.
+    Unlink { name: Option<String> },
+    /// Lists the sites.
+    #[command(alias = "sites")]
+    Links {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Forwards <name>.test to a local server, e.g. `stoke proxy app http://localhost:5173`.
+    Proxy {
+        name: String,
+        upstream: String,
+        #[arg(long)]
+        secure: bool,
+    },
+    /// Removes a proxy.
+    Unproxy { name: String },
+    /// Lists the proxies.
+    Proxies {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the sites that run on their own PHP version.
+    Isolated {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Shows the site of the current folder.
+    Which {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prints the PHP program a site (default: the current folder's) runs.
+    #[command(name = "which-php")]
+    WhichPhp { site: Option<String> },
+    /// Shows a site's details: the site of a folder (default: the current one).
+    #[command(name = "site:info", alias = "site-information")]
+    SiteInfo {
+        path: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Restarts the web server and the PHP pools.
+    Restart { service: Option<String> },
+    /// Starts the web server and the PHP pools again after `stop`.
+    Start { service: Option<String> },
+    /// Stops the web server and the PHP pools until `start` (or the next app start).
+    Stop { service: Option<String> },
+    /// Prints the top-level domain of the sites (always `test`).
+    Tld,
+    /// Lists the services this computer can run.
+    #[command(name = "services:available")]
+    ServicesAvailable {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the versions of a service type (default: all).
+    #[command(name = "services:versions")]
+    ServicesVersions {
+        kind: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Lists the services and whether they run.
+    #[command(name = "services:list")]
+    ServicesList {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Creates a service, e.g. `stoke services:create mysql --service-version=8.4 --port=3307`.
+    #[command(name = "services:create")]
+    ServicesCreate {
+        kind: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long = "service-version")]
+        version: Option<String>,
+    },
+    /// Starts a service.
+    #[command(name = "services:start")]
+    ServicesStart { id: String },
+    /// Stops a service (databases shut down cleanly).
+    #[command(name = "services:stop")]
+    ServicesStop { id: String },
+    /// Deletes a service and all its data (needs --force).
+    #[command(name = "services:delete")]
+    ServicesDelete {
+        id: String,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Lists every site's dev processes and whether they run.
+    #[command(name = "processes", visible_alias = "processes:list")]
+    Processes {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Starts a site's process, e.g. `stoke processes:start shop vite`.
+    #[command(name = "processes:start")]
+    ProcessesStart { site: String, name: String },
+    /// Stops a site's process and everything it started.
+    #[command(name = "processes:stop")]
+    ProcessesStop { site: String, name: String },
+    /// Restarts a site's process (its output starts over).
+    #[command(name = "processes:restart")]
+    ProcessesRestart { site: String, name: String },
+    /// Makes a workspace of the current folder's site: the branch `name` in its own git worktree,
+    /// served at `<name>.<site>.test` (inside an existing worktree: serves that one).
+    Workspace {
+        name: Option<String>,
+        #[arg(long, conflicts_with = "no_secure")]
+        secure: bool,
+        #[arg(long = "no-secure")]
+        no_secure: bool,
+        #[arg(long)]
+        json: bool,
+        /// shared (default), empty or clone.
+        #[arg(long)]
+        database: Option<String>,
+        #[arg(long = "no-migrate")]
+        no_migrate: bool,
+        /// Accepted for Herd's scripts: a worktree always starts from the local branch.
+        #[arg(long, hide = true)]
+        local: bool,
+    },
+    /// Lists the workspaces (of `--site`, or all).
+    Workspaces {
+        #[arg(long)]
+        site: Option<String>,
+        #[arg(long, hide = true)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Prints a workspace's folder (the current one's when no name is given).
+    #[command(name = "workspace:switch")]
+    WorkspaceSwitch { name: Option<String> },
+    /// Opens a workspace in the browser.
+    #[command(name = "workspace:open")]
+    WorkspaceOpen { name: Option<String> },
+    /// Deletes a workspace; its branch stays in the repository.
+    #[command(name = "workspace:delete")]
+    WorkspaceDelete {
+        name: Option<String>,
+        #[arg(long)]
+        force: bool,
+        #[arg(long = "keep-database")]
+        keep_database: bool,
+        #[arg(long = "keep-files")]
+        keep_files: bool,
+    },
+    /// Merges a workspace's branch into the branch it came from.
+    #[command(name = "workspace:merge")]
+    WorkspaceMerge {
+        name: Option<String>,
+        #[arg(long)]
+        push: bool,
+        #[arg(long)]
+        delete: bool,
+    },
+    /// Anything else, e.g. a Herd command for a feature Stoke does not have yet.
+    #[command(external_subcommand)]
+    Other(Vec<String>),
+    /// Prints the address the sites are served on.
+    Loopback,
+    /// Runs the MCP server (stdio) with Herd's tool surface, for coding agents.
+    Mcp,
+    /// Registers Stoke's MCP server with agents: in this project (default) or user-wide (`--global`).
+    #[command(name = "mcp:install")]
+    McpInstall {
+        #[arg(long, conflicts_with = "project")]
+        global: bool,
+        #[arg(long)]
+        project: bool,
+        /// claude (default), cursor or vscode; repeat for several.
+        #[arg(long = "agent")]
+        agents: Vec<String>,
+        /// The project folder. Default: the current one.
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// Replace a different existing `stoke` entry.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Runs a site (default: the current folder's) on a PHP version.
+    Isolate {
+        minor: String,
+        #[arg(long)]
+        site: Option<String>,
+    },
+    /// Runs a site on the default PHP version again.
+    Unisolate {
+        #[arg(long)]
+        site: Option<String>,
+    },
+    /// Opens a site (default: the current folder's) in the browser.
+    Open { name: Option<String> },
+    /// Serves a site (default: the current folder's) over HTTPS with Stoke's certificate.
+    Secure { name: Option<String> },
+    /// Serves a site (default: the current folder's) over plain HTTP again.
+    Unsecure {
+        name: Option<String>,
+        /// Every secured site.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Lists the sites served over HTTPS.
+    Secured {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Makes this computer trust Stoke's certificates (once; the system asks to confirm).
+    Trust,
+    /// Makes <name>.test resolve on this computer (once; the system asks for admin rights).
+    #[command(name = "dns:setup")]
+    DnsSetup,
+    /// Shows what Herd's parked folders, links, proxies, PHP versions and HTTPS choices would add;
+    /// imports them with --apply. Herd itself is never changed.
+    #[command(name = "import:herd")]
+    ImportHerd {
+        /// Herd's Valet folder (default: Herd's usual place).
+        #[arg(long)]
+        from: Option<PathBuf>,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// The commands run on a thread with room to spare: one `match` over every command is a large
+/// future, and Windows gives the main thread only 1 MB (debug builds overflowed it).
+fn main() -> ExitCode {
+    let worker = std::thread::Builder::new().stack_size(8 * 1024 * 1024).spawn(|| {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
+        match runtime {
+            Ok(runtime) => runtime.block_on(run()),
+            Err(e) => fail(&format!("Stoke could not start: {e}")),
+        }
+    });
+    match worker.map(|w| w.join()) {
+        Ok(Ok(code)) => code,
+        _ => ExitCode::FAILURE,
+    }
+}
+
+async fn run() -> ExitCode {
+    let args = as_stoke(std::env::args_os().collect());
+    // `php`, `composer`, `laravel` and the Node commands pass every argument on as typed, so they
+    // skip the parser (which would, for one, eat a leading `--`).
+    if let Some(command) = args.get(1).and_then(|a| a.to_str()).filter(|c| is_runner(c)) {
+        let paths = match StokePaths::from_env() {
+            Ok(paths) => paths,
+            Err(e) => return fail(&e.to_string()),
+        };
+        if NODE_COMMANDS.contains(&command) {
+            return run_node(&paths, command, &args[2..]);
+        }
+        let rest: Vec<String> = args[2..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        return run_named(&paths, command, &rest);
+    }
+    let args = match nvm_as_stoke(args) {
+        Ok(args) => args,
+        Err(e) => return fail(&e),
+    };
+    let cli = Cli::parse_from(args);
+    let paths = match StokePaths::from_env() {
+        Ok(paths) => paths,
+        Err(e) => return fail(&e.to_string()),
+    };
+    match cli.command {
+        Command::Status { json } => status(&paths, json).await,
+        Command::PhpList { json } => print_call(&paths, "php.list", Value::Null, json, print_list).await,
+        Command::PhpAvailable { json } => print_call(&paths, "php.available", Value::Null, json, print_available).await,
+        Command::PhpInstall { minor } => install(&paths, &minor).await,
+        Command::PhpUninstall { minor } => {
+            print_call(&paths, "php.uninstall", json!({ "minor": minor }), false, |_| {
+                println!("PHP {minor} is removed.")
+            })
+            .await
+        }
+        Command::PhpUse { minor } => {
+            print_call(&paths, "php.use", json!({ "minor": minor }), false, |_| println!("php now runs PHP {minor}."))
+                .await
+        }
+        Command::PhpExt { minor, name, state } => {
+            let params = json!({ "minor": minor, "name": name, "on": state == "on" });
+            print_call(&paths, "php.extension", params, false, |_| println!("{name} is {state} for PHP {minor}.")).await
+        }
+        // Handled before parsing (see above); listed in the enum for `stoke --help`.
+        Command::Php { args } => run_named(&paths, "php", &args),
+        Command::Composer { args } => run_named(&paths, "composer", &args),
+        Command::Laravel { args } => run_named(&paths, "laravel", &args),
+        Command::NodeList { json } => print_call(&paths, "node.list", Value::Null, json, print_node_list).await,
+        Command::NodeAvailable { json } => {
+            print_call(&paths, "node.available", Value::Null, json, print_node_available).await
+        }
+        Command::NodeInstall { spec } => install_node(&paths, &spec).await,
+        Command::NodeUninstall { spec } => {
+            print_call(&paths, "node.uninstall", json!({ "spec": spec }), false, |v| {
+                println!("Node {} is removed.", v["version"].as_str().unwrap_or_default())
+            })
+            .await
+        }
+        Command::NodeDefault { spec } => {
+            print_call(&paths, "node.default", json!({ "spec": spec }), false, |v| {
+                println!("Node {} is the default now.", v["version"].as_str().unwrap_or_default())
+            })
+            .await
+        }
+        Command::NodeWhich => node_which(&paths),
+        Command::Node { .. } | Command::Npm { .. } | Command::Npx { .. } | Command::Corepack { .. } => {
+            unreachable!("run before parsing")
+        }
+        Command::Tinker { site } => tinker(&paths, site),
+        Command::Park { dir } => {
+            let dir = folder(dir);
+            let done = format!("Every folder in {} is now a site", dir.display());
+            print_call(&paths, "sites.park", json!({ "dir": dir }), false, |_| println!("{done}")).await
+        }
+        Command::Unpark { dir } => {
+            let dir = folder(dir);
+            let done = format!("{} is no longer parked", dir.display());
+            print_call(&paths, "sites.unpark", json!({ "dir": dir }), false, |_| println!("{done}")).await
+        }
+        Command::Link { name, secure, isolate } => match site_name(name) {
+            Ok(name) => {
+                let dir = folder(None);
+                let mut steps = vec![("sites.link", json!({ "name": name, "dir": dir }))];
+                if let Some(minor) = &isolate {
+                    steps.push(("sites.isolate", json!({ "name": name, "minor": minor })));
+                }
+                if secure {
+                    steps.push(("sites.secure", json!({ "name": name })));
+                }
+                for (method, params) in steps {
+                    if let Err(e) = ipc::call(&paths, method, params).await {
+                        return fail(&message(e));
+                    }
+                }
+                println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
+                ExitCode::SUCCESS
+            }
+            Err(code) => code,
+        },
+        Command::Parked { json } => match ipc::call(&paths, "sites.list", Value::Null).await {
+            Ok(list) if json => {
+                println!("{}", list["parked"]);
+                ExitCode::SUCCESS
+            }
+            Ok(list) => {
+                for dir in list["parked"].as_array().into_iter().flatten() {
+                    println!("{}", dir.as_str().unwrap_or_default());
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(&message(e)),
+        },
+        Command::Proxies { json } => {
+            list_sites(
+                &paths,
+                json,
+                |s| s["kind"] == "proxy",
+                |s| json!({ "name": s["name"], "upstream": s["upstream"], "secured": s["secured"] }),
+            )
+            .await
+        }
+        Command::Isolated { json } => {
+            list_sites(&paths, json, |s| s["php"].is_string(), |s| json!({ "name": s["name"], "php": s["php"] })).await
+        }
+        Command::Which { json } => site_info(&paths, None, json).await,
+        Command::SiteInfo { path, json } => site_info(&paths, path, json).await,
+        Command::WhichPhp { site } => which_php(&paths, site),
+        // A Herd script's `stop mysql` acts on Stoke's service of that name.
+        Command::Start { service: Some(s) } if !is_web_service(&s) => {
+            service_call(&paths, &["services.start"], &s).await
+        }
+        Command::Stop { service: Some(s) } if !is_web_service(&s) => service_call(&paths, &["services.stop"], &s).await,
+        Command::Restart { service: Some(s) } if !is_web_service(&s) => {
+            service_call(&paths, &["services.stop", "services.start"], &s).await
+        }
+        Command::ServicesAvailable { json } => services_available(&paths, None, json).await,
+        Command::ServicesVersions { kind, json } => services_available(&paths, kind.as_deref(), json).await,
+        Command::ServicesList { json } => services_list(&paths, json).await,
+        Command::ServicesCreate { kind, name, port, version } => {
+            services_create(&paths, &kind, name, port, version).await
+        }
+        Command::ServicesStart { id } => service_call(&paths, &["services.start"], &id).await,
+        Command::ServicesStop { id } => service_call(&paths, &["services.stop"], &id).await,
+        Command::ServicesDelete { id, force } => services_delete(&paths, &id, force).await,
+        Command::Workspace { name, secure, no_secure, json, database, no_migrate, local: _ } => {
+            let secure = if secure {
+                Some(true)
+            } else if no_secure {
+                Some(false)
+            } else {
+                None
+            };
+            workspace_create(&paths, name, secure, json, database, no_migrate).await
+        }
+        Command::Workspaces { site, all: _, json } => workspaces_list(&paths, site, json).await,
+        Command::WorkspaceSwitch { name } => match workspace_record(&paths, name).await {
+            Ok(w) => {
+                println!("{}", w["path"].as_str().unwrap_or_default());
+                ExitCode::SUCCESS
+            }
+            Err(code) => code,
+        },
+        Command::WorkspaceOpen { name } => match workspace_record(&paths, name).await {
+            Ok(w) => open_url(w["url"].as_str().unwrap_or_default()),
+            Err(code) => code,
+        },
+        Command::WorkspaceDelete { name, force, keep_database, keep_files } => {
+            workspace_delete(&paths, name, force, keep_database, keep_files).await
+        }
+        Command::WorkspaceMerge { name, push, delete } => match workspace_record(&paths, name).await {
+            Ok(w) => {
+                let params = json!({ "name": w["site"], "push": push, "delete": delete });
+                match ipc::call_waiting(&paths, "workspaces.merge", params, Duration::from_secs(600)).await {
+                    Ok(done) => {
+                        println!("{}", done["message"].as_str().unwrap_or_default());
+                        print_notes(&done["notes"]);
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => fail(&message(e)),
+                }
+            }
+            Err(code) => code,
+        },
+        Command::Processes { json } => processes_list(&paths, json).await,
+        Command::ProcessesStart { site, name } => process_call(&paths, "processes.start", &site, &name).await,
+        Command::ProcessesStop { site, name } => process_call(&paths, "processes.stop", &site, &name).await,
+        Command::ProcessesRestart { site, name } => process_call(&paths, "processes.restart", &site, &name).await,
+        Command::Restart { .. } => {
+            print_call(&paths, "web.restart", Value::Null, false, |_| println!("The web server and PHP restart")).await
+        }
+        Command::Start { .. } => {
+            print_call(&paths, "web.start", Value::Null, false, |_| println!("The web server and PHP start")).await
+        }
+        Command::Stop { .. } => {
+            print_call(&paths, "web.stop", Value::Null, false, |_| println!("The web server and PHP are stopped")).await
+        }
+        Command::Tld => {
+            println!("test");
+            ExitCode::SUCCESS
+        }
+        Command::Other(args) => fail(&missing(args.first().map(String::as_str).unwrap_or_default())),
+        Command::Mcp => {
+            mcp::serve(&paths).await;
+            ExitCode::SUCCESS
+        }
+        Command::McpInstall { global, project: _, agents, path, force } => {
+            mcp_install(&paths, global, agents, path, force)
+        }
+        Command::Loopback => {
+            println!("127.0.0.1");
+            ExitCode::SUCCESS
+        }
+        Command::Unlink { name } => match site_name(name) {
+            Ok(name) => {
+                print_call(&paths, "sites.unlink", json!({ "name": name }), false, |_| println!("{name} is unlinked"))
+                    .await
+            }
+            Err(code) => code,
+        },
+        Command::Links { json } => print_call(&paths, "sites.list", Value::Null, json, print_sites).await,
+        Command::Proxy { name, upstream, secure } => {
+            let name = domain(&name);
+            if let Err(e) = ipc::call(&paths, "sites.proxy", json!({ "name": name, "upstream": upstream })).await {
+                return fail(&message(e));
+            }
+            if secure {
+                if let Err(e) = ipc::call(&paths, "sites.secure", json!({ "name": name })).await {
+                    return fail(&message(e));
+                }
+            }
+            println!("{} now forwards to {upstream}", site_url(&sites(&paths).await, &name));
+            ExitCode::SUCCESS
+        }
+        Command::Unproxy { name } => {
+            let name = domain(&name);
+            print_call(&paths, "sites.unproxy", json!({ "name": name }), false, |_| println!("{name}.test is removed"))
+                .await
+        }
+        Command::Isolate { minor, site } => match site_name(site) {
+            Ok(site) => {
+                let params = json!({ "name": site, "minor": minor });
+                print_call(&paths, "sites.isolate", params, false, |_| println!("{site} now runs on PHP {minor}")).await
+            }
+            Err(code) => code,
+        },
+        Command::Unisolate { site } => match site_name(site) {
+            Ok(site) => {
+                let params = json!({ "name": site, "minor": null });
+                print_call(&paths, "sites.isolate", params, false, |_| println!("{site} now runs on the default PHP"))
+                    .await
+            }
+            Err(code) => code,
+        },
+        Command::Open { name } => match site_name(name) {
+            Ok(name) => {
+                let url = site_url(&sites(&paths).await, &name);
+                open_url(&url)
+            }
+            Err(code) => code,
+        },
+        Command::Secure { name } => match site_name(name) {
+            Ok(name) => match ipc::call(&paths, "sites.secure", json!({ "name": name })).await {
+                Ok(_) => {
+                    println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => fail(&message(e)),
+            },
+            Err(code) => code,
+        },
+        Command::Unsecure { all: true, .. } => {
+            let list = match ipc::call(&paths, "sites.list", Value::Null).await {
+                Ok(list) => list,
+                Err(e) => return fail(&message(e)),
+            };
+            let secured: Vec<String> = list["sites"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|s| s["secured"] == true)
+                .filter_map(|s| s["name"].as_str().map(str::to_string))
+                .collect();
+            for name in &secured {
+                if let Err(e) = ipc::call(&paths, "sites.unsecure", json!({ "name": name })).await {
+                    return fail(&message(e));
+                }
+            }
+            println!("{} sites are served over plain HTTP again", secured.len());
+            ExitCode::SUCCESS
+        }
+        Command::Unsecure { name, .. } => match site_name(name) {
+            Ok(name) => match ipc::call(&paths, "sites.unsecure", json!({ "name": name })).await {
+                Ok(_) => {
+                    println!("{name} is now served at {}", site_url(&sites(&paths).await, &name));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => fail(&message(e)),
+            },
+            Err(code) => code,
+        },
+        Command::Secured { json } => match ipc::call(&paths, "sites.list", Value::Null).await {
+            Ok(list) => {
+                let names: Vec<&str> = list["sites"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|s| s["secured"] == true)
+                    .filter_map(|s| s["name"].as_str())
+                    .collect();
+                if json {
+                    println!("{}", Value::from(names));
+                } else {
+                    for name in names {
+                        println!("{}", site_url(&list, name));
+                    }
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => fail(&message(e)),
+        },
+        Command::Trust => prompting(&paths, "tls.trust", "This computer now trusts Stoke's certificates").await,
+        Command::DnsSetup => prompting(&paths, "dns.setup", "<name>.test now resolves on this computer").await,
+        Command::ImportHerd { from, apply, json } => {
+            let mut params = json!({ "apply": apply });
+            if let Some(from) = from {
+                params["from"] = json!(folder(Some(from)));
+            }
+            print_call(&paths, "herd.import", params, json, |v| print_import(v, apply)).await
+        }
+    }
+}
+
+fn print_import(value: &Value, applied: bool) {
+    let plan = &value["plan"];
+    let list = |key: &str| plan[key].as_array().cloned().unwrap_or_default();
+    let pair =
+        |v: &Value| (v[0].as_str().unwrap_or_default().to_string(), v[1].as_str().unwrap_or_default().to_string());
+    println!("From {}", value["from"].as_str().unwrap_or_default());
+    for dir in list("park") {
+        println!("park   {}", dir.as_str().unwrap_or_default());
+    }
+    for (name, dir) in list("link").iter().map(pair) {
+        println!("link   {name}.test -> {dir}");
+    }
+    for (name, upstream) in list("proxy").iter().map(pair) {
+        println!("proxy  {name}.test -> {upstream}");
+    }
+    for (name, minor) in list("isolate").iter().map(pair) {
+        println!("php    {name}.test -> PHP {minor}");
+    }
+    for name in list("secure") {
+        println!("https  {}.test", name.as_str().unwrap_or_default());
+    }
+    for skip in list("skipped") {
+        println!(
+            "skip   {}: {}",
+            skip["name"].as_str().unwrap_or_default(),
+            skip["reason"].as_str().unwrap_or_default()
+        );
+    }
+    for fail in value["failed"].as_array().into_iter().flatten() {
+        println!(
+            "failed {}: {}",
+            fail["name"].as_str().unwrap_or_default(),
+            fail["reason"].as_str().unwrap_or_default()
+        );
+    }
+    let nothing = ["park", "link", "proxy", "isolate", "secure"].iter().all(|k| list(k).is_empty());
+    if nothing {
+        println!("Nothing new to import.");
+    } else if applied {
+        println!("Imported.");
+    } else {
+        println!("Run `stoke import:herd --apply` to import.");
+    }
+}
+
+/// Calls a method that shows the user a system prompt, waiting until they have answered it.
+async fn prompting(paths: &StokePaths, method: &str, done: &str) -> ExitCode {
+    println!("Confirm the prompt Windows or macOS shows now.");
+    match ipc::call_waiting(paths, method, Value::Null, Duration::from_secs(600)).await {
+        Ok(_) => {
+            println!("{done}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// The sites list, or an empty one when the core does not answer.
+async fn sites(paths: &StokePaths) -> Value {
+    ipc::call(paths, "sites.list", Value::Null).await.unwrap_or(Value::Null)
+}
+
+/// A site's address: HTTPS when it is secured.
+fn site_url(list: &Value, name: &str) -> String {
+    let secured = list["sites"].as_array().into_iter().flatten().any(|s| s["name"] == name && s["secured"] == true);
+    if secured {
+        format!("https://{name}.test:{}", list["httpsPort"].as_u64().unwrap_or(8443))
+    } else {
+        format!("http://{name}.test:{}", list["httpPort"].as_u64().unwrap_or(8080))
+    }
+}
+
+/// The given folder, or the current one, as an absolute path.
+fn folder(dir: Option<PathBuf>) -> PathBuf {
+    let dir = dir.unwrap_or_else(|| PathBuf::from("."));
+    std::path::absolute(&dir).unwrap_or(dir)
+}
+
+/// Runs `methods` in order on the service `id`; prints its state afterwards.
+async fn service_call(paths: &StokePaths, methods: &[&str], id: &str) -> ExitCode {
+    for method in methods {
+        if let Err(e) = ipc::call_waiting(paths, method, json!({ "id": id }), Duration::from_secs(120)).await {
+            return fail(&message(e));
+        }
+    }
+    let list = ipc::call(paths, "services.list", Value::Null).await.unwrap_or(Value::Null);
+    let row = list.as_array().into_iter().flatten().find(|s| s["id"] == id);
+    match row {
+        Some(s) if s["running"] == true => println!("{} runs on port {}", s["name"].as_str().unwrap_or(id), s["port"]),
+        Some(s) => println!("{} is stopped", s["name"].as_str().unwrap_or(id)),
+        None => println!("{id} is done"),
+    }
+    ExitCode::SUCCESS
+}
+
+async fn services_available(paths: &StokePaths, kind: Option<&str>, as_json: bool) -> ExitCode {
+    match ipc::call(paths, "services.available", Value::Null).await {
+        Ok(all) => {
+            let builds: Vec<Value> = all["builds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|b| kind.is_none_or(|k| b["kind"] == k))
+                .cloned()
+                .collect();
+            if as_json {
+                println!("{}", Value::from(builds));
+                return ExitCode::SUCCESS;
+            }
+            for b in &builds {
+                println!(
+                    "{}  {} {}  ({})",
+                    b["kind"].as_str().unwrap_or_default(),
+                    b["name"].as_str().unwrap_or_default(),
+                    b["line"].as_str().unwrap_or_default(),
+                    b["version"].as_str().unwrap_or_default()
+                );
+            }
+            for u in all["unavailable"].as_array().into_iter().flatten().filter(|u| kind.is_none_or(|k| u["kind"] == k))
+            {
+                println!(
+                    "{}  {}  ({})",
+                    u["kind"].as_str().unwrap_or_default(),
+                    u["name"].as_str().unwrap_or_default(),
+                    u["reason"].as_str().unwrap_or_default()
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// Registers the MCP server for each agent; Claude Code's user-wide list goes through `claude`.
+fn mcp_install(paths: &StokePaths, global: bool, agents: Vec<String>, path: Option<PathBuf>, force: bool) -> ExitCode {
+    use mcp::install::{global_claude_command, launch, stoke_exe, write_global, write_project_with, Agent};
+    let agents = if agents.is_empty() { vec!["claude".to_string()] } else { agents };
+    let exe = stoke_exe(paths);
+    let home = std::env::var_os("STOKE_HOME").map(PathBuf::from);
+    let path_var = std::env::var("PATH").ok();
+    let (command, env) = launch(&exe, &paths.bin, path_var.as_deref(), home.as_deref());
+    if command != "stoke" {
+        eprintln!(
+            "Note: Stoke's bin folder is not on PATH, so the config names {command}. Switch on \"Use Stoke's PHP in terminals\" to keep machine paths out of shared files."
+        );
+    }
+    let dir = path.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let mut failed = false;
+    for name in agents {
+        let agent = match Agent::parse(&name) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+                continue;
+            }
+        };
+        let result = match (global, agent) {
+            (true, Agent::Claude) => {
+                let add = global_claude_command(&command, home.as_deref());
+                match std::process::Command::new(&add[0]).args(&add[1..]).status() {
+                    Ok(s) if s.success() => Ok("Claude Code (user-wide)".to_string()),
+                    Ok(_) => Err(format!(
+                        "`claude mcp add` refused it (an existing `stoke` entry? `claude mcp remove --scope user stoke` removes it). The command was:\n  {}",
+                        add.join(" ")
+                    )),
+                    Err(_) => Err(format!(
+                        "Claude Code's `claude` command was not found. Register Stoke with:\n  {}",
+                        add.join(" ")
+                    )),
+                }
+            }
+            (true, _) => write_global(agent, &command, env.as_ref(), force).map(|f| f.display().to_string()),
+            (false, _) => {
+                write_project_with(agent, &dir, &command, env.as_ref(), force).map(|f| f.display().to_string())
+            }
+        };
+        match result {
+            Ok(where_) => println!("Stoke's MCP server is registered as `stoke` in {where_}"),
+            Err(e) => {
+                eprintln!("{e}");
+                failed = true;
+            }
+        }
+    }
+    if failed {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn print_notes(notes: &Value) {
+    for note in notes.as_array().into_iter().flatten().filter_map(Value::as_str) {
+        println!("  {note}");
+    }
+}
+
+/// The sentence about a workspace's database.
+fn database_line(w: &Value) -> String {
+    let name = w["databaseName"].as_str().unwrap_or_default();
+    match w["databaseMode"].as_str() {
+        Some("clone") => format!("It uses its own database {name}, a copy of the parent's."),
+        Some("empty") => format!("It uses its own empty database {name}."),
+        _ => "It shares the parent's database. Use --database=clone or --database=empty for its own.".into(),
+    }
+}
+
+/// Makes a workspace of the current folder's site, or serves the worktree the folder is in.
+async fn workspace_create(
+    paths: &StokePaths,
+    name: Option<String>,
+    secure: Option<bool>,
+    as_json: bool,
+    database: Option<String>,
+    no_migrate: bool,
+) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let known = ipc::call(paths, "workspaces.find", json!({ "cwd": cwd })).await;
+    if let Ok(found) = &known {
+        if !found["workspace"].is_null() {
+            return fail(&format!(
+                "This folder is already the workspace {}",
+                found["workspace"]["site"].as_str().unwrap_or_default()
+            ));
+        }
+    }
+    let mut params =
+        json!({ "name": name, "database": database, "secure": secure, "migrate": !no_migrate, "by": "cli" });
+    // Inside a worktree made with `git worktree add`: serve that one, as Herd does.
+    let method = if stoke_core::workspaces::git::linked_worktree_parent(&cwd).is_some() {
+        if name.is_some() {
+            println!("This folder is a git worktree: it is served as it is, the name is not used.");
+        }
+        params["path"] = json!(cwd);
+        "workspaces.adopt"
+    } else {
+        match stoke_core::sites::locate::site_for_dir(paths, &cwd) {
+            Some(site) => {
+                params["site"] = json!(site.name);
+                "workspaces.create"
+            }
+            None => return fail("The current folder is not inside a Stoke site. Link it first with `stoke link`."),
+        }
+    };
+    match ipc::call_waiting(paths, method, params, Duration::from_secs(1800)).await {
+        Ok(made) if as_json => {
+            println!("{}", made["workspace"]);
+            ExitCode::SUCCESS
+        }
+        Ok(made) => {
+            let w = &made["workspace"];
+            println!(
+                "Workspace {} is ready at {}",
+                w["name"].as_str().unwrap_or_default(),
+                w["url"].as_str().unwrap_or_default()
+            );
+            println!("{}", database_line(w));
+            print_notes(&made["notes"]);
+            println!("cd \"{}\"", w["path"].as_str().unwrap_or_default());
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// The workspace `name` names, or the one the current folder is in.
+async fn workspace_record(paths: &StokePaths, name: Option<String>) -> Result<Value, ExitCode> {
+    let list = ipc::call(paths, "workspaces.list", Value::Null).await.map_err(|e| fail(&message(e)))?;
+    let all = list["workspaces"].as_array().cloned().unwrap_or_default();
+    match name {
+        Some(name) => {
+            let wanted = name.trim().to_lowercase();
+            let wanted = wanted.strip_suffix(".test").unwrap_or(&wanted).to_string();
+            let hits: Vec<Value> = all
+                .into_iter()
+                .filter(|w| {
+                    let site = w["site"].as_str().unwrap_or_default();
+                    let parent = w["parentSite"].as_str().unwrap_or_default();
+                    w["name"].as_str().is_some_and(|n| n.to_lowercase() == wanted)
+                        || site == wanted
+                        || site.strip_suffix(&format!(".{parent}")) == Some(wanted.as_str())
+                })
+                .collect();
+            match hits.len() {
+                1 => Ok(hits.into_iter().next().unwrap_or_default()),
+                0 => Err(fail(&format!("There is no workspace named {name}"))),
+                _ => Err(fail(&format!("Several workspaces are named {name}: use the host"))),
+            }
+        }
+        None => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let found =
+                ipc::call(paths, "workspaces.find", json!({ "cwd": cwd })).await.map_err(|e| fail(&message(e)))?;
+            if found["workspace"].is_null() {
+                Err(fail("The current folder is no workspace: name one (see `stoke workspaces`)"))
+            } else {
+                Ok(found["workspace"].clone())
+            }
+        }
+    }
+}
+
+async fn workspaces_list(paths: &StokePaths, site: Option<String>, as_json: bool) -> ExitCode {
+    let params = site.map_or(Value::Null, |s| json!({ "site": s.trim_end_matches(".test") }));
+    print_call(paths, "workspaces.list", params, as_json, |list| {
+        let rows = list["workspaces"].as_array().cloned().unwrap_or_default();
+        if rows.is_empty() {
+            println!("No workspaces yet. Make one in a site's folder with: stoke workspace <branch>");
+        }
+        for w in rows {
+            let db = match w["databaseMode"].as_str() {
+                Some("clone") => format!("copy ({})", w["databaseName"].as_str().unwrap_or_default()),
+                Some("empty") => format!("empty ({})", w["databaseName"].as_str().unwrap_or_default()),
+                _ => "shared".into(),
+            };
+            println!(
+                "{}  {}  branch {}  database {db}",
+                w["site"].as_str().unwrap_or_default(),
+                w["url"].as_str().unwrap_or_default(),
+                w["branch"].as_str().unwrap_or_default()
+            );
+        }
+    })
+    .await
+}
+
+async fn workspace_delete(
+    paths: &StokePaths,
+    name: Option<String>,
+    force: bool,
+    keep_database: bool,
+    keep_files: bool,
+) -> ExitCode {
+    let w = match workspace_record(paths, name).await {
+        Ok(w) => w,
+        Err(code) => return code,
+    };
+    let label = w["name"].as_str().unwrap_or_default().to_string();
+    if !force {
+        print!("Delete the workspace {label}? Uncommitted changes in it are lost. [y/N] ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let mut answer = String::new();
+        let _ = std::io::stdin().read_line(&mut answer);
+        if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+            println!("Kept {label}");
+            return ExitCode::SUCCESS;
+        }
+    }
+    let params = json!({ "name": w["site"], "keepDatabase": keep_database, "keepFiles": keep_files });
+    match ipc::call_waiting(paths, "workspaces.delete", params, Duration::from_secs(600)).await {
+        Ok(done) => {
+            println!("Workspace {label} is deleted; its branch {} stays", w["branch"].as_str().unwrap_or_default());
+            print_notes(&done["notes"]);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+async fn processes_list(paths: &StokePaths, as_json: bool) -> ExitCode {
+    print_call(paths, "processes.list", Value::Null, as_json, |list| {
+        let sites = list["sites"].as_array().cloned().unwrap_or_default();
+        if sites.is_empty() {
+            println!("No processes yet. Add them on Stoke's Processes page.");
+        }
+        for site in sites {
+            for p in site["processes"].as_array().into_iter().flatten() {
+                let state = if p["running"] == true { "running" } else { "stopped" };
+                println!(
+                    "{}  {}  {state}  {}",
+                    site["site"].as_str().unwrap_or_default(),
+                    p["name"].as_str().unwrap_or_default(),
+                    p["command"].as_str().unwrap_or_default()
+                );
+            }
+        }
+    })
+    .await
+}
+
+/// Starts, stops or restarts a site's process, then says whether it runs.
+async fn process_call(paths: &StokePaths, method: &str, site: &str, name: &str) -> ExitCode {
+    if let Err(e) = ipc::call(paths, method, json!({ "site": site, "name": name })).await {
+        return fail(&message(e));
+    }
+    let list = ipc::call(paths, "processes.list", Value::Null).await.unwrap_or(Value::Null);
+    let running = list["sites"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["site"] == site)
+        .flat_map(|s| s["processes"].as_array().cloned().unwrap_or_default())
+        .any(|p| p["name"] == name && p["running"] == true);
+    println!("{site} {name} {}", if running { "runs" } else { "is stopped" });
+    ExitCode::SUCCESS
+}
+
+async fn services_list(paths: &StokePaths, as_json: bool) -> ExitCode {
+    match ipc::call(paths, "services.list", Value::Null).await {
+        Ok(list) if as_json => {
+            println!("{list}");
+            ExitCode::SUCCESS
+        }
+        Ok(list) => {
+            let rows = list.as_array().cloned().unwrap_or_default();
+            if rows.is_empty() {
+                println!("No services yet. Create one with: stoke services:create <type>");
+            }
+            for s in rows {
+                let state = if s["running"] == true { "running" } else { "stopped" };
+                let error = s["error"].as_str().map(|e| format!("  ({e})")).unwrap_or_default();
+                println!(
+                    "{}  {}  port {}  {state}{error}",
+                    s["id"].as_str().unwrap_or_default(),
+                    s["name"].as_str().unwrap_or_default(),
+                    s["port"]
+                );
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+async fn services_create(
+    paths: &StokePaths,
+    kind: &str,
+    name: Option<String>,
+    port: Option<u16>,
+    version: Option<String>,
+) -> ExitCode {
+    // Without a version: the first line the catalog lists for this kind (its recommended one).
+    let line = match version {
+        Some(v) => v,
+        None => match ipc::call(paths, "services.available", Value::Null).await {
+            Ok(all) => match all["builds"].as_array().into_iter().flatten().find(|b| b["kind"] == kind) {
+                Some(b) => b["line"].as_str().unwrap_or_default().to_string(),
+                None => return fail(&format!("This computer cannot run {kind} (see `stoke services:available`)")),
+            },
+            Err(e) => return fail(&message(e)),
+        },
+    };
+    let params = json!({ "kind": kind, "line": line, "port": port, "name": name });
+    match ipc::call(paths, "services.create", params).await {
+        Ok(s) => {
+            println!(
+                "Created {} ({}) on port {}. Start it with: stoke services:start {}",
+                s["id"].as_str().unwrap_or_default(),
+                s["name"].as_str().unwrap_or_default(),
+                s["port"],
+                s["id"].as_str().unwrap_or_default()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+async fn services_delete(paths: &StokePaths, id: &str, force: bool) -> ExitCode {
+    if !force {
+        let list = ipc::call(paths, "services.list", Value::Null).await.unwrap_or(Value::Null);
+        return match list.as_array().into_iter().flatten().find(|s| s["id"] == id) {
+            Some(s) => fail(&format!(
+                "This deletes {} and all its data. Run it again with --force.",
+                s["name"].as_str().unwrap_or(id)
+            )),
+            None => fail(&format!("No service named {id}")),
+        };
+    }
+    print_call(paths, "services.delete", json!({ "id": id }), false, |_| println!("{id} and its data are deleted"))
+        .await
+}
+
+/// Herd's names for what Stoke's web server covers: Caddy (in place of nginx) and the PHP pools.
+fn is_web_service(name: &str) -> bool {
+    matches!(name.to_lowercase().as_str(), "nginx" | "caddy" | "php" | "web" | "dnsmasq")
+}
+
+/// What to say for a command Stoke does not have: Herd's command groups name the feature that is
+/// still to come, so an old script fails with a reason instead of doing nothing.
+fn missing(command: &str) -> String {
+    if command == "services:clone" {
+        return "Stoke cannot clone services yet".into();
+    }
+    let group = command.split(':').next().unwrap_or_default();
+    let feature = match group {
+        "mail" => "mail catcher",
+        "db" => "database tools",
+        "debug" | "coverage" => "one-click Xdebug",
+        "log" | "logs" | "insights" => "log and insights viewer",
+        "share" | "fetch-share-url" => "site sharing",
+        "studio" => return "Stoke has no Studio, and none is planned".into(),
+        _ => return format!("Stoke has no `{command}` command (see `stoke --help`)"),
+    };
+    format!("Stoke has no {feature} yet")
+}
+
+/// A site name from a Herd-style domain argument: `Shop.test` and `shop` are both `shop`.
+fn domain(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    lower.strip_suffix(".test").map(str::to_string).unwrap_or(lower)
+}
+
+/// Lists the sites matching `keep`, each as `shape`; as JSON or one per line.
+async fn list_sites(
+    paths: &StokePaths,
+    as_json: bool,
+    keep: impl Fn(&Value) -> bool,
+    shape: impl Fn(&Value) -> Value,
+) -> ExitCode {
+    match ipc::call(paths, "sites.list", Value::Null).await {
+        Ok(list) => {
+            let rows: Vec<Value> =
+                list["sites"].as_array().into_iter().flatten().filter(|s| keep(s)).map(&shape).collect();
+            if as_json {
+                println!("{}", Value::from(rows));
+            } else {
+                for row in rows {
+                    let rest: Vec<String> = row
+                        .as_object()
+                        .into_iter()
+                        .flatten()
+                        .filter(|(k, _)| *k != "name")
+                        .map(|(_, v)| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()))
+                        .collect();
+                    println!("{}.test  {}", row["name"].as_str().unwrap_or_default(), rest.join("  "));
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+/// The site of `path` (default: the current folder) with its address and PHP.
+async fn site_info(paths: &StokePaths, path: Option<PathBuf>, as_json: bool) -> ExitCode {
+    let dir = folder(path);
+    let Some(site) = locate::site_for_dir(paths, &dir) else {
+        return fail(&format!("{} is not in a site", dir.display()));
+    };
+    // The version the site is set to, else the one it gets (the default).
+    let php = site.php.clone().or_else(|| locate::php_for_site(paths, &site.name).ok().flatten());
+    let url = site_url(&sites(paths).await, &site.name);
+    let mut info = serde_json::to_value(&site).unwrap_or(Value::Null);
+    info["url"] = json!(url);
+    info["php"] = json!(php);
+    if as_json {
+        println!("{info}");
+    } else {
+        let folder = site.path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
+        let php = php.map(|m| format!("PHP {m}")).unwrap_or_else(|| "no PHP installed".into());
+        println!("{}.test  {url}  {folder}  {php}", site.name);
+    }
+    ExitCode::SUCCESS
+}
+
+/// The PHP program a site (or the current folder) runs.
+fn which_php(paths: &StokePaths, site: Option<String>) -> ExitCode {
+    let minor = match site {
+        Some(name) => match locate::php_for_site(paths, &domain(&name)) {
+            Ok(minor) => minor,
+            Err(e) => return fail(&e.to_string()),
+        },
+        None => locate::php_for_dir(paths, &folder(None)),
+    };
+    let Some(minor) = minor else {
+        return fail("No PHP version is installed. Install one with: stoke php:install 8.4");
+    };
+    let program = match Os::current() {
+        Os::Windows => install_dir(paths, &minor).join("php.exe"),
+        Os::Macos => install_dir(paths, &minor).join("bin").join("php"),
+    };
+    println!("{}", program.display());
+    ExitCode::SUCCESS
+}
+
+/// The given site name, or the one the current folder would get.
+fn site_name(name: Option<String>) -> Result<String, ExitCode> {
+    if let Some(name) = name {
+        return Ok(domain(&name));
+    }
+    let cwd = folder(None);
+    let base = cwd.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    registry::name_from_folder(&base)
+        .ok_or_else(|| fail("This folder's name cannot be a site name; give one, e.g. `stoke link shop`"))
+}
+
+fn print_sites(value: &Value) {
+    for site in value["sites"].as_array().into_iter().flatten() {
+        let target = site["path"].as_str().or(site["upstream"].as_str()).unwrap_or_default();
+        let php = site["php"].as_str().map(|m| format!("  PHP {m}")).unwrap_or_default();
+        let problem = site["problem"].as_str().map(|p| format!("  ({p})")).unwrap_or_default();
+        println!(
+            "{}.test  {}  {target}{php}{problem}",
+            site["name"].as_str().unwrap_or_default(),
+            site["kind"].as_str().unwrap_or_default()
+        );
+    }
+}
+
+fn open_url(url: &str) -> ExitCode {
+    #[cfg(windows)]
+    let status = std::process::Command::new("cmd").args(["/C", "start", "", url]).status();
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(url).status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("Opened {url}");
+            ExitCode::SUCCESS
+        }
+        _ => fail(&format!("Could not open {url}")),
+    }
+}
+
+fn fail(message: &str) -> ExitCode {
+    eprintln!("{message}");
+    ExitCode::FAILURE
+}
+
+fn message(e: CoreError) -> String {
+    match e {
+        CoreError::NotRunning => "Stoke core is not running. Start the Stoke app.".into(),
+        CoreError::Rpc { message, .. } => message,
+        other => other.to_string(),
+    }
+}
+
+/// Calls `method`; prints the raw result with `--json`, else through `human`.
+async fn print_call(
+    paths: &StokePaths,
+    method: &str,
+    params: Value,
+    as_json: bool,
+    human: impl FnOnce(&Value),
+) -> ExitCode {
+    match ipc::call(paths, method, params).await {
+        Ok(value) if as_json => {
+            println!("{value}");
+            ExitCode::SUCCESS
+        }
+        Ok(value) => {
+            human(&value);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+fn print_node_list(value: &Value) {
+    let default = value["default"].as_str();
+    let rows = value["installed"].as_array().cloned().unwrap_or_default();
+    if rows.is_empty() {
+        println!("No Node version is installed. Install one with: stoke node:install 22");
+    }
+    for node in rows {
+        let version = node["version"].as_str().unwrap_or_default();
+        let mut line = format!("Node {version}");
+        if default == Some(version) {
+            line.push_str("  default");
+        }
+        if let Some(lts) = node["lts"].as_str() {
+            line.push_str(&format!("  LTS {lts}"));
+        }
+        println!("{line}");
+    }
+}
+
+fn print_node_available(value: &Value) {
+    for node in value.as_array().into_iter().flatten() {
+        let lts = node["lts"].as_str().map(|l| format!("LTS {l}")).unwrap_or_else(|| "current".into());
+        let installed = if node["installed"].as_bool() == Some(true) { "  installed" } else { "" };
+        println!("Node {:<9} {lts}{installed}", node["version"].as_str().unwrap_or_default());
+    }
+}
+
+/// The Node the current folder runs, and the file that asks for it (no core needed).
+fn node_which(paths: &StokePaths) -> ExitCode {
+    use stoke_core::node::{resolve, store};
+    let cwd = folder(None);
+    let found = match resolve::find_spec(&cwd).transpose() {
+        Ok(found) => found,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let wanted = found.as_ref().map(|f| (&f.spec, f.file.as_path()));
+    match resolve::resolve(&store::installed(paths), store::default_version(paths).as_deref(), wanted) {
+        Ok(choice) => {
+            let why = match &found {
+                Some(f) if choice.why != resolve::Why::Default => format!(
+                    "{} in {}",
+                    f.file.file_name().unwrap_or_default().to_string_lossy(),
+                    f.file.parent().unwrap_or(&cwd).display()
+                ),
+                _ => "default".into(),
+            };
+            println!("Node {} ({why})", choice.version);
+            ExitCode::SUCCESS
+        }
+        Err(e) => fail(&e.to_string()),
+    }
+}
+
+fn print_list(value: &Value) {
+    let default = value["default"].as_str();
+    for php in value["installed"].as_array().into_iter().flatten() {
+        let minor = php["minor"].as_str().unwrap_or_default();
+        let extensions: Vec<String> = php["extensions"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(name, on)| format!("{name} {}", if on.as_bool() == Some(true) { "on" } else { "off" }))
+            .collect();
+        let tag = if default == Some(minor) { "default" } else { "" };
+        println!("PHP {}  {tag:<7}  {}", php["version"].as_str().unwrap_or_default(), extensions.join(", "));
+    }
+}
+
+fn print_available(value: &Value) {
+    for b in value.as_array().into_iter().flatten() {
+        let installed = match (b["installedVersion"].as_str(), b["updateAvailable"].as_bool()) {
+            (Some(v), Some(true)) => format!("installed {v}, update available"),
+            (Some(v), _) => format!("installed {v}"),
+            (None, _) => String::new(),
+        };
+        let preview = if b["channel"] == "rc" { " (preview)" } else { "" };
+        println!(
+            "{:<5} {:<12} {installed}{preview}",
+            b["minor"].as_str().unwrap_or_default(),
+            b["version"].as_str().unwrap_or_default()
+        );
+    }
+}
+
+async fn install(paths: &StokePaths, minor: &str) -> ExitCode {
+    let id = match ipc::call(paths, "php.install", json!({ "minor": minor })).await {
+        Ok(v) => v["jobId"].as_u64().unwrap_or_default(),
+        Err(e) => return fail(&message(e)),
+    };
+    wait_for_job(paths, id, &format!("PHP {minor} is installed.")).await
+}
+
+async fn install_node(paths: &StokePaths, spec: &str) -> ExitCode {
+    // Up to three downloads (catalog, nodejs.org's index and checksums) come before the answer.
+    let (id, version, started) =
+        match ipc::call_waiting(paths, "node.install", json!({ "spec": spec }), Duration::from_secs(120)).await {
+            Ok(v) => {
+                (v["jobId"].as_u64().unwrap_or_default(), v["version"].as_str().unwrap_or_default().to_string(), v)
+            }
+            Err(e) => return fail(&message(e)),
+        };
+    if started["source"] == "nodejs.org" {
+        println!("Node {version} is not in Stoke's catalog; downloading it from nodejs.org.");
+    }
+    wait_for_job(paths, id, &format!("Node {version} is installed.")).await
+}
+
+/// Prints a job's progress until it ends, then `done` (or its error).
+async fn wait_for_job(paths: &StokePaths, id: u64, done: &str) -> ExitCode {
+    let mut last = String::new();
+    loop {
+        let job = match ipc::call(paths, "jobs.get", json!({ "id": id })).await {
+            Ok(job) => job,
+            Err(e) => return fail(&message(e)),
+        };
+        match job["state"].as_str() {
+            Some("done") => {
+                println!("{done}");
+                return ExitCode::SUCCESS;
+            }
+            Some("failed") => return fail(job["error"].as_str().unwrap_or("The install failed")),
+            _ => {
+                let line = format!(
+                    "{} ({:.0} %)",
+                    job["message"].as_str().unwrap_or_default(),
+                    job["progress"].as_f64().unwrap_or(0.0) * 100.0
+                );
+                if line != last {
+                    println!("{line}");
+                    last = line;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// The exit code to hand on: 0 to 255 pass through; a crash (negative on Windows, e.g. 0xC0000005),
+/// an out-of-range code or a signal (no code) is a failure, never a success.
+fn exit_code(code: Option<i32>) -> u8 {
+    match code {
+        Some(c @ 0..=255) => c as u8,
+        _ => 1,
+    }
+}
+
+/// Runs the default PHP directly (no core needed), passing the exit code through.
+/// The arguments as `stoke` would get them. The CLI is also installed as `php`, `composer`,
+/// `laravel` (run that with the project's PHP) and `herd` (Herd's commands are Stoke's).
+fn as_stoke(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let name = args
+        .first()
+        .and_then(|a| std::path::Path::new(a).file_stem().map(|s| s.to_string_lossy().to_lowercase()))
+        .unwrap_or_default();
+    if is_runner(&name) || name == "nvm" {
+        args.insert(1, name.into());
+    }
+    args
+}
+
+/// `stoke nvm <command> ...` (and the CLI started as `nvm`) as Stoke's own command, so habits
+/// from Herd's nvm keep working.
+fn nvm_as_stoke(args: Vec<std::ffi::OsString>) -> Result<Vec<std::ffi::OsString>, String> {
+    if args.get(1).and_then(|a| a.to_str()) != Some("nvm") {
+        return Ok(args);
+    }
+    let command = match args.get(2).and_then(|a| a.to_str()) {
+        Some("install") => "node:install",
+        Some("uninstall") => "node:uninstall",
+        Some("use") => "node:default",
+        Some("list" | "ls") => "node:list",
+        Some("current" | "which") => "node:which",
+        _ => return Err("Stoke's nvm knows install, uninstall, use, list, current and which".into()),
+    };
+    let rest = args.iter().skip(3).take(if command == "node:which" || command == "node:list" { 0 } else { 1 });
+    Ok([args[0].clone(), command.into()].into_iter().chain(rest.cloned()).collect())
+}
+
+/// The commands that run a program with every argument passed on as typed.
+fn is_runner(name: &str) -> bool {
+    matches!(name, "php" | "composer" | "laravel") || NODE_COMMANDS.contains(&name)
+}
+
+/// `node`, `npm`, `npx` or `corepack` with the Node the current folder asks for.
+fn run_node(paths: &StokePaths, command: &str, args: &[std::ffi::OsString]) -> ExitCode {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let launch = match stoke_core::node::launch::launch(paths, command, &cwd) {
+        Ok(launch) => launch,
+        Err(e) => return fail(&e.to_string()),
+    };
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(std::iter::once(launch.path_first.clone()).chain(std::env::split_paths(&path)))
+        .unwrap_or(path);
+    let mut child = std::process::Command::new(&launch.program);
+    child.args(&launch.args).args(args).env("PATH", path);
+    run_and_wait(child, &format!("Node {}", launch.version))
+}
+
+/// `php`, `composer` or `laravel` with the PHP of the project (or of a leading `--site=<name>`).
+fn run_named(paths: &StokePaths, command: &str, args: &[String]) -> ExitCode {
+    let (site, args) = split_site(args);
+    let script = match command {
+        "composer" => Some(paths.bin.join("composer.phar")),
+        "laravel" => Some(
+            paths.data.join("composer").join("vendor").join("laravel").join("installer").join("bin").join("laravel"),
+        ),
+        _ => None,
+    };
+    run_php(paths, site.as_deref(), script, args, None)
+}
+
+/// A leading `--site=<name>` or `--site <name>` (Herd's way to pick a site's PHP), and the rest.
+fn split_site(args: &[String]) -> (Option<String>, &[String]) {
+    match args {
+        [first, rest @ ..] if first.starts_with("--site=") => (Some(first["--site=".len()..].to_string()), rest),
+        [first, name, rest @ ..] if first == "--site" => (Some(name.clone()), rest),
+        _ => (None, args),
+    }
+}
+
+/// `php artisan tinker` in a site's folder, with that site's PHP.
+fn tinker(paths: &StokePaths, site: Option<String>) -> ExitCode {
+    let found = match &site {
+        Some(name) => registry::list(paths).into_iter().find(|s| s.name == name.trim_end_matches(".test")),
+        None => std::env::current_dir().ok().and_then(|cwd| locate::site_for_dir(paths, &cwd)),
+    };
+    let Some(folder) = found.as_ref().and_then(|s| s.path.clone()) else {
+        return fail("Run tinker inside a site's folder, or name one with --site");
+    };
+    let name = found.map(|s| s.name);
+    run_php(paths, name.as_deref(), Some(folder.join("artisan")), &["tinker".to_string()], Some(&folder))
+}
+
+fn run_php(
+    paths: &StokePaths,
+    site: Option<&str>,
+    script: Option<std::path::PathBuf>,
+    args: &[String],
+    cwd: Option<&std::path::Path>,
+) -> ExitCode {
+    let minor = match site {
+        Some(name) => {
+            let name = name.trim_end_matches(".test");
+            match locate::php_for_site(paths, name) {
+                Ok(minor) => minor,
+                Err(e) => return fail(&e.to_string()),
+            }
+        }
+        None => std::env::current_dir().ok().and_then(|cwd| locate::php_for_dir(paths, &cwd)),
+    };
+    let Some(minor) = minor.filter(|m| install_dir(paths, m).join(store::VERSION_FILE).is_file()) else {
+        return fail("No PHP version is installed. Install one with: stoke php:install 8.4");
+    };
+    let php = match Os::current() {
+        Os::Windows => install_dir(paths, &minor).join("php.exe"),
+        Os::Macos => install_dir(paths, &minor).join("bin").join("php"),
+    };
+    let ini = paths.config.join("php").join(&minor).join("php.ini");
+    let mut command = std::process::Command::new(php);
+    // PHPRC lets PHP processes this one starts find the same php.ini (see php/shims.rs).
+    command.arg("-c").arg(&ini).env("PHPRC", ini.parent().unwrap_or(&ini));
+    if let Some(script) = script {
+        command.arg(script);
+    }
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    command.args(args);
+    run_and_wait(command, &format!("PHP {minor}"))
+}
+
+/// Runs `command` in place of this one: its exit code is passed on.
+fn run_and_wait(mut command: std::process::Command, what: &str) -> ExitCode {
+    // On unix the CLI becomes the program: signals (Ctrl+C) and the exit status are its own.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let e = command.exec();
+        return fail(&format!("Could not start {what}: {e}"));
+    }
+    // On Windows Ctrl+C reaches every program in the console: this one lets the program decide
+    // and waits for it, so the prompt only returns once it has finished. A handler that swallows
+    // the event does this; `SetConsoleCtrlHandler(None, ..)` would also be inherited by the
+    // program, which then could not be stopped with Ctrl+C.
+    #[cfg(windows)]
+    {
+        unsafe extern "system" fn swallow(_: u32) -> i32 {
+            1
+        }
+        // SAFETY: registers a handler that does nothing but report the event as handled.
+        unsafe {
+            windows_sys::Win32::System::Console::SetConsoleCtrlHandler(Some(swallow), 1);
+        }
+    }
+    #[allow(unreachable_code)]
+    match command.status() {
+        Ok(status) => ExitCode::from(exit_code(status.code())),
+        Err(e) => fail(&format!("Could not start {what}: {e}")),
+    }
+}
+
+async fn status(paths: &StokePaths, as_json: bool) -> ExitCode {
+    match ipc::call(paths, "core.status", Value::Null).await {
+        Ok(status) if as_json => {
+            println!("{status}");
+            ExitCode::SUCCESS
+        }
+        Ok(status) => {
+            println!(
+                "Stoke core is running (v{}, pid {}, up {}s)",
+                status["version"].as_str().unwrap_or("?"),
+                status["pid"],
+                status["uptimeSecs"],
+            );
+            ExitCode::SUCCESS
+        }
+        Err(CoreError::NotRunning) if as_json => {
+            println!("{}", json!({ "running": false }));
+            ExitCode::FAILURE
+        }
+        Err(e) => fail(&message(e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_codes_pass_through_and_crashes_are_failures() {
+        assert_eq!(exit_code(Some(0)), 0);
+        assert_eq!(exit_code(Some(255)), 255);
+        // 0xC0000005 (access violation) as Windows reports it.
+        assert_eq!(exit_code(Some(-1073741819)), 1);
+        assert_eq!(exit_code(Some(256)), 1);
+        // Killed by a signal on Unix.
+        assert_eq!(exit_code(None), 1);
+    }
+}
