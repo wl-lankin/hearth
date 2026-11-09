@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use stoke_core::ipc::{self, CoreState, ServerHandle};
-use stoke_core::{paths, settings, CoreError, StokePaths};
+use stoke_core::{fromhearth, paths, settings, CoreError, StokePaths};
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
@@ -19,27 +19,41 @@ use tauri_plugin_dialog::DialogExt;
 struct Server(Mutex<Option<ServerHandle>>);
 
 pub fn run() {
-    let paths = match StokePaths::from_env().and_then(|p| p.ensure().map(|_| p)) {
+    let paths = match StokePaths::from_env() {
         Ok(paths) => paths,
         Err(e) => {
-            eprintln!("Stoke could not prepare its home folder: {e}");
+            eprintln!("Stoke could not find its home folder: {e}");
             std::process::exit(1);
         }
     };
+    // Stoke was called Hearth: its home moves over before anything else touches the new one. When
+    // the move cannot happen, Stoke says why and quits, rather than starting with an empty home.
+    let move_failed = fromhearth::legacy_home()
+        .and_then(|legacy| fromhearth::move_home(&legacy, &paths, &mut fromhearth::real::RealHost).err())
+        .map(|e| format!("Stoke could not move over from Hearth. {e}"));
+    if move_failed.is_none() {
+        if let Err(e) = paths.ensure() {
+            eprintln!("Stoke could not prepare its home folder: {e}");
+            std::process::exit(1);
+        }
+    }
     let first_run = !settings::exists(&paths);
     let default_home = startup::use_single_instance(std::env::var_os(paths::HOME_VAR).as_deref());
     // Only an installed copy registers itself at login and updates itself: never a dev build or a
     // custom (test) home.
     let installed = !cfg!(debug_assertions) && default_home;
-    // The `stoke` CLI (also as php, composer, herd) goes next to the shims in <home>/bin.
-    if let Some(app_dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
-        if let Err(e) = stoke_core::cli_install::install_cli(&paths, &app_dir) {
-            eprintln!("Stoke could not update its command line tools: {e}");
+    // Nothing is written into a home that could not be moved over (the dialog below says why).
+    if move_failed.is_none() {
+        // The `stoke` CLI (also as php, composer, herd) goes next to the shims in <home>/bin.
+        if let Some(app_dir) = std::env::current_exe().ok().and_then(|exe| exe.parent().map(Path::to_path_buf)) {
+            if let Err(e) = stoke_core::cli_install::install_cli(&paths, &app_dir) {
+                eprintln!("Stoke could not update its command line tools: {e}");
+            }
         }
-    }
-    // Shims from an older Stoke are rewritten in the current form (they forward to the CLI).
-    if let Err(e) = stoke_core::php::service::refresh_shims(&paths) {
-        eprintln!("Stoke could not update its php and composer commands: {e}");
+        // Shims from an older Stoke are rewritten in the current form (they forward to the CLI).
+        if let Err(e) = stoke_core::php::service::refresh_shims(&paths) {
+            eprintln!("Stoke could not update its php and composer commands: {e}");
+        }
     }
     let mut state = CoreState::new(paths);
     // The app runs the web server: sites and PHP changes are applied to it as they happen.
@@ -100,6 +114,10 @@ pub fn run() {
         })
         .setup(move |app| {
             let handle = app.handle().clone();
+            if let Some(message) = move_failed {
+                app.dialog().message(message).title("Stoke").show(move |_| handle.exit(1));
+                return Ok(());
+            }
             if let Err(e) = start_core(&handle) {
                 let message = match e {
                     CoreError::AlreadyRunning => "Stoke is already running.".to_string(),
@@ -131,6 +149,8 @@ pub fn run() {
             }
             updates::start(&handle);
             start_web(&handle);
+            // What is left of the move from Hearth (PATH, MCP entries, helper, Hearth's app).
+            fromhearth::api::finish_in_background(&state.paths);
             Ok(())
         })
         .run(tauri::generate_context!())

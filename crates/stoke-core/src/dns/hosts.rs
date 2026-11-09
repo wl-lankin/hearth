@@ -41,11 +41,15 @@ fn is_stoke_line(line: &[u8]) -> bool {
 /// marker is missing ends before the first line Stoke would not have written, so nothing of
 /// anyone else's is ever removed.
 fn block(hosts: &[u8]) -> Option<(usize, usize)> {
+    block_between(hosts, START, END)
+}
+
+fn block_between(hosts: &[u8], start: &str, end: &str) -> Option<(usize, usize)> {
     let all = lines(hosts);
-    let first = all.iter().position(|&(s, e)| is_marker(&hosts[s..e], START))?;
+    let first = all.iter().position(|&(s, e)| is_marker(&hosts[s..e], start))?;
     let mut last = all[first].1;
     for &(s, e) in &all[first + 1..] {
-        if is_marker(&hosts[s..e], END) {
+        if is_marker(&hosts[s..e], end) {
             return Some((all[first].0, e));
         }
         if !is_stoke_line(&hosts[s..e]) {
@@ -58,6 +62,15 @@ fn block(hosts: &[u8]) -> Option<(usize, usize)> {
 
 /// `hosts` with Stoke's block holding exactly `names` (removed when `names` is empty).
 pub fn apply_block(hosts: &[u8], names: &BTreeSet<String>) -> Vec<u8> {
+    // The block Stoke wrote under its old name, Hearth, goes: this one takes its place.
+    let without_legacy;
+    let hosts = match block_between(hosts, crate::fromhearth::LEGACY_HOSTS_START, crate::fromhearth::LEGACY_HOSTS_END) {
+        Some((start, end)) => {
+            without_legacy = [&hosts[..start], &hosts[end..]].concat();
+            &without_legacy[..]
+        }
+        None => hosts,
+    };
     // The file's own style (Windows reads LF lines too).
     let eol: &[u8] = if hosts.windows(2).any(|w| w == b"\r\n") { b"\r\n" } else { b"\n" };
     let mut text = Vec::new();
@@ -103,6 +116,34 @@ pub fn names_in_block(hosts: &[u8]) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hearths_block_is_replaced_by_stokes() {
+        let hosts = b"127.0.0.1 localhost
+# hearth-start
+127.0.0.1 a.test
+# hearth-end
+::1 x
+";
+        let names: BTreeSet<String> = ["b.test".to_string()].into();
+        let out = String::from_utf8(apply_block(hosts, &names)).unwrap();
+        assert_eq!(
+            out,
+            "127.0.0.1 localhost
+::1 x
+# stoke-start
+127.0.0.1 b.test
+# stoke-end
+"
+        );
+        let cleared = String::from_utf8(apply_block(hosts, &BTreeSet::new())).unwrap();
+        assert_eq!(
+            cleared,
+            "127.0.0.1 localhost
+::1 x
+"
+        );
+    }
 
     fn names(list: &[&str]) -> BTreeSet<String> {
         list.iter().map(|s| s.to_string()).collect()

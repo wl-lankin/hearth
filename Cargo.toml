@@ -3,7 +3,7 @@ members = ["crates/stoke-core", "crates/stoke-cli", "crates/stoke-helper", "src-
 resolver = "2"
 
 [workspace.package]
-version = "1.0.5"
+version = "2.0.0"
 edition = "2021"
 license = "MIT"
 authors = ["Wolfgang Linz"]

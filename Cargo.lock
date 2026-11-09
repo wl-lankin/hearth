@@ -4358,7 +4358,7 @@ checksum = "ff7589a1859b09232522bb9edf076ca7fcf14ded96685d3fa629db73023ffbb7"
 
 [[package]]
 name = "stoke-app"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4376,7 +4376,7 @@ dependencies = [
 
 [[package]]
 name = "stoke-cli"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -4390,7 +4390,7 @@ dependencies = [
 
 [[package]]
 name = "stoke-core"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "base64 0.22.1",
  "dirs 6.0.0",
@@ -4423,7 +4423,7 @@ dependencies = [
 
 [[package]]
 name = "stoke-helper"
-version = "1.0.5"
+version = "2.0.0"
 dependencies = [
  "serde_json",
  "stoke-core",

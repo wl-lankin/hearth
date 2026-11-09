@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0
+
+Hearth is now called **Stoke**: the old name sounded too much like Herd.
+
+- On its first start, Stoke moves Hearth over by itself: it stops Hearth, moves `~/.config/hearth` to `~/.config/stoke` with every PHP and Node version, service, site, setting and the trusted certificate authority, and leaves a link at the old path so tools that still point there keep working
+- The terminal PATH, Claude's and Cursor's MCP entries, the .test helper (Windows asks for permission once) and the "Start at login" entry move along, and Hearth's app is uninstalled; Home shows what is left if a step needs another try
+- The command line tool is now `stoke` (the `herd`, `php`, `composer` and `laravel` commands stay as they were)
+
 ## 1.0.5
 
 - The PHP page shows whether the Laravel installer is installed and which version, also after a restart; when it is there, the button updates it instead of installing it again

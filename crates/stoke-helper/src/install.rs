@@ -52,12 +52,42 @@ fn copy_program(source: &Path, target: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Takes out the helper of Hearth (Stoke's old name): its service, and its folder once what it
+/// recorded about the machine environment (for undoing the move from Herd) is Stoke's.
+fn retire_hearth(manager: &ServiceManager) -> Result<(), String> {
+    let access = ServiceAccess::QUERY_STATUS | ServiceAccess::STOP | ServiceAccess::DELETE;
+    if let Ok(service) = manager.open_service(stoke_core::fromhearth::LEGACY_SERVICE, access) {
+        stop(&service)?;
+        service.delete().map_err(|e| format!("Could not remove Hearth's helper: {e}"))?;
+    }
+    let old = crate::folders::program_files().join("Hearth");
+    if !old.exists() {
+        return Ok(());
+    }
+    let (record, ours) = (old.join("machine-env.json"), target().with_file_name("machine-env.json"));
+    if record.is_file() && !ours.exists() {
+        if let Some(dir) = ours.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::copy(&record, &ours).map_err(|e| format!("{}: {e}", ours.display()))?;
+    }
+    // The stopped service's process lets go of its program a moment later.
+    for _ in 0..20 {
+        if std::fs::remove_dir_all(&old).is_ok() || !old.exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Ok(())
+}
+
 pub fn install() -> Result<(), String> {
     let manager = ServiceManager::local_computer(
         None::<&str>,
         ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
     )
     .map_err(|e| format!("Could not open the service manager: {e}"))?;
+    retire_hearth(&manager)?;
     let target = target();
     let info = ServiceInfo {
         name: NAME.into(),

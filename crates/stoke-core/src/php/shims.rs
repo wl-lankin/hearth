@@ -145,8 +145,9 @@ pub fn write_shims(
         if shims.iter().any(|(n, _)| *n == name) || !entry.path().is_file() {
             continue;
         }
-        let ours =
-            std::fs::read_to_string(entry.path()).is_ok_and(|text| text.lines().take(3).any(|l| l.contains(MARKER)));
+        let ours = std::fs::read_to_string(entry.path()).is_ok_and(|text| {
+            text.lines().take(3).any(|l| l.contains(MARKER) || l.contains(crate::fromhearth::LEGACY_SHIM_MARKER))
+        });
         if ours {
             let _ = std::fs::remove_file(entry.path());
         }

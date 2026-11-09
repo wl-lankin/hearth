@@ -947,6 +947,21 @@ const demoMoveCheck: MoveCheck = {
   accepted: [],
 };
 
+/** The move from Hearth (Stoke's old name): done, steps still open, and why one failed. */
+export interface FromHearth {
+  moved: boolean;
+  pending?: boolean;
+  running?: boolean;
+  /** Step ("path", "login", "mcp", "helper", "app") to its last error. */
+  errors?: Record<string, string>;
+  seen?: boolean;
+}
+export const fromHearthStatus = (): Promise<FromHearth> =>
+  demo ? Promise.resolve({ moved: false }) : core('fromhearth.status');
+export const fromHearthRetry = (): Promise<FromHearth> =>
+  demo ? Promise.resolve({ moved: true, pending: false, errors: {}, seen: false }) : core('fromhearth.retry');
+export const fromHearthSeen = (): Promise<FromHearth> =>
+  demo ? Promise.resolve({ moved: true, pending: false, errors: {}, seen: true }) : core('fromhearth.seen');
 export const moveoverState = (): Promise<MoveStatus> =>
   demo ? Promise.resolve({ herd: true, moved: false, uninstalled: false }) : core('moveover.state');
 export const moveoverScan = (): Promise<MoveScan> =>

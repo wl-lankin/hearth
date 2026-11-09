@@ -8,6 +8,7 @@ pub mod dns;
 pub mod dotenv;
 pub mod env;
 pub mod error;
+pub mod fromhearth;
 pub mod herd;
 pub mod insights;
 pub mod ipc;
