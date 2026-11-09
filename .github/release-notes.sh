@@ -18,6 +18,6 @@ if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
   notes=$(git tag -l --format='%(contents)' "$tag" 2>/dev/null || true)
 fi
 if [ -z "$(printf '%s' "$notes" | tr -d '[:space:]')" ]; then
-  notes="Hearth $version"
+  notes="Stoke $version"
 fi
 printf '%s\n' "$notes"

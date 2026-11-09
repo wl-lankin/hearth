@@ -43,7 +43,7 @@
     let stop: (() => void) | undefined;
     let cancelled = false;
     import('@tauri-apps/api/event').then(({ listen }) =>
-      listen<{ view: string | null; tab: string | null }>('hearth://navigate', ({ payload }) => {
+      listen<{ view: string | null; tab: string | null }>('stoke://navigate', ({ payload }) => {
         const target = resolveView(payload.view);
         navigate(target.view, { tab: payload.tab ?? target.tab ?? undefined });
       }).then((unlisten) => {

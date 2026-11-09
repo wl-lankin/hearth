@@ -126,7 +126,7 @@
             <span>Command</span>
             <input class="mono" bind:value={store.form.command} placeholder="npm run dev" autocomplete="off" spellcheck="false" />
           </label>
-          <label class="check"><input type="checkbox" bind:checked={store.form.autostart} /> Start with Hearth</label>
+          <label class="check"><input type="checkbox" bind:checked={store.form.autostart} /> Start with Stoke</label>
           {#if store.formError}<p class="error small">{store.formError}</p>{/if}
           <div class="buttons">
             <button type="button" onclick={() => (adding = false)}>Cancel</button>
@@ -158,7 +158,7 @@
           <code>{current.command}</code>
           {#if current.pid}<span>PID {current.pid}</span>{/if}
           {#if current.restarts}<span>{current.restarts} {current.restarts === 1 ? 'restart' : 'restarts'}</span>{/if}
-          {#if current.autostart}<span>starts with Hearth</span>{/if}
+          {#if current.autostart}<span>starts with Stoke</span>{/if}
         </p>
         {#if current.lastError && !current.running}<p class="error small">{current.lastError}</p>{/if}
       </header>

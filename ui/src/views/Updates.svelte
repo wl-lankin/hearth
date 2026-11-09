@@ -22,7 +22,7 @@
   <h2>Updates</h2>
   <div class="row">
     <div class="status">
-      <span>Version {__HEARTH_VERSION__}</span>
+      <span>Version {__STOKE_VERSION__}</span>
       <span class="line" class:error={state.phase === 'error'} aria-live="polite">{describeUpdate(state)}</span>
     </div>
     {#if state.phase === 'ready'}

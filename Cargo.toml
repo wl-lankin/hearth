@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/hearth-core", "crates/hearth-cli", "crates/hearth-helper", "src-tauri"]
+members = ["crates/stoke-core", "crates/stoke-cli", "crates/stoke-helper", "src-tauri"]
 resolver = "2"
 
 [workspace.package]

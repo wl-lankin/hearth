@@ -1,22 +1,22 @@
 [package]
-name = "hearth-app"
-description = "Hearth - a local PHP development environment."
-repository = "https://github.com/wl-lankin/hearth"
+name = "stoke-app"
+description = "Stoke - a local PHP development environment."
+repository = "https://github.com/wl-lankin/stoke"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
 
 [lib]
-name = "hearth_app_lib"
+name = "stoke_app_lib"
 crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-hearth-core = { path = "../crates/hearth-core" }
-hearth-helper = { path = "../crates/hearth-helper" }
+stoke-core = { path = "../crates/stoke-core" }
+stoke-helper = { path = "../crates/stoke-helper" }
 tauri = { version = "2", features = ["macos-private-api", "tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"

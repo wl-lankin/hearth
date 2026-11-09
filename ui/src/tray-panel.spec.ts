@@ -105,12 +105,12 @@ test('a downloaded update offers the restart; Open, Quit and Esc reach the app',
   const { panel, source, actions, text, button } = await render({
     updateState: async () => ({ phase: 'ready', version: '0.2.0' }) as Awaited<ReturnType<typeof api.updateState>>,
   });
-  expect(text()).toContain('Hearth 0.2.0 is ready');
+  expect(text()).toContain('Stoke 0.2.0 is ready');
   button('Restart to update').click();
   expect(source.installUpdateNow).toHaveBeenCalled();
-  button('Open Hearth').click();
+  button('Open Stoke').click();
   expect(actions.open).toHaveBeenCalledWith();
-  button('Quit Hearth').click();
+  button('Quit Stoke').click();
   expect(actions.quit).toHaveBeenCalled();
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   expect(actions.hide).toHaveBeenCalled();
@@ -118,11 +118,11 @@ test('a downloaded update offers the restart; Open, Quit and Esc reach the app',
 });
 
 test('without a core the panel says so and nothing breaks', async () => {
-  const down = () => Promise.reject(new Error('Hearth core is not running'));
+  const down = () => Promise.reject(new Error('Stoke core is not running'));
   const { panel, text } = await render({
     phpList: down, servicesList: down, sitesList: down, webStatus: down, updateState: down,
   });
-  expect(text()).toContain('Hearth core is not running');
+  expect(text()).toContain('Stoke core is not running');
   expect(text()).not.toContain('Restart to update');
   unmount(panel);
 });

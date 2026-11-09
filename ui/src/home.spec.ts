@@ -30,10 +30,10 @@ test('Home greets and shows sites, running services and the default PHP', async 
 });
 
 test('without an answer from the core there is no welcome, and nothing breaks', async () => {
-  const failing = { ...api, sitesList: () => Promise.reject(new Error('Hearth core is not running')) };
+  const failing = { ...api, sitesList: () => Promise.reject(new Error('Stoke core is not running')) };
   const { target, page } = render(failing);
   await settle();
-  expect(target.textContent).not.toContain('Welcome to Hearth');
+  expect(target.textContent).not.toContain('Welcome to Stoke');
   expect(target.textContent).toContain('Core');
   unmount(page);
 });
@@ -42,7 +42,7 @@ test('with no sites yet Home welcomes and Get started opens the link form', asyn
   const empty = { ...api, sitesList: async () => ({ ...(await api.sitesList()), sites: [] }) };
   const { target, page, onnavigate } = render(empty);
   await settle();
-  expect(target.textContent).toContain('Welcome to Hearth');
+  expect(target.textContent).toContain('Welcome to Stoke');
   [...target.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Get started')!.click();
   expect(onnavigate).toHaveBeenCalledWith('sites', { link: true });
   unmount(page);

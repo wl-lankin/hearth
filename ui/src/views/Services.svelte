@@ -116,7 +116,7 @@
         {:else}
           <button class="primary" onclick={() => store.start(s.id)} disabled={store.busy[s.id]}>Start</button>
         {/if}
-        <button class="toggle" class:on={s.autostart} aria-pressed={s.autostart} title="Start with Hearth" onclick={() => store.setAutostart(s.id, !s.autostart)}>Autostart</button>
+        <button class="toggle" class:on={s.autostart} aria-pressed={s.autostart} title="Start with Stoke" onclick={() => store.setAutostart(s.id, !s.autostart)}>Autostart</button>
         <button onclick={() => copyEnv(s.id)}>{copied === s.id ? 'Copied' : 'Copy .env'}</button>
         <button onclick={() => showLog(s.id)} aria-expanded={logsFor === s.id}>Log</button>
         <button onclick={() => store.askDelete(s.id)}>Delete</button>

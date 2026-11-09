@@ -1,4 +1,4 @@
-/** Hearth's pages and how the menu groups them. */
+/** Stoke's pages and how the menu groups them. */
 
 export type View =
   | 'home'

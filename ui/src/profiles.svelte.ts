@@ -61,7 +61,7 @@ export function createProfilesStore(api: ProfilesApi) {
     },
     /** Why there is nothing to list, when no PHP has SPX. */
     get unavailable() {
-      return status && !status.available ? "Profiling needs SPX, which Hearth's macOS PHP builds include. Windows builds have no SPX." : null;
+      return status && !status.available ? "Profiling needs SPX, which Stoke's macOS PHP builds include. Windows builds have no SPX." : null;
     },
     get error() {
       return error;

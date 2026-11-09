@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Hearth",
+  "productName": "Stoke",
   "version": "1.0.5",
-  "identifier": "de.wolfganglinz.hearth",
+  "identifier": "de.wolfganglinz.stoke",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1440",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Hearth",
+        "title": "Stoke",
         "width": 1100,
         "height": 720,
         "minWidth": 760,
@@ -27,7 +27,7 @@
       {
         "label": "panel",
         "url": "panel.html",
-        "title": "Hearth",
+        "title": "Stoke",
         "width": 300,
         "height": 420,
         "visible": false,
@@ -73,7 +73,7 @@
     "homepage": "https://wolfgang-linz.de",
     "category": "DeveloperTool",
     "shortDescription": "A local PHP development environment.",
-    "longDescription": "Hearth runs PHP sites on .test domains with HTTPS, databases and other services, a mail catcher, dumps and logs, from one tray app.",
+    "longDescription": "Stoke runs PHP sites on .test domains with HTTPS, databases and other services, a mail catcher, dumps and logs, from one tray app.",
     "license": "MIT",
     "windows": {
       "nsis": {
@@ -90,7 +90,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM3NDAwMzNFRjZCQkY4MkEKUldRcStMdjJQZ05BeHc0K3VOZ1l6ZGpOWmdMWTRQb200UnFJZzJiWENjMUJMclNQR1FkemhaWGkK",
       "endpoints": [
-        "https://github.com/wl-lankin/hearth/releases/latest/download/latest.json"
+        "https://github.com/wl-lankin/stoke/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

@@ -79,7 +79,7 @@
   <div class="welcome">
     <EmptyState
       art={art.welcome}
-      title="Welcome to Hearth"
+      title="Welcome to Stoke"
       line="Your sites, services and tools, warm and ready"
       action={{ label: 'Get started', onclick: () => onnavigate('sites', { link: true }) }}
     />

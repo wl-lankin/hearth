@@ -1,6 +1,6 @@
 /** Helpers of the tray panel. */
 
-/** A site's address, as Hearth serves it: HTTPS when secured, the port only when it is not the default. */
+/** A site's address, as Stoke serves it: HTTPS when secured, the port only when it is not the default. */
 export function siteUrl(site: { name: string; secured: boolean }, httpPort: number, httpsPort: number): string {
   const [scheme, port, standard] = site.secured ? ['https', httpsPort, 443] : ['http', httpPort, 80];
   return `${scheme}://${site.name}.test${port === standard ? '' : `:${port}`}`;

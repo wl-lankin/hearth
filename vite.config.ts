@@ -7,7 +7,7 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 
 export default defineConfig({
   root: 'ui',
-  define: { __HEARTH_VERSION__: JSON.stringify(pkg.version) },
+  define: { __STOKE_VERSION__: JSON.stringify(pkg.version) },
   plugins: [svelte()],
   clearScreen: false,
   server: { port: 1440, strictPort: true },

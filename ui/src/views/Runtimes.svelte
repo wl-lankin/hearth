@@ -3,7 +3,7 @@
   import NodePage from './Node.svelte';
   import Php from './Php.svelte';
 
-  /** PHP and Node, the languages Hearth runs. */
+  /** PHP and Node, the languages Stoke runs. */
   let { tab = 'php' }: { tab?: 'php' | 'node' } = $props();
   let active = $derived<string>(tab);
 </script>

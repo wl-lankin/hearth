@@ -28,7 +28,7 @@ export function rowsOf(check: MoveCheck): SiteCheck[] {
   const node: SiteCheck = {
     host: 'node',
     scheme: 'node',
-    verdict: check.node.fromHearth ? { kind: 'same' } : { kind: 'changed', detail: "still Herd's Node" },
+    verdict: check.node.fromStoke ? { kind: 'same' } : { kind: 'changed', detail: "still Herd's Node" },
   };
   return [...check.sites, ...services, node];
 }

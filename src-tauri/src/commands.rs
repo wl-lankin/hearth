@@ -1,6 +1,6 @@
-use hearth_core::ipc::{self, CoreState};
-use hearth_core::{settings, Settings};
 use serde_json::{json, Value};
+use stoke_core::ipc::{self, CoreState};
+use stoke_core::{settings, Settings};
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -47,7 +47,7 @@ pub fn settings_set(app: AppHandle, state: State<'_, CoreState>, settings: Setti
 /// The core methods for the UI, answered in-process by the same code the CLI reaches over IPC.
 #[tauri::command]
 pub async fn core_call(state: State<'_, CoreState>, method: String, params: Value) -> Result<Value, String> {
-    hearth_core::ipc::handle(state.inner(), &method, &params).await.map_err(|e| e.message)
+    stoke_core::ipc::handle(state.inner(), &method, &params).await.map_err(|e| e.message)
 }
 
 /// Opens a site in the default browser. Only http(s) URLs, so the UI cannot start other programs.
@@ -83,11 +83,11 @@ pub fn app_open(app: AppHandle, view: Option<String>, tab: Option<String>) {
     crate::panel::hide(&app);
     crate::window::show(&app);
     if view.is_some() {
-        let _ = app.emit_to(crate::window::MAIN, "hearth://navigate", json!({ "view": view, "tab": tab }));
+        let _ = app.emit_to(crate::window::MAIN, "stoke://navigate", json!({ "view": view, "tab": tab }));
     }
 }
 
-/// Quits Hearth completely, as the tray's Quit always did.
+/// Quits Stoke completely, as the tray's Quit always did.
 #[tauri::command]
 pub fn app_quit(app: AppHandle) {
     crate::quit(&app);

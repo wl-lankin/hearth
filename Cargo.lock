@@ -1796,83 +1796,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hearth-app"
-version = "1.0.5"
-dependencies = [
- "hearth-core",
- "hearth-helper",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-dialog",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tokio",
-]
-
-[[package]]
-name = "hearth-cli"
-version = "1.0.5"
-dependencies = [
- "assert_cmd",
- "clap",
- "hearth-core",
- "predicates",
- "serde_json",
- "tempfile",
- "tokio",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "hearth-core"
-version = "1.0.5"
-dependencies = [
- "base64 0.22.1",
- "dirs 6.0.0",
- "flate2",
- "futures-util",
- "interprocess",
- "junction",
- "lettre",
- "libc",
- "mail-parser",
- "minisign",
- "minisign-verify 0.2.5",
- "rcgen",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "sha2",
- "tar",
- "tempfile",
- "thiserror 2.0.21",
- "time",
- "tiny_http",
- "tokio",
- "whoami",
- "widestring",
- "windows-sys 0.61.2",
- "x509-parser",
- "zip 2.6.1",
-]
-
-[[package]]
-name = "hearth-helper"
-version = "1.0.5"
-dependencies = [
- "hearth-core",
- "serde_json",
- "tempfile",
- "widestring",
- "windows-service",
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4432,6 +4355,83 @@ name = "static_vcruntime"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff7589a1859b09232522bb9edf076ca7fcf14ded96685d3fa629db73023ffbb7"
+
+[[package]]
+name = "stoke-app"
+version = "1.0.5"
+dependencies = [
+ "serde",
+ "serde_json",
+ "stoke-core",
+ "stoke-helper",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-dialog",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tokio",
+]
+
+[[package]]
+name = "stoke-cli"
+version = "1.0.5"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "predicates",
+ "serde_json",
+ "stoke-core",
+ "tempfile",
+ "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "stoke-core"
+version = "1.0.5"
+dependencies = [
+ "base64 0.22.1",
+ "dirs 6.0.0",
+ "flate2",
+ "futures-util",
+ "interprocess",
+ "junction",
+ "lettre",
+ "libc",
+ "mail-parser",
+ "minisign",
+ "minisign-verify 0.2.5",
+ "rcgen",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tiny_http",
+ "tokio",
+ "whoami",
+ "widestring",
+ "windows-sys 0.61.2",
+ "x509-parser",
+ "zip 2.6.1",
+]
+
+[[package]]
+name = "stoke-helper"
+version = "1.0.5"
+dependencies = [
+ "serde_json",
+ "stoke-core",
+ "tempfile",
+ "widestring",
+ "windows-service",
+ "windows-sys 0.61.2",
+]
 
 [[package]]
 name = "string_cache"

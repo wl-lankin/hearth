@@ -149,12 +149,12 @@ describe('Node store', () => {
     const failing = createNodeStore(
       fakeApi({
         nodeInstall: async () => {
-          throw new Error("Neither Hearth's catalog nor nodejs.org has Node 9.9.9 for this computer");
+          throw new Error("Neither Stoke's catalog nor nodejs.org has Node 9.9.9 for this computer");
         },
       }),
     );
     await failing.installSpec('9.9.9');
-    expect(failing.typed.error).toBe("Neither Hearth's catalog nor nodejs.org has Node 9.9.9 for this computer");
+    expect(failing.typed.error).toBe("Neither Stoke's catalog nor nodejs.org has Node 9.9.9 for this computer");
     await failing.installSpec('   ');
     expect(failing.typed.error).toBe('Name a Node version, like 20.11.1 or lts/hydrogen');
   });

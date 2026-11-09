@@ -32,7 +32,7 @@ test('the platform comes from the user agent', () => {
   expect(platformOf('Mozilla/5.0 (X11; Linux x86_64)')).toBe('other');
 });
 
-test('Windows gets Hearth window buttons in a draggable strip; macOS keeps its own', () => {
+test('Windows gets Stoke window buttons in a draggable strip; macOS keeps its own', () => {
   const target = document.createElement('div');
   document.body.append(target);
   const win = mount(TitleBar, { target, props: { platform: 'windows' } });

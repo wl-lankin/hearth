@@ -10,7 +10,7 @@ export function describeUpdate(state: UpdateState): string {
     case 'checking':
       return 'Checking for updates';
     case 'current':
-      return 'Hearth is up to date';
+      return 'Stoke is up to date';
     case 'downloading':
       return `Downloading ${state.version} (${Math.round(state.progress * 100)} %)`;
     case 'ready':

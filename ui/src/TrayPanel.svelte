@@ -150,7 +150,7 @@
   const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const status = $derived(
     coreDown
-      ? { kind: 'off', text: 'Hearth core is not running' }
+      ? { kind: 'off', text: 'Stoke core is not running' }
       : webError
         ? { kind: 'bad', text: webError }
         : webRunning
@@ -182,7 +182,7 @@
     <header>
       <img src={logo} alt="" width="26" height="26" />
       <div>
-        <div class="title">Hearth</div>
+        <div class="title">Stoke</div>
         <div class="status"><span class="dot {status.kind}"></span>{status.text}</div>
       </div>
     </header>
@@ -238,14 +238,14 @@
 
     {#if update.phase === 'ready'}
       <div class="update">
-        <span class="grow">Hearth {update.version} is ready</span>
+        <span class="grow">Stoke {update.version} is ready</span>
         <button class="primary small" onclick={() => source.installUpdateNow()}>Restart to update</button>
       </div>
     {/if}
 
     <footer>
-      <button onclick={() => actions.open()}>Open Hearth</button>
-      <button onclick={() => actions.quit()}>Quit Hearth</button>
+      <button onclick={() => actions.open()}>Open Stoke</button>
+      <button onclick={() => actions.quit()}>Quit Stoke</button>
     </footer>
   </div>
 </div>

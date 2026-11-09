@@ -93,7 +93,7 @@
   </section>
 {:else if store.step === 'check' && store.check}
   {@const check = store.check}
-  <p class="lead">Every site, asked again through Hearth and compared with how it answered under Herd.</p>
+  <p class="lead">Every site, asked again through Stoke and compared with how it answered under Herd.</p>
   <section class="card glass">
     <h2>Sites</h2>
     {#each check.sites as site (keyOf(site))}
@@ -116,7 +116,7 @@
       <div class="item">
         <span class="what">{label(row)}</span>
         <span class="verdict {row.verdict.kind}" class:accepted>
-          {#if row.scheme === 'service'}{row.verdict.kind === 'same' ? 'Running' : 'Not running'}{:else}{row.verdict.kind === 'same' ? "Hearth's Node" : "Still Herd's Node"}{/if}
+          {#if row.scheme === 'service'}{row.verdict.kind === 'same' ? 'Running' : 'Not running'}{:else}{row.verdict.kind === 'same' ? "Stoke's Node" : "Still Herd's Node"}{/if}
         </span>
         {#if isOpen(check, row)}
           <button disabled={store.busy} onclick={() => store.accept(keyOf(row))}>Accept</button>
@@ -132,15 +132,15 @@
 {:else if store.step === 'uninstalling'}
   <section class="card glass">
     <h2>Herd's uninstaller is running</h2>
-    <p class="muted">Windows may ask for permission. Hearth checks every site again afterwards.</p>
+    <p class="muted">Windows may ask for permission. Stoke checks every site again afterwards.</p>
   </section>
 {:else if store.step === 'done'}
   <section class="card glass">
     <h2>Herd is gone</h2>
-    <p>Everything runs on Hearth now. One step left: Claude updates your CLAUDE.md and skills to Hearth's paths in a session.</p>
+    <p>Everything runs on Stoke now. One step left: Claude updates your CLAUDE.md and skills to Stoke's paths in a session.</p>
   </section>
   {#if store.trustError}
-    <p class="error glass" role="alert">Hearth could not trust its certificate authority again: {store.trustError}</p>
+    <p class="error glass" role="alert">Stoke could not trust its certificate authority again: {store.trustError}</p>
   {/if}
   {#if open.length > 0}
     <section class="card glass">

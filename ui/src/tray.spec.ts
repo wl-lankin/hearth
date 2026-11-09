@@ -1,7 +1,7 @@
 import { expect, test } from 'vitest';
 import { shownSites, siteUrl } from './tray';
 
-test('a site opens with the scheme and port Hearth serves it on', () => {
+test('a site opens with the scheme and port Stoke serves it on', () => {
   expect(siteUrl({ name: 'blog', secured: false }, 80, 443)).toBe('http://blog.test');
   expect(siteUrl({ name: 'shop', secured: true }, 8080, 8443)).toBe('https://shop.test:8443');
   expect(siteUrl({ name: 'shop', secured: false }, 8080, 8443)).toBe('http://shop.test:8080');

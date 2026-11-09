@@ -7,9 +7,9 @@ use crate::{panel, window};
 const TRAY: &str = "main";
 
 /// The tray icon: a left click shows or hides the main window, a right click opens the panel with
-/// the quick actions (it replaces the system menu, which cannot take Hearth's look).
+/// the quick actions (it replaces the system menu, which cannot take Stoke's look).
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
-    let mut builder = TrayIconBuilder::with_id(TRAY).tooltip("Hearth").on_tray_icon_event(|tray, event| {
+    let mut builder = TrayIconBuilder::with_id(TRAY).tooltip("Stoke").on_tray_icon_event(|tray, event| {
         if let TrayIconEvent::Click { button, button_state: MouseButtonState::Up, rect, .. } = event {
             match button {
                 MouseButton::Left => window::toggle(tray.app_handle()),

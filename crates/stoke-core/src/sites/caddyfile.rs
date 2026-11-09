@@ -1,0 +1,148 @@
+//! The Caddyfile for all sites. Stoke owns it completely: admin API off, no automatic HTTPS (M3
+//! adds Stoke's own certificates), one block per site on the HTTP port.
+
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+
+/// How one site is served.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Route {
+    Php {
+        docroot: PathBuf,
+        minor: String,
+        /// Pass Xdebug's trigger with every request of this site.
+        xdebug: bool,
+        /// SPX's key: profile every request of this site.
+        spx: Option<String>,
+        /// SPX's key when the site's PHP has SPX on: given to SPX's report pages.
+        spx_ui: Option<String>,
+    },
+    Proxy {
+        upstream: String,
+    },
+    /// Listed as a comment with the reason (folder missing, no index file, ...).
+    Skip {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteRoute {
+    pub name: String,
+    pub target: Route,
+    /// Certificate and key files when the site is secured.
+    pub tls: Option<(PathBuf, PathBuf)>,
+}
+
+pub struct CaddyContext {
+    pub http_port: u16,
+    pub https_port: u16,
+    pub routes: Vec<SiteRoute>,
+    /// PHP minor -> FastCGI addresses of its running pool ("127.0.0.1:19840", "unix//.../php-8.4.sock").
+    pub php_upstreams: BTreeMap<String, Vec<String>>,
+    pub log: PathBuf,
+    /// Write Windows paths with forward slashes (Caddy accepts them there). On macOS a backslash is
+    /// a legal file name character and stays.
+    pub windows_paths: bool,
+}
+
+/// Paths that cannot be written into the Caddyfile safely and literally:
+/// - `{$...}` is replaced with an environment variable while Caddy parses, before any escaping;
+/// - a backslash kept as a name character (macOS) could escape the closing quote, letting the rest
+///   become directives (Windows backslashes are separators and become `/`);
+/// - line breaks and other control characters end the token.
+pub fn servable(path: &Path, windows_paths: bool) -> Result<(), String> {
+    let text = path.to_string_lossy();
+    if text.contains("{$") {
+        return Err("Caddy cannot serve a folder whose path contains {$".into());
+    }
+    if !windows_paths && text.contains('\\') {
+        return Err("Caddy cannot serve a folder whose path contains a backslash".into());
+    }
+    if text.chars().any(char::is_control) {
+        return Err("Caddy cannot serve a folder whose path contains a line break or control character".into());
+    }
+    Ok(())
+}
+
+/// A path as one quoted Caddyfile token: `"` escaped so it stays one token, `{` `}` escaped so Caddy
+/// does not read them as placeholders at runtime.
+fn quoted(path: &Path, windows_paths: bool) -> String {
+    let mut text = path.to_string_lossy().into_owned();
+    if windows_paths {
+        text = text.replace('\\', "/");
+    }
+    let text = text.replace('"', "\\\"").replace('{', "\\{").replace('}', "\\}");
+    format!("\"{text}\"")
+}
+
+pub fn render(ctx: &CaddyContext) -> String {
+    let mut out = String::new();
+    let _ = write!(
+        out,
+        // Loopback only: local sites are never reachable from the network.
+        "{{\n\tadmin off\n\tauto_https off\n\tdefault_bind 127.0.0.1 [::1]\n\thttp_port {}\n\thttps_port {}\n\tlog {{\n\t\toutput file {}\n\t}}\n}}\n",
+        ctx.http_port,
+        ctx.https_port,
+        quoted(&ctx.log, ctx.windows_paths)
+    );
+    for route in &ctx.routes {
+        out.push('\n');
+        let host = format!("{}.test", route.name);
+        // A secured site answers on HTTPS with Stoke's certificate; its HTTP address only redirects.
+        let (address, tls) = match &route.tls {
+            Some((crt, key)) => (
+                format!("https://{host}:{}", ctx.https_port),
+                format!("\ttls {} {}\n", quoted(crt, ctx.windows_paths), quoted(key, ctx.windows_paths)),
+            ),
+            None => (format!("http://{host}:{}", ctx.http_port), String::new()),
+        };
+        match &route.target {
+            Route::Php { docroot, minor, xdebug, spx, spx_ui } => {
+                let Some(upstreams) = ctx.php_upstreams.get(minor).filter(|p| !p.is_empty()) else {
+                    let _ = writeln!(out, "# {}: PHP {minor} is not running", route.name);
+                    continue;
+                };
+                // Xdebug (start_with_request = trigger) takes a FastCGI parameter as its trigger.
+                let mut trigger = String::from(if *xdebug { "\t\tenv XDEBUG_TRIGGER stoke\n" } else { "" });
+                // SPX reads HTTP_* params as request headers: these switch it on for the site.
+                if let Some(key) = spx {
+                    trigger.push_str(&format!(
+                        "\t\tenv HTTP_SPX_ENABLED 1\n\t\tenv HTTP_SPX_KEY {key}\n\t\tenv HTTP_SPX_AUTO_START 1\n"
+                    ));
+                }
+                // SPX's report pages load their scripts and data without the key: add it to those
+                // requests (SPX reads an SPX-Key header as HTTP_SPX_KEY).
+                let ui = spx_ui.as_ref().map_or(String::new(), |key| {
+                    format!("\t@spxui expression {{query.SPX_UI_URI}} != \"\"\n\trequest_header @spxui SPX-Key {key}\n")
+                });
+                let _ = write!(
+                    out,
+                    "{address} {{\n{tls}\troot * {}\n{ui}\tphp_fastcgi {} {{\n{trigger}\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
+                    quoted(docroot, ctx.windows_paths),
+                    upstreams.join(" ")
+                );
+            }
+            Route::Proxy { upstream } => {
+                // Dev servers (Vite 6) only accept their own host; `{upstream_hostport}` is Caddy's placeholder.
+                let _ = write!(
+                    out,
+                    "{address} {{\n{tls}\treverse_proxy {upstream} {{\n\t\theader_up Host {{upstream_hostport}}\n\t}}\n}}\n"
+                );
+            }
+            Route::Skip { reason } => {
+                let _ = writeln!(out, "# {}: {reason}", route.name);
+                continue;
+            }
+        }
+        if route.tls.is_some() {
+            let _ = write!(
+                out,
+                "\nhttp://{host}:{} {{\n\tredir https://{host}:{}{{uri}}\n}}\n",
+                ctx.http_port, ctx.https_port
+            );
+        }
+    }
+    out
+}
