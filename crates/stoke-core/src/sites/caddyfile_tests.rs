@@ -39,7 +39,7 @@ fn a_php_site_is_served_through_its_pool() {
         },
     }]));
     assert!(file.contains(
-        "\nhttp://shop.test:8080 {\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
+        "\nhttp://shop.test:8080 {\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\ttry_files {path} {path}/index.php {path}/index.html index.php\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
     ), "{file}");
 }
 
@@ -158,7 +158,7 @@ fn a_secured_php_site_is_served_over_https_and_http_redirects() {
         },
     )]));
     assert!(file.contains(
-        "\nhttps://shop.test:8443 {\n\ttls \"C:/h/tls/\\{x\\}/shop.crt\" \"C:/h/tls/\\{x\\}/shop.key\"\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
+        "\nhttps://shop.test:8443 {\n\ttls \"C:/h/tls/\\{x\\}/shop.crt\" \"C:/h/tls/\\{x\\}/shop.key\"\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\ttry_files {path} {path}/index.php {path}/index.html index.php\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
     ), "{file}");
     assert!(file.contains("\nhttp://shop.test:8080 {\n\tredir https://shop.test:8443{uri}\n}\n"), "{file}");
 }
@@ -199,7 +199,7 @@ fn a_debugged_site_passes_the_xdebug_trigger() {
     ]));
     assert!(
         file.contains(
-            "\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tenv XDEBUG_TRIGGER stoke\n\t\tlb_policy least_conn\n"
+            "\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tenv XDEBUG_TRIGGER stoke\n\t\ttry_files {path} {path}/index.php {path}/index.html index.php\n\t\tlb_policy least_conn\n"
         ),
         "{file}"
     );
@@ -221,7 +221,7 @@ fn a_profiled_site_passes_the_spx_switches() {
     };
     let file = render(&ctx(vec![route("shop", Some("k123".into())), route("blog", None)]));
     assert!(
-        file.contains("\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tenv HTTP_SPX_ENABLED 1\n\t\tenv HTTP_SPX_KEY k123\n\t\tenv HTTP_SPX_AUTO_START 1\n\t\tlb_policy least_conn\n"),
+        file.contains("\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\tenv HTTP_SPX_ENABLED 1\n\t\tenv HTTP_SPX_KEY k123\n\t\tenv HTTP_SPX_AUTO_START 1\n\t\ttry_files {path} {path}/index.php {path}/index.html index.php\n\t\tlb_policy least_conn\n"),
         "{file}"
     );
     assert_eq!(file.matches("HTTP_SPX_ENABLED").count(), 1, "only the profiled site: {file}");

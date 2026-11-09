@@ -112,6 +112,8 @@ pub fn render(ctx: &CaddyContext) -> String {
                         "\t\tenv HTTP_SPX_ENABLED 1\n\t\tenv HTTP_SPX_KEY {key}\n\t\tenv HTTP_SPX_AUTO_START 1\n"
                     ));
                 }
+                // try_files: php_fastcgi's own list ({path} {path}/index.php index.php) never takes a
+                // folder's index.html, so a static site (or /docs/ inside a PHP one) answered 404.
                 // SPX's report pages load their scripts and data without the key: add it to those
                 // requests (SPX reads an SPX-Key header as HTTP_SPX_KEY).
                 let ui = spx_ui.as_ref().map_or(String::new(), |key| {
@@ -119,7 +121,7 @@ pub fn render(ctx: &CaddyContext) -> String {
                 });
                 let _ = write!(
                     out,
-                    "{address} {{\n{tls}\troot * {}\n{ui}\tphp_fastcgi {} {{\n{trigger}\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
+                    "{address} {{\n{tls}\troot * {}\n{ui}\tphp_fastcgi {} {{\n{trigger}\t\ttry_files {{path}} {{path}}/index.php {{path}}/index.html index.php\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}}\n\tfile_server\n\tencode gzip\n}}\n",
                     quoted(docroot, ctx.windows_paths),
                     upstreams.join(" ")
                 );

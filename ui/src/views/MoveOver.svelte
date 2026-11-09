@@ -56,7 +56,12 @@
 {#if store.step === 'loading'}
   <p class="muted">Reading Herd's setup and recording how your sites answer. This takes up to a minute.</p>
 {:else if store.step === 'none'}
-  <p class="muted">Herd isn't installed on this computer: there is nothing to move over.</p>
+  <!-- HerdHome::find only looks on Windows: on a Mac Herd may well be there. -->
+  <p class="muted">Stoke found no Herd setup to move over.</p>
+  <p class="muted">
+    On a Mac, moving over is not offered yet: <code>stoke import:herd</code> shows which of Herd's sites Stoke would
+    take, <code>stoke import:herd --apply</code> takes them.
+  </p>
 {:else if store.step === 'dry'}
   {#if store.startedHerd}
     <p class="note glass">Herd was started once to record how your sites answer. Nothing has changed yet.</p>

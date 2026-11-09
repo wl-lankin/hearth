@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.1
+
+- Static sites and folders with an `index.html` answer again: `/` and `/docs/` served 404 because only `index.php` was looked for
+- On a Mac, the "Move over from Herd" page no longer says Herd isn't installed: it points to `stoke import:herd`, which brings Herd's sites over
+- The PHP builds for macOS now include mbstring's regular expressions, which Laravel needs (`Call to undefined function mb_split()`). PHP versions installed before get them by installing again: `stoke php:install <version>`
+
 ## 2.0.0
 
 Hearth is now called **Stoke**: the old name sounded too much like Herd.
