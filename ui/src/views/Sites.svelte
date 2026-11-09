@@ -63,6 +63,11 @@
   {#if store.portSuggestion}
     <button onclick={() => store.setPort(store.portSuggestion!)}>Use port {store.portSuggestion}</button>
   {/if}
+  {#if store.forwarded}
+    <button onclick={() => store.forward(false)} title="Sites open with :{store.httpPort} again. The system asks for admin rights.">
+      Stop using 80 and 443
+    </button>
+  {/if}
   <span class="actions">
     <button onclick={parkFolder}>Park a folder</button>
     <button onclick={() => (adding = adding === 'link' ? null : 'link')}>Link a folder</button>
@@ -85,6 +90,16 @@
       <span class="muted">Trust Stoke's certificates once, then HTTPS sites open without warnings.</span>
     </div>
     <button class="primary" onclick={() => store.trust()}>Trust</button>
+  </section>
+{/if}
+
+{#if store.offerForward}
+  <section class="card setup" aria-live="polite">
+    <div class="setup-text">
+      <strong>Use ports 80 and 443</strong>
+      <span class="muted">So sites open as http://shop.test, without :{store.httpPort}. The system asks for admin rights once.</span>
+    </div>
+    <button onclick={() => store.forward(true)}>Use 80 and 443</button>
   </section>
 {/if}
 

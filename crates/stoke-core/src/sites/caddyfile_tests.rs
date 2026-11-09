@@ -14,6 +14,7 @@ fn ctx(routes: Vec<SiteRoute>) -> CaddyContext {
         php_upstreams: upstreams,
         log: PathBuf::from(r"C:\h\logs\caddy.log"),
         windows_paths: true,
+        forwarded: false,
     }
 }
 
@@ -161,6 +162,16 @@ fn a_secured_php_site_is_served_over_https_and_http_redirects() {
         "\nhttps://shop.test:8443 {\n\ttls \"C:/h/tls/\\{x\\}/shop.crt\" \"C:/h/tls/\\{x\\}/shop.key\"\n\troot * \"C:/x/shop/public\"\n\tphp_fastcgi 127.0.0.1:19840 127.0.0.1:19841 {\n\t\ttry_files {path} {path}/index.php {path}/index.html index.php\n\t\tlb_policy least_conn\n\t\tlb_try_duration 2s\n\t}\n\tfile_server\n\tencode gzip\n}\n"
     ), "{file}");
     assert!(file.contains("\nhttp://shop.test:8080 {\n\tredir https://shop.test:8443{uri}\n}\n"), "{file}");
+}
+
+#[test]
+fn with_80_and_443_forwarded_the_redirect_drops_the_port() {
+    let mut context = ctx(vec![secured("vite", Route::Proxy { upstream: "http://localhost:5173".into() })]);
+    context.forwarded = true;
+    let file = render(&context);
+    assert!(file.contains("\nhttp://vite.test:8080 {\n\tredir https://vite.test{uri}\n}\n"), "{file}");
+    // Caddy keeps listening on its own ports: the forwarding brings 80 and 443 there.
+    assert!(file.contains("\nhttps://vite.test:8443 {\n"), "{file}");
 }
 
 #[test]

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { shownSites, siteUrl } from './tray';
+import { publicPorts, shownSites, siteUrl } from './tray';
 
 test('a site opens with the scheme and port Stoke serves it on', () => {
   expect(siteUrl({ name: 'blog', secured: false }, 80, 443)).toBe('http://blog.test');
@@ -14,4 +14,10 @@ test('the panel shows the first five sites by name and counts all', () => {
   expect(shown.map((s) => s.name)).toEqual(['site01', 'site02', 'site03', 'site04', 'site05']);
   expect(more).toBe(40);
   expect(shownSites(sites.slice(0, 3)).more).toBe(0);
+});
+
+test('the ports a browser uses: 80 and 443 when the Mac forwards them', () => {
+  expect(publicPorts({ httpPort: 8080, httpsPort: 8443 })).toEqual([8080, 8443]);
+  expect(publicPorts({ httpPort: 8080, httpsPort: 8443, forwarded: false })).toEqual([8080, 8443]);
+  expect(publicPorts({ httpPort: 8080, httpsPort: 8443, forwarded: true })).toEqual([80, 443]);
 });

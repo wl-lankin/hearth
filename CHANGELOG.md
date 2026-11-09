@@ -2,6 +2,7 @@
 
 ## 2.0.1
 
+- On a Mac, sites can use the usual ports 80 and 443: "Use 80 and 443" on the Sites page (admin password once) and they open as `http://shop.test`, without `:8080`. A system rule forwards only this computer's own 127.0.0.1 and ::1 to Stoke, and "Stop using 80 and 443" takes it away again
 - Static sites and folders with an `index.html` answer again: `/` and `/docs/` served 404 because only `index.php` was looked for
 - On a Mac, the "Move over from Herd" page no longer says Herd isn't installed: it points to `stoke import:herd`, which brings Herd's sites over
 - The PHP builds for macOS now include mbstring's regular expressions, which Laravel needs (`Call to undefined function mb_split()`). PHP versions installed before get them by installing again: `stoke php:install <version>`

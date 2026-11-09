@@ -115,6 +115,9 @@ pub fn list(core: &CoreState) -> Value {
         "parked": config.parked,
         "httpPort": config.http_port,
         "httpsPort": config.https_port,
+        // macOS: whether ports 80 and 443 are forwarded here, and whether that can be offered.
+        "forwarded": crate::web::forward::active(config.http_port, config.https_port),
+        "canForward": cfg!(target_os = "macos") && core.dns_pipe.is_some(),
     })
 }
 
@@ -214,6 +217,15 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
         "dns.setup" => match core.dns_pipe {
             Some(_) => prompting(core, crate::dns::setup).await,
             None => Err(RpcError::new(INVALID_PARAMS, "This Stoke home does not manage .test names")),
+        },
+        "web.forward" => match (core.dns_pipe.is_some(), params.get("on").and_then(Value::as_bool)) {
+            (false, _) => Err(RpcError::new(INVALID_PARAMS, "This Stoke home does not manage ports 80 and 443")),
+            (_, None) => Err(invalid("on must be true or false")),
+            (true, Some(true)) => {
+                let config = registry::load(paths);
+                prompting(core, move || crate::web::forward::setup(config.http_port, config.https_port)).await
+            }
+            (true, Some(false)) => prompting(core, crate::web::forward::remove).await,
         },
         "sites.port" => match params.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()) {
             Some(port) => change(core, || registry::set_http_port(paths, port)),

@@ -1,4 +1,5 @@
 import type { PhpList, ProfileReport, ProfileStatus, Site, SitesList } from './api';
+import { publicPorts, siteUrl } from './tray';
 
 export type ProfilesApi = {
   profileStatus(): Promise<ProfileStatus>;
@@ -48,7 +49,7 @@ export function createProfilesStore(api: ProfilesApi) {
     const serving = sites.sites.filter(servesSpx);
     const site = serving.find((s) => `${s.name}.test` === r.host) ?? (r.cli || !r.host ? serving[0] : undefined);
     if (!site) return null;
-    const base = site.secured ? `https://${site.name}.test:${sites.httpsPort}` : `http://${site.name}.test:${sites.httpPort}`;
+    const base = siteUrl(site, ...publicPorts(sites));
     return `${base}/?SPX_KEY=${encodeURIComponent(status.key)}&SPX_UI_URI=/report.html&key=${encodeURIComponent(r.key)}`;
   }
 

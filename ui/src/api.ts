@@ -237,6 +237,10 @@ export interface SitesList {
   parked: string[];
   httpPort: number;
   httpsPort: number;
+  /** macOS: ports 80 and 443 are forwarded to httpPort and httpsPort. */
+  forwarded?: boolean;
+  /** macOS: forwarding 80 and 443 can be set up here. */
+  canForward?: boolean;
 }
 
 export interface WebStatus {
@@ -284,6 +288,8 @@ export const sitesSecure = (name: string) => change('sites.secure', { name })();
 export const sitesUnsecure = (name: string) => change('sites.unsecure', { name })();
 export const tlsTrust = () => change('tls.trust', {})();
 export const dnsSetup = () => change('dns.setup', {})();
+/** macOS: forwards ports 80 and 443 to Stoke (on) or takes that away (off); asks for the admin password. */
+export const webForward = (on: boolean) => change('web.forward', { on })();
 
 /** A folder picked in the system dialog, or null when cancelled. */
 export async function pickFolder(): Promise<string | null> {

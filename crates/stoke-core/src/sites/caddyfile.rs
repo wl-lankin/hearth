@@ -45,6 +45,9 @@ pub struct CaddyContext {
     /// Write Windows paths with forward slashes (Caddy accepts them there). On macOS a backslash is
     /// a legal file name character and stays.
     pub windows_paths: bool,
+    /// macOS: ports 80 and 443 are forwarded to Caddy's ports (`web::forward`), so the redirect to
+    /// HTTPS goes to the usual port instead of Caddy's own.
+    pub forwarded: bool,
 }
 
 /// Paths that cannot be written into the Caddyfile safely and literally:
@@ -139,11 +142,9 @@ pub fn render(ctx: &CaddyContext) -> String {
             }
         }
         if route.tls.is_some() {
-            let _ = write!(
-                out,
-                "\nhttp://{host}:{} {{\n\tredir https://{host}:{}{{uri}}\n}}\n",
-                ctx.http_port, ctx.https_port
-            );
+            let target =
+                if ctx.forwarded { format!("https://{host}") } else { format!("https://{host}:{}", ctx.https_port) };
+            let _ = write!(out, "\nhttp://{host}:{} {{\n\tredir {target}{{uri}}\n}}\n", ctx.http_port);
         }
     }
     out
