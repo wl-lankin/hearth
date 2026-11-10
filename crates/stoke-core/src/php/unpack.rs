@@ -1,5 +1,5 @@
-//! Unpacks a verified PHP archive next to its target and swaps it into place, so a PHP version is
-//! either fully installed or not touched at all.
+//! Unpacks a verified archive (PHP, and the services' builds) next to its target and swaps it into
+//! place, so a version is either fully installed or not touched at all.
 
 use std::fs::File;
 use std::path::{Component, Path, PathBuf};
@@ -8,7 +8,7 @@ use crate::php::manifest::Format;
 use crate::CoreError;
 
 fn damaged() -> CoreError {
-    CoreError::Php("The PHP download is damaged; try again".into())
+    CoreError::Php("The download is damaged; try again".into())
 }
 
 fn sibling(target: &Path, suffix: &str) -> PathBuf {
@@ -59,25 +59,68 @@ fn extract_zip(archive: &Path, root: &str, dest: &Path) -> Result<(), CoreError>
     Ok(())
 }
 
+/// Where a symlink at `link` (relative to the target) pointing to `to` lands, relative to the
+/// target; `None` when it leaves the target or is absolute.
+fn link_inside(link: &Path, to: &Path) -> Option<PathBuf> {
+    let mut parts: Vec<std::ffi::OsString> =
+        link.parent().into_iter().flat_map(|p| p.components()).map(|c| c.as_os_str().to_os_string()).collect();
+    for c in to.components() {
+        match c {
+            Component::Normal(name) => parts.push(name.to_os_string()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop()?;
+            }
+            Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(parts.iter().collect())
+}
+
 fn extract_tar_gz(archive: &Path, root: &str, dest: &Path) -> Result<(), CoreError> {
     let file = File::open(archive).map_err(|e| CoreError::io(archive, e))?;
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(file));
     for entry in tar.entries().map_err(|_| damaged())? {
         let mut entry = entry.map_err(|_| damaged())?;
         let kind = entry.header().entry_type();
-        // PHP builds hold only files and folders; links could point outside the target.
-        if !(kind.is_file() || kind.is_dir()) {
+        // Files, folders, and links that stay inside the target (PostgreSQL's macOS builds hold
+        // hard links between time zone files and symlinks between library names). Anything else,
+        // or a link that leads out, is refused.
+        if !(kind.is_file() || kind.is_dir() || kind.is_symlink() || kind.is_hard_link()) {
             return Err(damaged());
         }
         let path = entry.path().map_err(|_| damaged())?.into_owned();
         let Some(rel) = relative(&path, root)? else { continue };
-        let out = dest.join(rel);
+        let out = dest.join(&rel);
         if kind.is_dir() {
             std::fs::create_dir_all(&out).map_err(|e| CoreError::io(&out, e))?;
             continue;
         }
         if let Some(parent) = out.parent() {
             std::fs::create_dir_all(parent).map_err(|e| CoreError::io(parent, e))?;
+        }
+        if kind.is_hard_link() {
+            // A hard link names another entry of the archive, written before it: copy that file.
+            let to = entry.link_name().map_err(|_| damaged())?.ok_or_else(damaged)?.into_owned();
+            let Some(source) = relative(&to, root)? else { return Err(damaged()) };
+            let source = dest.join(source);
+            if !source.is_file() {
+                return Err(damaged());
+            }
+            std::fs::copy(&source, &out).map_err(|e| CoreError::io(&out, e))?;
+            continue;
+        }
+        if kind.is_symlink() {
+            let to = entry.link_name().map_err(|_| damaged())?.ok_or_else(damaged)?.into_owned();
+            if link_inside(&rel, &to).is_none() {
+                return Err(damaged());
+            }
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(&to, &out).map_err(|e| CoreError::io(&out, e))?;
+            #[cfg(not(unix))]
+            return Err(damaged());
+            #[cfg(unix)]
+            continue;
         }
         entry.unpack(&out).map_err(|_| damaged())?;
     }
@@ -218,6 +261,81 @@ mod tests {
         let a = archive(d.path(), "evil.tar.gz", &bytes);
         assert!(unpack(&a, Format::TarGz, "", &d.path().join("8.4")).is_err());
         assert!(!d.path().join("evil.txt").exists());
+    }
+
+    /// A tar.gz with a link entry (`kind`: symlink or hard link) at `name` pointing to `to`.
+    fn tar_gz_with_link(files: &[(&str, &[u8])], links: &[(tar::EntryType, &str, &str)]) -> Vec<u8> {
+        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut b = tar::Builder::new(gz);
+        for (name, body) in files {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(body.len() as u64);
+            h.set_mode(0o644);
+            h.set_cksum();
+            b.append_data(&mut h, name, *body).unwrap();
+        }
+        for (kind, name, to) in links {
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(*kind);
+            h.set_size(0);
+            h.set_mode(0o644);
+            b.append_link(&mut h, name, to).unwrap();
+        }
+        b.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_inside_the_archive_are_unpacked() {
+        // Like PostgreSQL's macOS builds: hard links between time zone files, symlinks between library names.
+        let d = tempfile::tempdir().unwrap();
+        let bytes = tar_gz_with_link(
+            &[("pg/share/timezone/Greenwich", b"tz"), ("pg/lib/libpq.5.dylib", b"lib")],
+            &[
+                (tar::EntryType::Link, "pg/share/timezone/GMT", "pg/share/timezone/Greenwich"),
+                (tar::EntryType::Symlink, "pg/lib/libpq.dylib", "libpq.5.dylib"),
+            ],
+        );
+        let a = archive(d.path(), "pg.tar.gz", &bytes);
+        let target = d.path().join("17.11.1");
+        unpack(&a, Format::TarGz, "pg", &target).unwrap();
+        assert_eq!(std::fs::read(target.join("share/timezone/GMT")).unwrap(), b"tz");
+        assert_eq!(std::fs::read_link(target.join("lib/libpq.dylib")).unwrap(), Path::new("libpq.5.dylib"));
+        assert_eq!(std::fs::read(target.join("lib/libpq.dylib")).unwrap(), b"lib");
+    }
+
+    #[test]
+    fn a_symlink_out_of_the_target_is_refused() {
+        for to in ["../../outside", "/etc/passwd"] {
+            let d = tempfile::tempdir().unwrap();
+            let bytes = tar_gz_with_link(&[("pg/bin/x", b"x")], &[(tar::EntryType::Symlink, "pg/lib/evil", to)]);
+            let a = archive(d.path(), "pg.tar.gz", &bytes);
+            let target = d.path().join("17");
+            let err = unpack(&a, Format::TarGz, "pg", &target).unwrap_err();
+            assert!(err.to_string().contains("damaged"), "{to}: {err}");
+            assert!(!target.exists(), "{to}");
+        }
+    }
+
+    #[test]
+    fn a_hard_link_to_a_missing_or_outside_file_is_refused() {
+        for to in ["pg/never/written", "other/x"] {
+            let d = tempfile::tempdir().unwrap();
+            let bytes = tar_gz_with_link(&[("pg/bin/x", b"x")], &[(tar::EntryType::Link, "pg/bin/y", to)]);
+            let a = archive(d.path(), "pg.tar.gz", &bytes);
+            assert!(unpack(&a, Format::TarGz, "pg", &d.path().join("17")).is_err(), "{to}");
+        }
+    }
+
+    #[test]
+    fn link_targets_are_followed_without_touching_the_disk() {
+        assert_eq!(
+            link_inside(Path::new("lib/libpq.dylib"), Path::new("libpq.5.dylib")),
+            Some(PathBuf::from("lib/libpq.5.dylib"))
+        );
+        assert_eq!(link_inside(Path::new("lib/a"), Path::new("../share/b")), Some(PathBuf::from("share/b")));
+        assert_eq!(link_inside(Path::new("lib/a"), Path::new("../../b")), None);
+        assert_eq!(link_inside(Path::new("a"), Path::new("/b")), None);
     }
 
     #[test]
