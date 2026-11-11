@@ -38,6 +38,8 @@ export function createSitesStore(api: SitesApi) {
   let ide = $state<DebugStatus | null>(null);
   // One IDE check at a time: on macOS it runs lsof, which can be slow.
   let ideBusy = false;
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
 
   /** Starts an IDE check unless one runs; resolves when the one it started is done. */
   function checkIde(): Promise<void> {
@@ -174,7 +176,16 @@ export function createSitesStore(api: SitesApi) {
     note(name: string) {
       return status?.notes[name] ?? null;
     },
-    load: reload,
+    get loaded() {
+      return loaded;
+    },
+    async load() {
+      try {
+        await reload();
+      } finally {
+        loaded = true;
+      }
+    },
     async refreshStatus() {
       [status] = await Promise.all([api.webStatus(), checkIde()]);
     },

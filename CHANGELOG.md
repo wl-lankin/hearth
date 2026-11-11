@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.2
+
+- On a Mac, sites no longer stop answering after a while with ports 80 and 443 in use ("caddy did not start in time"): the forwarding now goes to ports of its own (18080 and 18443) instead of Caddy's, so forwarded and direct connections no longer get in each other's way. If you use 80 and 443 already, click "Use 80 and 443" on the Sites page once more
+- New services start with Stoke: a database created on the Services page or brought over from Herd is there again after a restart. Switch Autostart off for the ones you start by hand
+- Services from archives with links install, for example PostgreSQL on a Mac
+- `stoke import:herd` on a Mac keeps Herd's HTTPS, PHP versions and proxies for each site
+- Pages no longer show "No services yet" (or sites, processes, mails, ...) for a moment while they load: a glowing loader stands in until the list is there
+- On a Mac, every page has space below its last card again
+- On a Mac, the logo sits below the window buttons instead of beside them
+
 ## 2.0.1
 
 - On a Mac, sites can use the usual ports 80 and 443: "Use 80 and 443" on the Sites page (admin password once) and they open as `http://shop.test`, without `:8080`. A system rule forwards only this computer's own 127.0.0.1 and ::1 to Stoke, and "Stop using 80 and 443" takes it away again

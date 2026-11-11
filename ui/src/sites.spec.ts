@@ -267,3 +267,15 @@ describe('sites store', () => {
     expect(store.setup).toBeNull();
   });
 });
+
+describe('sites store loading', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createSitesStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createSitesStore(fakeApi({ sitesList: async () => { throw 'down'; } }));
+    await failing.load().catch(() => {});
+    expect(failing.loaded).toBe(true);
+  });
+});

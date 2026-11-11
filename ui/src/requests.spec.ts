@@ -101,3 +101,15 @@ describe('timeline', () => {
     expect(timeline([q(150, 50)], 100)).toEqual([{ left: 75, width: 25 }]);
   });
 });
+
+describe('requests store loading', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createRequestsStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createRequestsStore(fakeApi({ dumpsStatus: async () => { throw 'down'; } }));
+    await failing.load().catch(() => {});
+    expect(failing.loaded).toBe(true);
+  });
+});

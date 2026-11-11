@@ -137,3 +137,15 @@ describe('processes store', () => {
     expect(store.output).toBe('');
   });
 });
+
+describe('processes store loading', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createProcessesStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createProcessesStore(fakeApi({ processesList: async () => { throw 'down'; } }));
+    await failing.load().catch(() => {});
+    expect(failing.loaded).toBe(true);
+  });
+});

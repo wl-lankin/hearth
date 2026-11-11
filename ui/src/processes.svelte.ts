@@ -37,6 +37,8 @@ export function createProcessesStore(api: ProcessesApi) {
   let suggestions = $state<ProcessSuggestion[]>([]);
   let form = $state({ site: '', name: '', command: '', autostart: false });
   let formError = $state<string | null>(null);
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
 
   async function refresh() {
     try {
@@ -110,8 +112,12 @@ export function createProcessesStore(api: ProcessesApi) {
       return p.lastError ? 'failed' : 'stopped';
     },
     canStop: (p: ProcessRow) => p.running || p.waiting,
+    get loaded() {
+      return loaded;
+    },
     async load() {
       await refresh();
+      loaded = true; // refresh() catches its own failure
       try {
         siteNames = (await api.sitesList()).sites.filter((s) => s.kind !== 'proxy').map((s) => s.name);
       } catch {

@@ -83,7 +83,8 @@ pub fn create(
         _ => format!("{} {line}", display_name(kind)),
     };
     let secret = if kinds::needs_secret(kind) { secret() } else { String::new() };
-    let instance = Instance { id, kind: kind.into(), line: line.into(), port, autostart: false, name, secret };
+    // A new service starts with Stoke: a database that is gone after a restart looks like lost data.
+    let instance = Instance { id, kind: kind.into(), line: line.into(), port, autostart: true, name, secret };
     instances.push(instance.clone());
     save(paths, &instances)?;
     Ok(instance)

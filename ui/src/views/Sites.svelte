@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
@@ -131,7 +132,9 @@
 {/if}
 
 <section class="card list" aria-label="Sites">
-  {#if store.sites.length === 0}
+  {#if !store.loaded}
+    <Kindling rows={3} label="Loading sites" />
+  {:else if store.sites.length === 0}
     <!-- A wrapper of this page: the list's grid rules below reach it, so it spans the card. -->
     <div class="empty">
       <EmptyState

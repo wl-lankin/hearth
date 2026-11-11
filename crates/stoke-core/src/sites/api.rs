@@ -132,6 +132,33 @@ async fn prompting(
     Ok(Value::Null)
 }
 
+/// Sets up the forwarding, lets Caddy listen on its forwarded ports, then checks port 80.
+async fn forward_on(core: &CoreState) -> Result<Value, RpcError> {
+    let config = registry::load(&core.paths);
+    tokio::task::spawn_blocking(move || crate::web::forward::setup(config.http_port, config.https_port))
+        .await
+        .map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?
+        .map_err(failed)?;
+    let syncing = core.web_sync
+        && !core.web_paused.load(std::sync::atomic::Ordering::Relaxed)
+        && !core.quitting.load(std::sync::atomic::Ordering::Relaxed);
+    if syncing {
+        let status = match crate::web::service::sync(core).await {
+            Ok(status) => status,
+            Err(e) => crate::web::service::WebStatus {
+                error: Some(e.to_string()),
+                ..crate::web::service::current_status(core)
+            },
+        };
+        *core.web_status.lock().unwrap_or_else(|e| e.into_inner()) = Some(status);
+        tokio::task::spawn_blocking(crate::web::forward::verify)
+            .await
+            .map_err(|e| RpcError::new(INTERNAL_ERROR, e.to_string()))?
+            .map_err(failed)?;
+    }
+    Ok(Value::Null)
+}
+
 /// Reads Herd's sites (from `from`, or Herd's usual folder) and returns what importing them
 /// would change; with `apply`, also does it.
 fn herd_import(core: &CoreState, params: &Value) -> Result<Value, RpcError> {
@@ -221,10 +248,7 @@ pub async fn handle(core: &CoreState, method: &str, params: &Value) -> Option<Re
         "web.forward" => match (core.dns_pipe.is_some(), params.get("on").and_then(Value::as_bool)) {
             (false, _) => Err(RpcError::new(INVALID_PARAMS, "This Stoke home does not manage ports 80 and 443")),
             (_, None) => Err(invalid("on must be true or false")),
-            (true, Some(true)) => {
-                let config = registry::load(paths);
-                prompting(core, move || crate::web::forward::setup(config.http_port, config.https_port)).await
-            }
+            (true, Some(true)) => forward_on(core).await,
             (true, Some(false)) => prompting(core, crate::web::forward::remove).await,
         },
         "sites.port" => match params.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()) {

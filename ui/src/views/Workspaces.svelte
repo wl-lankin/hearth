@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
@@ -72,7 +73,9 @@
   </div>
 {/if}
 
-{#if store.groups.length === 0}
+{#if !store.loaded}
+  <section class="card"><Kindling rows={2} label="Loading workspaces" /></section>
+{:else if store.groups.length === 0}
   <EmptyState art={art.workspaces} title="No workspaces" line="Give a branch its own folder, domain and database" />
 {/if}
 

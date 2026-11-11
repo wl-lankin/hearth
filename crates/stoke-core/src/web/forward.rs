@@ -1,6 +1,8 @@
 //! macOS: the usual ports 80 and 443 for the sites. Caddy runs as the user and may not listen on a
 //! port below 1024 on the loopback address, so a packet filter rule forwards 127.0.0.1 and ::1
-//! ports 80 and 443 to Caddy's ports. A LaunchDaemon loads the rule into a sub-anchor of
+//! ports 80 and 443 to ports Caddy listens on for them alone (`forward_port`). Forwarding to
+//! Caddy's own ports made pf's states for forwarded connections collide with direct ones from the
+//! same client port: direct connections to Caddy's port then hung, and Caddy seemed not to start. A LaunchDaemon loads the rule into a sub-anchor of
 //! `com.apple` (which the system's /etc/pf.conf already loads) at every start; /etc/pf.conf itself
 //! is never changed. Setting it up and taking it away each ask for the admin password once.
 
@@ -14,11 +16,17 @@ pub const RULES: &str = "/Library/Application Support/Stoke/forward.conf";
 /// A sub-anchor of `com.apple/*`, which the stock /etc/pf.conf loads for rdr and filter rules.
 pub const ANCHOR: &str = "com.apple/250.StokeForward";
 
+/// The port Caddy listens on for what pf forwards from `port` (80 → 8080 → 18080): used by nothing
+/// else, so forwarded and direct connections never share pf states.
+pub fn forward_port(port: u16) -> u16 {
+    port.checked_add(10000).unwrap_or_else(|| port - 10000)
+}
+
 /// The rule text: loopback only, so nothing from the network ever reaches the sites.
 pub fn rules_text(http_port: u16, https_port: u16) -> String {
     let mut out = String::from("# Stoke: ports 80 and 443 of this computer go to Stoke's web server.\n");
     for (addr, family) in [("127.0.0.1", "inet"), ("::1", "inet6")] {
-        for (from, to) in [(80, http_port), (443, https_port)] {
+        for (from, to) in [(80, forward_port(http_port)), (443, forward_port(https_port))] {
             out.push_str(&format!(
                 "rdr pass on lo0 {family} proto tcp from any to {addr} port {from} -> {addr} port {to}\n"
             ));
@@ -88,7 +96,7 @@ pub fn setup_command(prepared_rules: &Path, prepared_plist: &Path) -> String {
         format!("launchctl bootstrap system {}", sh(PLIST)),
         // bootstrap starts the daemon in the background: loading here as well makes the rules
         // certain before the setup returns. Both loads can meet, and then one of them fails:
-        // `setup` checks afterwards that port 80 reaches Caddy instead of trusting this status.
+        // `verify` checks afterwards that port 80 reaches Caddy instead of trusting this status.
         format!("({}; true)", load_command()),
     ]
     .join(" && ")
@@ -175,7 +183,8 @@ fn run_admin(command: &str, refused: &str) -> Result<(), CoreError> {
     }
 }
 
-/// Sets up the forwarding to `http_port` and `https_port`; macOS asks for the admin password.
+/// Sets up the forwarding for Caddy's `http_port` and `https_port`; macOS asks for the admin
+/// password. Caddy picks up its extra ports with the next sync: `verify` checks afterwards.
 #[cfg(target_os = "macos")]
 pub fn setup(http_port: u16, https_port: u16) -> Result<(), CoreError> {
     let dir = std::env::temp_dir();
@@ -186,8 +195,12 @@ pub fn setup(http_port: u16, https_port: u16) -> Result<(), CoreError> {
     let result = run_admin(&setup_command(&rules, &plist), "Using ports 80 and 443 was not confirmed");
     let _ = std::fs::remove_file(&rules);
     let _ = std::fs::remove_file(&plist);
-    result?;
-    // The rules take a moment; another program on port 80 means they did not take hold.
+    result
+}
+
+/// Checks that port 80 reaches Caddy once it listens on its forwarded ports; another program on
+/// port 80 means the rules did not take hold.
+pub fn verify() -> Result<(), CoreError> {
     let mut answer = Answer::Nothing;
     for _ in 0..10 {
         answer = probe();

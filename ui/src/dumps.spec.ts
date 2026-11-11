@@ -119,3 +119,15 @@ describe('fold and shortPath', () => {
     expect(shortPath('/Users/ann/Sites/shop/app/X.php', 'shop.test')).toBe('app/X.php');
   });
 });
+
+describe('dumps store loading', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createDumpsStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createDumpsStore(fakeApi({ dumpsStatus: async () => { throw 'down'; } }));
+    await failing.load().catch(() => {});
+    expect(failing.loaded).toBe(true);
+  });
+});

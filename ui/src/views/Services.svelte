@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
@@ -88,7 +89,9 @@
 {#if store.error}<p class="error banner" role="alert">{store.error}</p>{/if}
 
 <section class="card list" aria-label="Services">
-  {#if store.services.length === 0}
+  {#if !store.loaded}
+    <Kindling label="Loading services" />
+  {:else if store.services.length === 0}
     <EmptyState
       art={art.services}
       title="No services yet"
@@ -96,8 +99,8 @@
       action={{ label: 'Add a service', onclick: () => (adding = true) }}
     />
   {/if}
-  {#each store.services as s (s.id)}
-    <div class="row">
+  {#each store.services as s, i (s.id)}
+    <div class="row" style:--i={i}>
       <div class="name">
         <span class="dot" class:ok={s.running} class:bad={!s.running && !!(store.errors[s.id] ?? s.error)} aria-hidden="true"></span>
         <strong>{s.name}</strong>
@@ -213,6 +216,28 @@
     gap: 8px 16px;
     align-items: center;
     padding: 10px 20px;
+  }
+
+  /* Each row catches as the loader gives way: a warm flash that settles, one after another. */
+  .row {
+    animation: ignite 520ms var(--ease) calc(var(--i, 0) * 70ms) both;
+  }
+
+  @keyframes ignite {
+    from {
+      opacity: 0;
+      transform: translateY(3px);
+      background: rgb(240 122 64 / 0.1);
+    }
+    40% {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .row {
+      animation: none;
+    }
   }
 
   .row + .row {

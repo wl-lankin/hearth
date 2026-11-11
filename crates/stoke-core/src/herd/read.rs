@@ -1,5 +1,6 @@
 //! Reading Herd's Valet folder: `config.json` (parked folders), `Sites` (linked sites as links),
-//! and `Nginx/<name>.test.conf` (proxies, PHP isolations, HTTPS). Nothing in it is ever written.
+//! and `Nginx/<name>.test.conf` on Windows or `Nginx/<name>.test` on macOS (proxies, PHP
+//! isolations, HTTPS). Nothing in it is ever written.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -62,7 +63,8 @@ pub fn read(valet: &Path) -> Result<HerdSetup, CoreError> {
 
     for entry in std::fs::read_dir(valet.join("Nginx")).into_iter().flatten().filter_map(|e| e.ok()) {
         let file = entry.file_name().to_string_lossy().into_owned();
-        let Some(raw) = file.strip_suffix(".test.conf") else { continue };
+        // Windows' Herd writes `<name>.test.conf`, the Mac's `<name>.test`.
+        let Some(raw) = file.strip_suffix(".test.conf").or_else(|| file.strip_suffix(".test")) else { continue };
         let Ok(text) = std::fs::read_to_string(entry.path()) else { continue };
         let Some(name) = site_name(raw, &mut setup.skipped) else { continue };
         read_conf(&name, &text, &mut setup);
@@ -187,6 +189,25 @@ mod tests {
         conf(&valet, "Passify", &format!("# ISOLATED_PHP_VERSION=x\n{SECURE}"));
         conf(&valet, "vite.shop", "server {\n    listen 127.0.0.1:80;\n    location / {\n        proxy_pass http://localhost:5177/;\n    }\n}\n");
         (d, valet, projects)
+    }
+
+    #[test]
+    fn the_macs_nginx_files_have_no_conf_suffix() {
+        let (_d, valet, _projects) = valet();
+        // Herd on macOS: `Nginx/<name>.test`, with the name as Herd wrote it.
+        let nginx = valet.join("Nginx");
+        std::fs::write(nginx.join("Gaudizeid.test"), format!("# ISOLATED_PHP_VERSION=84\n{SECURE}")).unwrap();
+        std::fs::write(
+            nginx.join("mensa.shop.test"),
+            "server {\n    listen 127.0.0.1:80;\n    location / {\n        proxy_pass http://127.0.0.1:8001;\n    }\n}\n",
+        )
+        .unwrap();
+        let setup = read(&valet).unwrap();
+        assert!(setup.secured.contains("gaudizeid"), "{:?}", setup.secured);
+        assert_eq!(setup.isolated.get("gaudizeid").map(String::as_str), Some("8.4"));
+        assert_eq!(setup.proxies.get("mensa.shop").map(String::as_str), Some("http://127.0.0.1:8001"));
+        // The Windows files are read as before.
+        assert!(setup.secured.contains("shop"));
     }
 
     #[test]

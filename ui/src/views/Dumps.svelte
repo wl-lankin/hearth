@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
@@ -78,7 +79,9 @@
   <button onclick={() => store.clear()} disabled={store.dumps.length === 0}>Clear</button>
 </section>
 
-{#if store.dumps.length === 0}
+{#if !store.loaded}
+  <section class="card"><Kindling rows={2} label="Loading dumps" /></section>
+{:else if store.dumps.length === 0}
   <EmptyState art={art.inspect} title="Nothing captured yet" line="Call dump($value) in a site or a command and it shows up here" />
 {/if}
 

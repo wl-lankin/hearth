@@ -129,3 +129,15 @@ describe('Logs store', () => {
     expect([store.confirming, store.entries.length]).toEqual([false, 0]);
   });
 });
+
+describe('logs store loading', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createLogsStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createLogsStore(fakeApi({ logsSites: async () => { throw 'down'; } }));
+    await failing.load().catch(() => {});
+    expect(failing.loaded).toBe(true);
+  });
+});

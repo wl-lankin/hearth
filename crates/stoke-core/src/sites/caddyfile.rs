@@ -45,8 +45,8 @@ pub struct CaddyContext {
     /// Write Windows paths with forward slashes (Caddy accepts them there). On macOS a backslash is
     /// a legal file name character and stays.
     pub windows_paths: bool,
-    /// macOS: ports 80 and 443 are forwarded to Caddy's ports (`web::forward`), so the redirect to
-    /// HTTPS goes to the usual port instead of Caddy's own.
+    /// macOS: ports 80 and 443 are forwarded to Caddy (`web::forward`): every site listens on the
+    /// forwarded ports too, and the redirect to HTTPS goes to the usual port instead of Caddy's own.
     pub forwarded: bool,
 }
 
@@ -80,6 +80,15 @@ fn quoted(path: &Path, windows_paths: bool) -> String {
     format!("\"{text}\"")
 }
 
+/// A site's address on `port`, and on its forwarded port when ports 80 and 443 are forwarded.
+fn site_address(scheme: &str, host: &str, port: u16, forwarded: bool) -> String {
+    if forwarded {
+        format!("{scheme}://{host}:{port}, {scheme}://{host}:{}", crate::web::forward::forward_port(port))
+    } else {
+        format!("{scheme}://{host}:{port}")
+    }
+}
+
 pub fn render(ctx: &CaddyContext) -> String {
     let mut out = String::new();
     let _ = write!(
@@ -96,10 +105,10 @@ pub fn render(ctx: &CaddyContext) -> String {
         // A secured site answers on HTTPS with Stoke's certificate; its HTTP address only redirects.
         let (address, tls) = match &route.tls {
             Some((crt, key)) => (
-                format!("https://{host}:{}", ctx.https_port),
+                site_address("https", &host, ctx.https_port, ctx.forwarded),
                 format!("\ttls {} {}\n", quoted(crt, ctx.windows_paths), quoted(key, ctx.windows_paths)),
             ),
-            None => (format!("http://{host}:{}", ctx.http_port), String::new()),
+            None => (site_address("http", &host, ctx.http_port, ctx.forwarded), String::new()),
         };
         match &route.target {
             Route::Php { docroot, minor, xdebug, spx, spx_ui } => {
@@ -144,7 +153,8 @@ pub fn render(ctx: &CaddyContext) -> String {
         if route.tls.is_some() {
             let target =
                 if ctx.forwarded { format!("https://{host}") } else { format!("https://{host}:{}", ctx.https_port) };
-            let _ = write!(out, "\nhttp://{host}:{} {{\n\tredir {target}{{uri}}\n}}\n", ctx.http_port);
+            let address = site_address("http", &host, ctx.http_port, ctx.forwarded);
+            let _ = write!(out, "\n{address} {{\n\tredir {target}{{uri}}\n}}\n");
         }
     }
     out

@@ -162,7 +162,7 @@ async fn autostart_instances_start_and_quitting_stops_them_all() {
     installed_mysql(&core.paths);
     let on = store::create(&core.paths, "mysql", "8.4", free_port(), None).unwrap();
     let off = store::create(&core.paths, "mysql", "8.4", free_port(), Some("Manual")).unwrap();
-    store::set_autostart(&core.paths, &on.id, true).unwrap();
+    store::set_autostart(&core.paths, &off.id, false).unwrap();
     start_autostart(&core).await;
     assert!(answers(on.port));
     assert!(!answers(off.port));

@@ -24,6 +24,8 @@ export function createWorkspacesStore(api: WorkspacesApi) {
   let deleting = $state<string | null>(null);
   let form = $state({ site: '', name: '', database: 'shared' });
   let formError = $state<string | null>(null);
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
 
   async function refresh() {
     try {
@@ -85,8 +87,12 @@ export function createWorkspacesStore(api: WorkspacesApi) {
       return formError;
     },
     rowError: (site: string) => errors[site] ?? null,
+    get loaded() {
+      return loaded;
+    },
     async load() {
       await refresh();
+      loaded = true; // refresh() catches its own failure
       try {
         const own = new Set(workspaces.map((w) => w.site));
         parents = (await api.sitesList()).sites.filter((s) => s.kind !== 'proxy' && !own.has(s.name)).map((s) => s.name);
