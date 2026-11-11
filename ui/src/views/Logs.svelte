@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
@@ -40,7 +41,9 @@
 
 <h1>Logs</h1>
 
-{#if store.sites.length === 0}
+{#if !store.loaded}
+  <section class="card"><Kindling rows={3} label="Loading logs" /></section>
+{:else if store.sites.length === 0}
   <EmptyState art={art.logs} title="No logs yet" line="Sites with a storage/logs folder show their Laravel logs here" />
 {:else}
   <section class="card bar">

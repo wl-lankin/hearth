@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import { tick } from 'svelte';
@@ -57,7 +58,9 @@
 
 <section class="split">
   <div class="card list" aria-label="Processes">
-    {#if store.sites.length === 0 && !adding}
+    {#if !store.loaded}
+      <Kindling rows={3} label="Loading processes" />
+    {:else if store.sites.length === 0 && !adding}
       <EmptyState
         art={art.processes}
         title="Nothing running"

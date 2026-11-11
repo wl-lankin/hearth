@@ -35,6 +35,16 @@ function fakeApi(over: Partial<ServicesApi> = {}) {
 }
 
 describe('services store', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createServicesStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createServicesStore(fakeApi({ servicesList: async () => { throw 'down'; } }));
+    await failing.load();
+    expect([failing.loaded, failing.error]).toEqual([true, 'down']);
+  });
+
   test('a new service starts with the first version and a free port', async () => {
     const api = fakeApi();
     const store = createServicesStore(api);

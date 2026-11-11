@@ -71,6 +71,9 @@ export function createLogsStore(api: LogsApi) {
     }
   }
 
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
+
   async function attempt(f: () => Promise<void>) {
     error = null;
     try {
@@ -121,11 +124,18 @@ export function createLogsStore(api: LogsApi) {
           (!needle || e.message.toLowerCase().includes(needle) || e.detail.toLowerCase().includes(needle)),
       );
     },
+    get loaded() {
+      return loaded;
+    },
     async load() {
-      await attempt(async () => {
-        await resync();
-        await read();
-      });
+      try {
+        await attempt(async () => {
+          await resync();
+          await read();
+        });
+      } finally {
+        loaded = true;
+      }
     },
     /** Opens a site's newest log (and follows it), or the given one (and keeps it). */
     async choose(nextSite: string, nextFile?: string) {

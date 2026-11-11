@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
@@ -93,7 +94,9 @@
       </span>
       <button onclick={() => store.clear()} disabled={store.requests.length === 0}>Clear</button>
     </div>
-    {#if store.requests.length === 0}
+    {#if !store.loaded}
+      <Kindling rows={3} label="Loading requests" />
+    {:else if store.requests.length === 0}
       <EmptyState art={art.inspect} title="Nothing captured yet" line="Open a page of a Laravel site, or run an artisan command" />
     {/if}
     <ul>

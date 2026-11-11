@@ -322,11 +322,13 @@
     height: 300px;
   }
 
-  /* The page fills the window, so the core box always sits at the bottom. */
+  /* The page fills the window, so the core box always sits at the bottom: the content area's
+     height (window minus title strip and the page's top and bottom padding), since `.page` only
+     has a minimum height to take a percentage of. */
   .home {
     display: flex;
     flex-direction: column;
-    min-height: 100%;
+    min-height: calc(100vh - var(--titlebar-height) - 4px - 28px);
   }
 
   .card {

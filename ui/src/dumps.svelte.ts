@@ -49,6 +49,9 @@ export function createDumpsStore(api: DumpsApi) {
   let portError = $state<string | null>(null);
   let error = $state<string | null>(null);
 
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
+
   async function attempt(f: () => Promise<void>) {
     error = null;
     try {
@@ -87,11 +90,18 @@ export function createDumpsStore(api: DumpsApi) {
     get dumps() {
       return filter === undefined ? all : all.filter((d) => d.site === filter);
     },
+    get loaded() {
+      return loaded;
+    },
     async load() {
-      await attempt(async () => {
-        status = await api.dumpsStatus();
-        all = await api.dumpsList();
-      });
+      try {
+        await attempt(async () => {
+          status = await api.dumpsStatus();
+          all = await api.dumpsList();
+        });
+      } finally {
+        loaded = true;
+      }
     },
     /** The background poll: a failure shows, but an error from an action stays until the next one. */
     async refresh() {

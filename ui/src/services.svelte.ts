@@ -26,6 +26,8 @@ export function createServicesStore(api: ServicesApi) {
   let busy = $state<Record<string, boolean>>({});
   let errors = $state<Record<string, string | null>>({});
   let error = $state<string | null>(null);
+  // False until the first answer (or failure): the page shows its loader instead of "No services yet".
+  let loaded = $state(false);
 
   async function reload() {
     services = await api.servicesList();
@@ -84,12 +86,17 @@ export function createServicesStore(api: ServicesApi) {
     get error() {
       return error;
     },
+    get loaded() {
+      return loaded;
+    },
     async load() {
       try {
         [services, available] = await Promise.all([api.servicesList(), api.servicesAvailable()]);
         error = null;
       } catch (e) {
         error = asMessage(e);
+      } finally {
+        loaded = true;
       }
     },
     refresh: () => reload().catch(() => {}),

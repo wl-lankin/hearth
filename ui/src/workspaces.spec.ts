@@ -116,3 +116,15 @@ describe('workspaces store', () => {
     expect(other.rowError('feature-x.shop')).toBe('The workspace feature-x has uncommitted changes: commit them first');
   });
 });
+
+describe('workspaces store loading', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createWorkspacesStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createWorkspacesStore(fakeApi({ workspacesList: async () => { throw 'down'; } }));
+    await failing.load().catch(() => {});
+    expect(failing.loaded).toBe(true);
+  });
+});

@@ -18,6 +18,8 @@ export function createProfilesStore(api: ProfilesApi) {
   let sites = $state<SitesList>({ sites: [], parked: [], httpPort: 8080, httpsPort: 8443 });
   let php = $state<PhpList>({ default: null, installed: [] });
   let error = $state<string | null>(null);
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
 
   async function load() {
     error = null;
@@ -30,6 +32,8 @@ export function createProfilesStore(api: ProfilesApi) {
       [{ reports }, sites, php] = await Promise.all([api.profileList(), api.sitesList(), api.phpList()]);
     } catch (e) {
       error = asMessage(e);
+    } finally {
+      loaded = true;
     }
   }
 
@@ -66,6 +70,9 @@ export function createProfilesStore(api: ProfilesApi) {
     },
     get error() {
       return error;
+    },
+    get loaded() {
+      return loaded;
     },
     reportUrl,
     load,

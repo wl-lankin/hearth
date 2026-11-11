@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import * as api from '../api';
   import type { ProfileReport } from '../api';
@@ -29,7 +30,9 @@
 {#if store.error}<p class="error banner" role="alert">{store.error}</p>{/if}
 
 <section class="card">
-  {#if store.unavailable}
+  {#if !store.loaded}
+    <Kindling rows={3} label="Loading profiles" />
+  {:else if store.unavailable}
     <p class="empty">{store.unavailable}</p>
   {:else if store.reports.length === 0}
     <EmptyState art={art.inspect} title="Nothing captured yet" line="Switch Profile on for a site, then open one of its pages" />

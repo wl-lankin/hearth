@@ -130,13 +130,16 @@
     height: calc(100% - var(--titlebar-height));
     margin-top: var(--titlebar-height);
     overflow: auto;
-    padding: 4px 32px 28px;
+    padding: 4px 32px 0;
   }
 
-  /* As tall as the content area, so a page can place something at its bottom (Home's core box);
-     a longer page overflows it and `main` scrolls. */
+  /* At least as tall as the content area, so a page can place something at its bottom (Home's
+     core box); a longer page grows and `main` scrolls. The space below the last card is the
+     page's own padding: WebKit (the Mac's window) leaves a scroll container's bottom padding out
+     when content overflows a fixed-height child, so it used to end flush with the window. */
   .page {
-    height: 100%;
+    min-height: 100%;
+    padding-bottom: 28px;
     animation: page-in 180ms var(--ease);
   }
 

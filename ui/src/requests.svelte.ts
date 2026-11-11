@@ -50,6 +50,9 @@ export function createRequestsStore(api: RequestsApi) {
   let current = $state<RequestDetail | null>(null);
   let error = $state<string | null>(null);
 
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
+
   async function attempt(f: () => Promise<void>) {
     error = null;
     try {
@@ -88,11 +91,18 @@ export function createRequestsStore(api: RequestsApi) {
     get requests() {
       return filter === undefined ? all : all.filter((r) => r.site === filter);
     },
+    get loaded() {
+      return loaded;
+    },
     async load() {
-      await attempt(async () => {
-        status = await api.dumpsStatus();
-        all = await api.requestsList();
-      });
+      try {
+        await attempt(async () => {
+          status = await api.dumpsStatus();
+          all = await api.requestsList();
+        });
+      } finally {
+        loaded = true;
+      }
     },
     /** The background poll: a failure shows, but an error from an action stays until the next one. */
     async refresh() {

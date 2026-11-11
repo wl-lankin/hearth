@@ -1,5 +1,6 @@
 <script lang="ts">
   import EmptyState from '../EmptyState.svelte';
+  import Kindling from '../Kindling.svelte';
   import { art } from '../illustrations';
   import Select from '../Select.svelte';
   import * as api from '../api';
@@ -128,7 +129,9 @@
       </span>
       <button onclick={() => store.clear()} disabled={store.mails.length === 0}>Clear</button>
     </div>
-    {#if store.mails.length === 0}
+    {#if !store.loaded}
+      <Kindling rows={3} label="Loading mail" />
+    {:else if store.mails.length === 0}
       <EmptyState art={art.mail} title="The inbox is empty" line="Mail your sites send lands here" />
     {/if}
     <ul>

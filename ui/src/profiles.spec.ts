@@ -92,3 +92,15 @@ describe('profiles store', () => {
     expect(store.error).toBe('disk gone');
   });
 });
+
+describe('profiles store loading', () => {
+  test('is loading until the first answer, also when it fails', async () => {
+    const store = createProfilesStore(fakeApi());
+    expect(store.loaded).toBe(false);
+    await store.load();
+    expect(store.loaded).toBe(true);
+    const failing = createProfilesStore(fakeApi({ profileStatus: async () => { throw 'down'; } }));
+    await failing.load().catch(() => {});
+    expect(failing.loaded).toBe(true);
+  });
+});

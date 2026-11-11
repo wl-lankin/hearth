@@ -47,6 +47,9 @@ export function createMailStore(api: MailApi) {
   let portError = $state<string | null>(null);
   let error = $state<string | null>(null);
 
+  // False until the first answer (or failure): the page shows its loader instead of its empty state.
+  let loaded = $state(false);
+
   async function attempt(f: () => Promise<void>) {
     error = null;
     try {
@@ -99,11 +102,18 @@ export function createMailStore(api: MailApi) {
     get mails() {
       return filter === undefined ? all : all.filter((m) => m.site === filter);
     },
+    get loaded() {
+      return loaded;
+    },
     async load() {
-      await attempt(async () => {
-        status = await api.mailStatus();
-        await refresh();
-      });
+      try {
+        await attempt(async () => {
+          status = await api.mailStatus();
+          await refresh();
+        });
+      } finally {
+        loaded = true;
+      }
     },
     /** The background poll: a failure shows, but an error from an action stays until the next one. */
     async refresh() {
