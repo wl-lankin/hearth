@@ -43,16 +43,16 @@ async fn create_start_stop_env_and_delete_a_service() {
     let port = free_port();
     let created = call(&core, "services.create", json!({ "kind": "redis", "line": "8", "port": port })).await.unwrap();
     let id = created["id"].as_str().unwrap().to_string();
-    assert_eq!(id, "redis");
+    assert_eq!((id.as_str(), created["autostart"].clone()), ("redis", json!(true)), "new services start with Stoke");
     call(&core, "services.start", json!({ "id": id })).await.unwrap();
     let list = call(&core, "services.list", Value::Null).await.unwrap();
     assert_eq!((list[0]["running"].clone(), list[0]["port"].clone()), (json!(true), json!(port)));
     let env = call(&core, "services.env", json!({ "id": id })).await.unwrap();
     assert!(env.as_str().unwrap().contains(&format!("REDIS_PORT={port}")), "{env}");
-    call(&core, "services.autostart", json!({ "id": id, "on": true })).await.unwrap();
+    call(&core, "services.autostart", json!({ "id": id, "on": false })).await.unwrap();
     call(&core, "services.stop", json!({ "id": id })).await.unwrap();
     let list = call(&core, "services.list", Value::Null).await.unwrap();
-    assert_eq!((list[0]["running"].clone(), list[0]["autostart"].clone()), (json!(false), json!(true)));
+    assert_eq!((list[0]["running"].clone(), list[0]["autostart"].clone()), (json!(false), json!(false)));
     call(&core, "services.delete", json!({ "id": id })).await.unwrap();
     assert_eq!(call(&core, "services.list", Value::Null).await.unwrap(), json!([]));
 }
