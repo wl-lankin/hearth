@@ -165,13 +165,25 @@ fn a_secured_php_site_is_served_over_https_and_http_redirects() {
 }
 
 #[test]
-fn with_80_and_443_forwarded_the_redirect_drops_the_port() {
-    let mut context = ctx(vec![secured("vite", Route::Proxy { upstream: "http://localhost:5173".into() })]);
+fn with_80_and_443_forwarded_sites_listen_on_the_forwarded_ports_too() {
+    let mut context = ctx(vec![
+        secured("vite", Route::Proxy { upstream: "http://localhost:5173".into() }),
+        SiteRoute {
+            name: "plain".into(),
+            target: Route::Proxy { upstream: "http://localhost:3000".into() },
+            tls: None,
+        },
+    ]);
     context.forwarded = true;
     let file = render(&context);
-    assert!(file.contains("\nhttp://vite.test:8080 {\n\tredir https://vite.test{uri}\n}\n"), "{file}");
-    // Caddy keeps listening on its own ports: the forwarding brings 80 and 443 there.
-    assert!(file.contains("\nhttps://vite.test:8443 {\n"), "{file}");
+    // The redirect drops the port: 80 and 443 reach Caddy.
+    assert!(
+        file.contains("\nhttp://vite.test:8080, http://vite.test:18080 {\n\tredir https://vite.test{uri}\n}\n"),
+        "{file}"
+    );
+    // Caddy's own ports stay for direct use; pf forwards only to ports nothing else connects to.
+    assert!(file.contains("\nhttps://vite.test:8443, https://vite.test:18443 {\n"), "{file}");
+    assert!(file.contains("\nhttp://plain.test:8080, http://plain.test:18080 {\n"), "{file}");
 }
 
 #[test]

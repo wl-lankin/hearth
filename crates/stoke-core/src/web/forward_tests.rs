@@ -4,16 +4,22 @@ use super::*;
 fn the_rules_forward_80_and_443_on_loopback_only() {
     let rules = rules_text(8080, 8443);
     for line in [
-        "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 8080\n",
-        "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443\n",
-        "rdr pass on lo0 inet6 proto tcp from any to ::1 port 80 -> ::1 port 8080\n",
-        "rdr pass on lo0 inet6 proto tcp from any to ::1 port 443 -> ::1 port 8443\n",
+        "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 80 -> 127.0.0.1 port 18080\n",
+        "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 18443\n",
+        "rdr pass on lo0 inet6 proto tcp from any to ::1 port 80 -> ::1 port 18080\n",
+        "rdr pass on lo0 inet6 proto tcp from any to ::1 port 443 -> ::1 port 18443\n",
     ] {
         assert!(rules.contains(line), "{rules}");
     }
     // Nothing but lo0: the sites stay out of the network's reach.
     assert_eq!(rules.matches("rdr ").count(), 4);
     assert_eq!(rules.matches(" on lo0 ").count(), 4);
+}
+
+#[test]
+fn forwarded_ports_are_caddys_own_plus_10000_or_minus_near_the_top() {
+    assert_eq!((forward_port(8080), forward_port(8443)), (18080, 18443));
+    assert_eq!(forward_port(60000), 50000);
 }
 
 #[test]
