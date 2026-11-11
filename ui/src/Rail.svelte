@@ -30,7 +30,8 @@
 {/snippet}
 
 <aside>
-  <!-- Level with the window buttons; it moves the window like the strip beside it. -->
+  <!-- Windows: at the top, level with the window buttons. macOS: below the traffic lights. It
+       moves the window like the strip beside it. -->
   <div class="brand" data-tauri-drag-region>
     <img class="mark" src={logo} alt="" width="28" height="28" />
     <span class="name">Stoke</span>
@@ -79,9 +80,11 @@
     pointer-events: none;
   }
 
-  /* macOS draws its traffic lights in the top left corner: the logo steps aside. */
+  /* macOS draws its traffic lights in the top left corner: the logo sits below them, the strip
+     above stays free for them (and still moves the window). */
   :global(html[data-platform='macos']) .brand {
-    padding-left: 78px;
+    height: auto;
+    padding-top: calc(var(--titlebar-height) + 6px);
   }
 
   .mark {

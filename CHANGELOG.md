@@ -8,6 +8,7 @@
 - `stoke import:herd` on a Mac keeps Herd's HTTPS, PHP versions and proxies for each site
 - Pages no longer show "No services yet" (or sites, processes, mails, ...) for a moment while they load: a glowing loader stands in until the list is there
 - On a Mac, every page has space below its last card again
+- On a Mac, the logo sits below the window buttons instead of beside them
 
 ## 2.0.1
 
